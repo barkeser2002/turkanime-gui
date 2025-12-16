@@ -20,12 +20,12 @@ echo Surum dosyasi yaratiliyor..
     echo pyinstaller_versionfile.create_versionfile^(
     echo     output_file="versionfile.txt",
     echo     version=__version__,
-    echo     company_name="TurkAnimu Dev",
+    echo     company_name="TurkAnime Dev",
     echo     file_description="Anime İndirici & Oynatıcı",
-    echo     internal_name="TurkAnimu",
+    echo     internal_name="TurkAnime",
     echo     legal_copyright="© KebabLord, All rights reserved.",
-    echo     original_filename="TurkAnimu.exe",
-    echo     product_name="TurkAnimu İndirici"
+    echo     original_filename="TurkAnime.exe",
+    echo     product_name="TurkAnime İndirici"
     echo ^)
 ) > ..\version_generator.py
 cd ..
@@ -39,8 +39,8 @@ echo compiled.py yaratiliyor..
 ) > ..\compiled.py
 
 echo EXE derleniyor..
-pyinstaller --noconfirm --onefile --console --icon "docs\TurkAnimu.ico" --name "TurkAnimu" --version-file versionfile.txt "compiled.py" && (
-  echo Hersey yolunda gitti, calistirilabilir dosya: dist/TurkAnimu.exe
+pyinstaller --noconfirm --onefile --console --icon "docs\Turkanime.ico" --name "Turkanime" --version-file versionfile.txt "compiled.py" && (
+  echo Hersey yolunda gitti, calistirilabilir dosya: dist/Turkanime.exe
   for %%F in (dist\*.exe) do (
     certutil -hashfile "%%F" MD5 > "%%F.md5"
     echo MD5 olusturuldu: %%F.md5

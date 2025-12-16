@@ -1,4 +1,4 @@
-""" TürkAnimu Downloader CLI """
+""" TürkAnime Downloader CLI """
 from os import environ, name, path
 from time import sleep
 import sys

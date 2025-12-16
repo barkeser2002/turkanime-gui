@@ -1,59 +1,218 @@
-<html>
+<!DOCTYPE html>
+<html lang="tr">
    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>TürkAnime GUI - Kılavuz</title>
       <style>
-         h3 {
-         margin-bottom: 0px;
-         padding-bottom: 0px;
-         margin-top: 50px;
+         body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
          }
-         p {
-         margin-top: 5px;
+         .container {
+            background: white;
+            padding: 30px 40px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+         }
+         h1 {
+            color: #e74c3c;
+            border-bottom: 3px solid #e74c3c;
+            padding-bottom: 10px;
+         }
+         h2 {
+            color: #2c3e50;
+            margin-top: 40px;
+         }
+         h3 {
+            color: #34495e;
+            margin-top: 30px;
+            margin-bottom: 10px;
+         }
+         code {
+            background: #f4f4f4;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+         }
+         pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+         }
+         .feature-list {
+            list-style: none;
+            padding: 0;
+         }
+         .feature-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+         }
+         .feature-list li:before {
+            content: "✨ ";
+         }
+         .source-badge {
+            display: inline-block;
+            background: #3498db;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            margin: 5px;
+            font-size: 14px;
+         }
+         .source-badge.primary {
+            background: #e74c3c;
+         }
+         .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 0 8px 8px 0;
+         }
+         .tip {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 0 8px 8px 0;
+         }
+         a {
+            color: #3498db;
+         }
+         table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+         }
+         th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+         }
+         th {
+            background: #34495e;
+            color: white;
          }
       </style>
    </head>
    <body>
-      <div style="padding: 10px 25px 369px;">
-         <div class="">
-            <h1 id="türkanimu-i̇ndirici---kılavuz">TürkAnimu İndirici - Kılavuz</h1>
+      <div class="container">
+         <h1>🎬 TürkAnime GUI - Kılavuz</h1>
+         
+         <p>TürkAnime GUI, Türkçe altyazılı anime izleme ve indirme için geliştirilmiş modern bir masaüstü uygulamasıdır.</p>
+         
+         <h2>✨ Öne Çıkan Özellikler</h2>
+         <ul class="feature-list">
+            <li><strong>Çoklu kaynak desteği:</strong> Anizle, AnimeCix ve TürkAnime'den tek arayüzle erişim</li>
+            <li><strong>Paralel stream çekme:</strong> 8 eşzamanlı bağlantı ile hızlı video link alma</li>
+            <li><strong>Tek tıkla indirme:</strong> aria2c ile hızlı ve güvenilir indirme</li>
+            <li><strong>AniList entegrasyonu:</strong> OAuth2 ile hesap senkronizasyonu</li>
+            <li><strong>Discord Rich Presence:</strong> İzlediğini arkadaşlarınla paylaş</li>
+            <li><strong>Netflix benzeri arayüz:</strong> Modern ve akıcı kullanıcı deneyimi</li>
+         </ul>
+
+         <h2>📺 Desteklenen Kaynaklar</h2>
+         <p><strong>Birincil Kaynaklar:</strong></p>
+         <span class="source-badge primary">Anizle (4500+ anime)</span>
+         <span class="source-badge primary">AnimeCix</span>
+         <span class="source-badge primary">TürkAnime</span>
+         
+         <p style="margin-top: 20px;"><strong>Video Sunucuları:</strong></p>
+         <span class="source-badge">Sibnet</span>
+         <span class="source-badge">Odnoklassniki</span>
+         <span class="source-badge">HDVID</span>
+         <span class="source-badge">Myvi</span>
+         <span class="source-badge">Sendvid</span>
+         <span class="source-badge">Mail.ru</span>
+         <span class="source-badge">VK</span>
+         <span class="source-badge">MP4upload</span>
+         <span class="source-badge">Vidmoly</span>
+         <span class="source-badge">Dailymotion</span>
+         <span class="source-badge">FirePlayer</span>
+         <span class="source-badge">HLS Streams</span>
+
+         <h2>📥 Kurulum</h2>
+         
+         <h3>1. Hazır Paket (Önerilen)</h3>
+         <p><a href="https://github.com/barkeser2002/turkanime-gui/releases/latest">Releases</a> sayfasından en güncel <code>.exe</code> dosyasını indirin ve çalıştırın.</p>
+         
+         <h3>2. PyPI Üzerinden</h3>
+         <pre>pip install turkanime-gui
+turkanime-gui</pre>
+         
+         <h3>3. Kaynak Koddan</h3>
+         <pre>git clone https://github.com/barkeser2002/turkanime-gui.git
+cd turkanime-indirici
+pip install -r requirements-gui.txt
+python -m turkanime_api.gui.main</pre>
+
+         <h2>🚀 Kullanım</h2>
+         <table>
+            <tr>
+               <th>Adım</th>
+               <th>Açıklama</th>
+            </tr>
+            <tr>
+               <td>1. İlk Açılış</td>
+               <td>ffmpeg/mpv bin klasörü otomatik hazırlanır</td>
+            </tr>
+            <tr>
+               <td>2. AniList Bağlantısı</td>
+               <td>Profil avatarına tıklayarak OAuth akışını başlatın</td>
+            </tr>
+            <tr>
+               <td>3. Anime Seçimi</td>
+               <td>Keşfet veya Ara sekmesinden anime seçin</td>
+            </tr>
+            <tr>
+               <td>4. İzle/İndir</td>
+               <td>Bölümü oynatın veya indirin, ilerleme otomatik tutulur</td>
+            </tr>
+         </table>
+
+         <h2>⚙️ Ayarlar</h2>
+         <h3>İzlerken Kaydetme Modu</h3>
+         <p>mpv ile izlerken videoyu aynı anda diske kaydeder. Ayarlar menüsünden aktifleştirilebilir.</p>
+         
+         <h3>Discord Rich Presence</h3>
+         <p>Ayarlar → Discord Rich Presence bölümünden açıp kapatabilirsiniz.</p>
+
+         <div class="tip">
+            <strong>💡 İpucu:</strong> Anizle kaynağı 4500+ anime içerir ve paralel işleme sayesinde çok hızlı çalışır.
          </div>
-         <div>
-            <p>Bu scriptin veya kodun veya programın, her ne derseniz, başlıca özellikleri:</p>
+
+         <h2>❓ Sorun Giderme</h2>
+         <div class="warning">
+            <strong>⚠️ Dikkat:</strong> İlk açılışta gecikmeler yaşanabilir. Kaynak siteler yavaş veya bakımda olabilir.
          </div>
-         <div>
-            <ul>
-               <li>Yığın ve tekil anime indirme otomasyonu</li>
-               <li>Anime izleme ve izlerken kaydetme</li>
-               <li>Uygulama içinden arama yapmak ve fansub seçebilmek</li>
-            </ul>
-         </div>
-         <div>
-            <h1 id="kullanım">Manuel Kurulum</h1>
-         </div>
-         <div>
-            <b>Windows</b>
-            <br>
-            <a href="https://sourceforge.net/projects/mpv-player-windows/files/">Mpv</a> ve <a href="https://github.com/mozilla/geckodriver/releases">Geckodriver</a>'ın son sürümünü indirip program dizinine atın ya da bulundukları dizini sistem PATH'ına ekleyin. Ardından gerekli paketleri kurun: <code>py -m pip install -r requirements.txt</code> yada <code>pip3 install -r requiremenets.txt</code>. Youtube-dl'i <a href="http://ytdl-org.github.io/youtube-dl/download.html">buradan</a>'i indirebilirsiniz, yalnız youtube-dl'in çalışması için VC Redist 2010 kurmanız da gerekli, <a href="https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x86.exe">buradan</a> indirebilirsiniz. <br>
-            <br>
-            <b>MacOS</b>
-            <br> Brew paket yöneticisini yükledikten sonra <code>brew install geckodriver mpv</code> komutuyla gerekli uygulamaları kurun. Ardından <code>pip3 install -r requirements.txt</code> ile gerekli paketleri kurun. <br>
-            <br>
-            <b>Linux</b>
-            <br> Paket yöneticinizle veya github sayfalarından mpv ve geckodriver'ı kurduktan sonra gerekli paketleri <code>pip3 install -r requirements.txt</code> ile kurun.
-         </div>
-         <div>
-            <h3 id="i̇zlerken-kaydetme-modu">İzlerken kaydetme modu</h3>
-         </div>
-         <div> Mpv’nin deneysel bir modülüdür. Ayarlardan aktifleştirip devre dışı bırakabilirsiniz. </div>
-         <div>
-            <h3 id="problemler">Problemler</h3>
-         </div>
-         <div>
-            <p> Programı ilk açışınızda gecikmeler yaşayabilirsiniz. Ara sıra arama yaptığınızda zaman aşımı hatası alabilirsiniz, bu sitenin o sırada yavaş veya bakımda olmasından kaynaklanır. Bunlar dışında programa ilişkin yaşadığınız probleme en hızlı dönüşü github’da issue ticket’ı açarsanız sağlayabilirim. Lütfen issue'larda izlediğiniz prosedürünü ve hatanın ekran fotoğrafını da paylaşın. Haricen, bana ulaşmak için <a href="https://kebablord.github.io/gpg.html">tıklayın</a>
-            </p>
-         </div>
-         <br>
-         <h1 id="kullanım">Daha fazlası</h1>
-         <div>Uygulamaya ilişkin hatalar ve kullanıma yönelik daha fazla bilgi için <a href="https://github.com/KebabLord/turkanime-indirici/wiki">wiki sayfasını</a> ziyaret edin.</div>
+         
+         <p>Yaşadığınız sorunlar için:</p>
+         <ul>
+            <li><a href="https://github.com/barkeser2002/turkanime-gui/issues">GitHub Issues</a> sayfasında yeni bir ticket açın</li>
+            <li>Hatanın ekran görüntüsünü ve izlediğiniz adımları paylaşın</li>
+            <li><a href="https://github.com/barkeser2002/turkanime-gui/wiki">Wiki sayfasını</a> inceleyin</li>
+         </ul>
+
+         <h2>🔧 Sistem Gereksinimleri</h2>
+         <ul>
+            <li><strong>Python:</strong> 3.9+</li>
+            <li><strong>FFmpeg & yt-dlp:</strong> Otomatik indirilir</li>
+            <li><strong>mpv:</strong> Bin klasöründe paket ile gelir</li>
+            <li><strong>İnternet:</strong> Kaynaklara erişim için gerekli</li>
+         </ul>
+
+         <hr style="margin-top: 40px;">
+         <p style="text-align: center; color: #7f8c8d;">
+            TürkAnime GUI v9.4.1 | <a href="https://github.com/barkeser2002/turkanime-gui">GitHub</a>
+         </p>
       </div>
    </body>
 </html>

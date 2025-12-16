@@ -1,7 +1,7 @@
 
 <div align="center">
 
-![TürkAnimu Logo](https://i.imgur.com/GaMNM29.png)
+![TürkAnime Logo](https://i.imgur.com/Dw8sv30.png)
 
 [![GitHub all releases](https://img.shields.io/github/downloads/barkeser2002/turkanime-gui/total?style=flat-square)](https://github.com/barkeser2002/turkanime-gui/releases/latest)
 [![Downloads](https://static.pepy.tech/personalized-badge/turkanime-gui?period=total&units=international_system&left_color=grey&right_color=orange&left_text=Pip%20Installs)](https://pepy.tech/project/turkanime-gui)
@@ -10,12 +10,14 @@
 
 </div>
 
-# TürkAnimu GUI
+# TürkAnime GUI
 
-TürkAnimu artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi sunuyor. Terminal (CLI) sürümü destek dışı bırakıldı; tüm geliştirme modern masaüstü uygulamasına odaklanıyor.
+TürkAnime artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi sunuyor. Terminal (CLI) sürümü destek dışı bırakıldı; tüm geliştirme modern masaüstü uygulamasına odaklanıyor.
 
 ## ✨ Öne Çıkan Özellikler
 
+- **Çoklu kaynak desteği:** Anizle, AnimeCix ve TürkAnime'den tek arayüzle erişim.
+- **Hızlı stream çekme:** Paralel işleme ile 8 kat hızlı video link alma.
 - **Tek tıkla indirme ve oynatma:** Bölümleri sıra bekletmeden indir, izlerken otomatik kaydet.
 - **AniList entegrasyonu:** OAuth2 ile hesabına bağlan, listelerini senkron tut.
 - **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur.
@@ -32,15 +34,15 @@ TürkAnimu artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme de
 
 ## 📺 Ekran Görüntüleri
 
-### İzleme Ekranı
-![izleme.gif](https://i.imgur.com/s04Dnox.gif)
+### Anasayfa Ekranı
+![anasayfa.png](https://i.imgur.com/Mh353OU.png)
 
-### İndirme Ekranı
-![indirme.gif](https://i.imgur.com/k7Y3LYA.gif)
+### Anime Ekranı
+![animesayfası.png](https://i.imgur.com/9D4yUdn.png)
 
 ## � Discord Rich Presence
 
-TürkAnimu GUI, Discord profilinde canlı durum gösterebilir:
+TürkAnime GUI, Discord profilinde canlı durum gösterebilir:
 
 - Ana sayfa gezinme
 - Trend veya arama ekranları
@@ -59,6 +61,8 @@ TürkAnimu GUI, Discord profilinde canlı durum gösterebilir:
 ```bash
 pip install turkanime-gui
 turkanime-gui
+&
+turkanime-cli
 ```
 
 ### 3. Kaynak Koddan
@@ -72,16 +76,24 @@ python -m turkanime_api.gui.main
 ## 🚀 Kullanım
 
 1. **İlk açılışta** ffmpeg/mpv bin klasörü otomatik hazırlanır.
-2. **AniList’e bağlan:** Profil avatarına tıklayarak OAuth akışını başlat.
-3. **Keşfet veya Ara sekmesinden** anime seç.
-4. **Bölümü oynat** ya da **indir**; ilerlemen otomatik tutulur.
+2. **Keşfet veya Ara sekmesinden** anime seç.
+3. **Bölümü oynat** ya da **indir**; ilerlemen otomatik tutulur.
 
-## � Desteklenen Kaynaklar
+## 📺 Desteklenen Kaynaklar
 
+### Birincil Kaynaklar
+| Kaynak | Açıklama |
+|--------|----------|
+| **Anizle** | 4500+ anime, paralel stream çekme, HLS desteği |
+| **AnimeCix** | Geniş fansub seçenekleri |
+| **TürkAnime** | Klasik Türk anime kaynağı |
+
+### Video Sunucuları
 ```
-Sibnet  Odnoklassinki  HDVID  Myvi Sendvid  Mail
-Amaterasu   Alucard   PixelDrain   VK  MP4upload
-Vidmoly   Dailymotion   Yandisk   Uqload   Drive
+Sibnet  Odnoklassniki  HDVID  Myvi  Sendvid  Mail
+Amaterasu  Alucard  PixelDrain  VK  MP4upload
+Vidmoly  Dailymotion  Yandisk  Uqload  Drive
+FirePlayer (Anizle)  HLS Streams
 ```
 
 ## 🔧 Sistem Gereksinimleri
@@ -97,18 +109,6 @@ Vidmoly   Dailymotion   Yandisk   Uqload   Drive
 - PR göndermeden önce kısa bir açıklama ve ekran görüntüsü eklemek incelemeyi hızlandırır.
 - Dokümantasyon ve çeviri katkıları da memnuniyetle kabul edilir.
 
-## 🔒 Doğrulama (MD5 Hash)
-
-### Windows
-```powershell
-./docs/hash_dist_md5.bat ./dist/turkanime-gui-windows.exe
-```
-
-### Linux/macOS
-```bash
-./scripts/hash_md5.sh ./dist/turkanime-gui-linux
-./scripts/hash_md5.sh ./dist/turkanime-gui-macos
-```
 
 > CI yayınlarında `.md5` dosyaları otomatik eklenir.
 

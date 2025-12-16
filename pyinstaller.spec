@@ -13,8 +13,8 @@ a = Analysis([
              pathex=[],
              binaries=[],
              datas=[
-                 ('docs/TurkAnimu.ico', 'docs'),
-                 ('docs/TurkAnimu.png', 'docs'),
+                 ('docs/Turkanime.ico', 'docs'),
+                 ('docs/Turkanime.png', 'docs'),
                  ('gereksinimler.json', '.'),
              ] + bin_data,
              hiddenimports=hiddenimports,
@@ -40,4 +40,4 @@ exe = EXE(pyz,
           strip=False,
           upx=False,
           console=False,
-          icon='docs/TurkAnimu.ico')
+          icon='docs/Turkanime.ico')

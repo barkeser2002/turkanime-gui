@@ -16,17 +16,17 @@ DL_URL="https://raw.githubusercontent.com/KebabLord/turkanime-indirici/master/ge
 
 class Dosyalar:
     """ Yazılımın konfigürasyon ve indirilenler klasörünü yönet
-    - Windows'ta varsayılan dizin: $USER/TurkAnimu
-    - Linux'ta varsayılan dizin: /home/$USER/TurkAnimu
+    - Windows'ta varsayılan dizin: $USER/Turkanime
+    - Linux'ta varsayılan dizin: /home/$USER/Turkanime
 
     Öznitelikler:
-        ayar_path: TurkAnimu config dosyasının dizini
+        ayar_path: Turkanime config dosyasının dizini
         Dosyalar.gecmis_path: İzlenme ve indirme log'unun dizini
     """
-    # Defaults to C:/User/xxx/TurkAnimu veya ~/TurkAnimu dizini.
+    # Defaults to C:/User/xxx/Turkanime veya ~/Turkanime dizini.
 
     def __init__(self):
-        self.ta_path = path.join(path.expanduser("~"), "TurkAnimu" )
+        self.ta_path = path.join(path.expanduser("~"), "Turkanime" )
         if path.isdir(".git"): # Git reposundan çalıştırılıyorsa.
             self.ta_path = getcwd()
         self.ayar_path = path.join(self.ta_path, "ayarlar.json")

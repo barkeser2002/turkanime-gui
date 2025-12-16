@@ -617,7 +617,7 @@ def _resource_path(rel_path: str) -> str:
     """PyInstaller tek-dosya ve geliştirme ortamında kaynak yolu çözer.
 
     - Çalışma zamanı (_MEIPASS) içinde: docs klasörü Analysis.datas ile köke kopyalanır.
-      boot.py ve spec, docs/TurkAnimu.ico'yu datas'a ekliyor; bu yüzden _MEIPASS/docs/... bekleriz.
+      boot.py ve spec, docs/Turkanime.ico'yu datas'a ekliyor; bu yüzden _MEIPASS/docs/... bekleriz.
     - Geliştirme sırasında: proje kökü altındaki göreli yol kullanılır.
     """
     try:
@@ -643,17 +643,17 @@ def _resource_path(rel_path: str) -> str:
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("TürkAnimu Gui by @barkeser2002") # Kalsın
+        self.title("TürkAnime Gui by @barkeser2002") # Kalsın
         self.geometry("1400x900")
 
         # App icon (Windows: .ico, Others: .png via iconphoto)
         try:
-            ico_path = _resource_path(os.path.join('docs', 'TurkAnimu.ico'))
+            ico_path = _resource_path(os.path.join('docs', 'Turkanime.ico'))
             if os.path.exists(ico_path):
                 # On Windows, iconbitmap expects .ico and updates taskbar/title icon
                 self.iconbitmap(ico_path)
             else:
-                png_path = _resource_path(os.path.join('docs', 'TurkAnimu.png'))
+                png_path = _resource_path(os.path.join('docs', 'Turkanime.png'))
                 if os.path.exists(png_path):
                     self._app_icon_ref = tk.PhotoImage(file=png_path)
                     self.iconphoto(True, self._app_icon_ref)
@@ -784,7 +784,7 @@ class MainWindow(ctk.CTk):
             self.discord_connected = True
             
             # Başlangıç durumu
-            self.update_discord_presence("Ana sayfada", "TürkAnimu GUI")
+            self.update_discord_presence("Ana sayfada", "TürkAnime GUI")
             
             # Periyodik güncelleme için timer başlat
             self.discord_update_timer = self.after(15000, self.update_discord_presence_periodic)
@@ -797,8 +797,8 @@ class MainWindow(ctk.CTk):
             self.discord_connected = False
             self.discord_rpc = None
 
-    def update_discord_presence(self, details, state, large_image="turkanimu", small_image=None, 
-                               large_text="TürkAnimu", small_text=None, start_time=None, buttons=None):
+    def update_discord_presence(self, details, state, large_image="Turkanime", small_image=None, 
+                               large_text="TürkAnime", small_text=None, start_time=None, buttons=None):
         """Discord Rich Presence'i güncelle."""
         if not self.discord_connected or not self.discord_rpc:
             return
@@ -847,15 +847,15 @@ class MainWindow(ctk.CTk):
             # Mevcut view'a göre durumu güncelle
             if hasattr(self, 'current_view'):
                 if self.current_view == "home":
-                    self.update_discord_presence("Ana sayfada", "TürkAnimu GUI")
+                    self.update_discord_presence("Ana sayfada", "TürkAnime GUI")
                 elif self.current_view == "trending":
-                    self.update_discord_presence("Trend animelere bakıyor", "TürkAnimu GUI")
+                    self.update_discord_presence("Trend animelere bakıyor", "TürkAnime GUI")
                 elif self.current_view == "downloads":
-                    self.update_discord_presence("İndirilenlere bakıyor", "TürkAnimu GUI")
+                    self.update_discord_presence("İndirilenlere bakıyor", "TürkAnime GUI")
                 elif self.current_view == "watchlist":
-                    self.update_discord_presence("İzleme listesine bakıyor", "TürkAnimu GUI")
+                    self.update_discord_presence("İzleme listesine bakıyor", "TürkAnime GUI")
                 else:
-                    self.update_discord_presence("Anime arıyor", "TürkAnimu GUI")
+                    self.update_discord_presence("Anime arıyor", "TürkAnime GUI")
 
             # 15 saniye sonra tekrar güncelle
             self.discord_update_timer = self.after(15000, self.update_discord_presence_periodic)
@@ -875,7 +875,7 @@ class MainWindow(ctk.CTk):
             state = episode_info if episode_info else "Anime izliyor"
 
             # Anime resmi varsa kullan, yoksa default
-            large_image = "turkanimu"  # default
+            large_image = "Turkanime"  # default
             large_text = anime_title
 
             # Anime resmi varsa kullan (URL'yi Discord'a uygun formata çevir)
@@ -927,7 +927,7 @@ class MainWindow(ctk.CTk):
             print("Discord RPC yeniden bağlandı")
 
             # Mevcut durumu güncelle
-            self.update_discord_presence("TürkAnimu'ya geri döndü", "TürkAnimu GUI")
+            self.update_discord_presence("TürkAnime'ya geri döndü", "TürkAnime GUI")
 
             # Periyodik güncellemeyi yeniden başlat
             if hasattr(self, 'discord_update_timer') and self.discord_update_timer:
@@ -992,7 +992,7 @@ class MainWindow(ctk.CTk):
 
         # Logo ikonu
         try:
-            icon_path = _resource_path(os.path.join('docs', 'TurkAnimu.png'))
+            icon_path = _resource_path(os.path.join('docs', 'Turkanime.png'))
             if os.path.exists(icon_path):
                 logo_image = ctk.CTkImage(Image.open(icon_path), size=(28, 28))
                 logo_label = ctk.CTkLabel(logo_frame, image=logo_image, text="")
@@ -1001,7 +1001,7 @@ class MainWindow(ctk.CTk):
             pass
 
         # Başlık
-        title_label = ctk.CTkLabel(logo_frame, text="TürkAnimu",
+        title_label = ctk.CTkLabel(logo_frame, text="TürkAnime",
                                  font=ctk.CTkFont(size=20, weight="bold"),
                                  text_color="#ff6b6b")
         title_label.pack(side="left")
@@ -1225,7 +1225,7 @@ class MainWindow(ctk.CTk):
 
         # Hero görselini yükle
         try:
-            icon_path = _resource_path(os.path.join('docs', 'TurkAnimu.png'))
+            icon_path = _resource_path(os.path.join('docs', 'Turkanime.png'))
             if os.path.exists(icon_path):
                 # Open image
                 pil_image = Image.open(icon_path)
@@ -1383,7 +1383,7 @@ class MainWindow(ctk.CTk):
         status_frame = ctk.CTkFrame(bottom_frame, fg_color="transparent")
         status_frame.pack(side="left", padx=20)
 
-        self.status_label = ctk.CTkLabel(status_frame, text="TürkAnimu hazır",
+        self.status_label = ctk.CTkLabel(status_frame, text="TürkAnime hazır",
                                        font=ctk.CTkFont(size=12),
                                        text_color="#cccccc")
         self.status_label.pack()
@@ -2551,7 +2551,7 @@ class MainWindow(ctk.CTk):
                 "url": f"https://anilist.co/anime/{anilist_id}"
             })
         
-        self.update_discord_presence(f"{anime_title} detaylarına bakıyor", "TürkAnimu GUI", buttons=buttons)
+        self.update_discord_presence(f"{anime_title} detaylarına bakıyor", "TürkAnime GUI", buttons=buttons)
 
         details_frame = ctk.CTkFrame(self.content_area, fg_color="transparent")
         details_frame.pack(fill="both", expand=True)
@@ -3108,7 +3108,7 @@ class MainWindow(ctk.CTk):
         # Discord Rich Presence güncelle
         if hasattr(self, 'selected_anime') and self.selected_anime:
             anime_title = self.selected_anime.get('title', {}).get('romaji', 'Bilinmeyen Anime')
-            self.update_discord_presence(f"{anime_title} kaynaklarına bakıyor", "TürkAnimu GUI")
+            self.update_discord_presence(f"{anime_title} kaynaklarına bakıyor", "TürkAnime GUI")
 
         try:
             # Loading label'ı kaldır
@@ -3369,7 +3369,7 @@ class MainWindow(ctk.CTk):
         original_title = romaji if romaji else english
 
         # Discord Rich Presence güncelle
-        self.update_discord_presence(f"'{original_title}' arıyor", "TürkAnimu GUI")
+        self.update_discord_presence(f"'{original_title}' arıyor", "TürkAnime GUI")
 
         # AniList'te ara
         self.message("AniList'te aranıyor…")
@@ -3432,7 +3432,7 @@ class MainWindow(ctk.CTk):
             self.btnWatchlist.configure(text_color="#cccccc", font=ctk.CTkFont(size=10))
 
         # Discord Rich Presence güncelle
-        self.update_discord_presence("Ana sayfada", "TürkAnimu GUI")
+        self.update_discord_presence("Ana sayfada", "TürkAnime GUI")
 
         # Başlık selector'ünü güncelle
         self.update_title_selector()
@@ -3452,7 +3452,7 @@ class MainWindow(ctk.CTk):
             self.btnWatchlist.configure(text_color="#cccccc", font=ctk.CTkFont(size=10))
 
         # Discord Rich Presence güncelle
-        self.update_discord_presence("Trend animelere bakıyor", "TürkAnimu GUI")
+        self.update_discord_presence("Trend animelere bakıyor", "TürkAnime GUI")
 
         # Başlık
         title_frame = ctk.CTkFrame(self.content_area, fg_color="transparent")
@@ -3503,7 +3503,7 @@ class MainWindow(ctk.CTk):
             self.btnWatchlist.configure(text_color="#cccccc", font=ctk.CTkFont(size=10))
 
         # Discord Rich Presence güncelle
-        self.update_discord_presence("İndirilenlere bakıyor", "TürkAnimu GUI")
+        self.update_discord_presence("İndirilenlere bakıyor", "TürkAnime GUI")
 
         # Başlık
         title_frame = ctk.CTkFrame(self.content_area, fg_color="transparent")
@@ -4027,7 +4027,7 @@ class MainWindow(ctk.CTk):
         search_query = selected_title if selected_title else query
 
         # Discord Rich Presence güncelle
-        self.update_discord_presence(f"'{search_query}' arıyor", "TürkAnimu GUI")
+        self.update_discord_presence(f"'{search_query}' arıyor", "TürkAnime GUI")
 
         # AniList'te ara
         self.message("AniList'te aranıyor…")
@@ -4387,7 +4387,7 @@ class MainWindow(ctk.CTk):
         """Load local anime progress from storage."""
         try:
             import appdirs
-            data_dir = appdirs.user_data_dir("TurkAnime", "Barkeser")
+            data_dir = appdirs.user_data_dir("TurkAnime", "Barkeser2002")
             os.makedirs(data_dir, exist_ok=True)
             progress_file = os.path.join(data_dir, "anime_progress.json")
             if os.path.exists(progress_file):
@@ -4403,7 +4403,7 @@ class MainWindow(ctk.CTk):
         """Save local anime progress to storage."""
         try:
             import appdirs
-            data_dir = appdirs.user_data_dir("TurkAnime", "Barkeser")
+            data_dir = appdirs.user_data_dir("TurkAnime", "Barkeser2002")
             os.makedirs(data_dir, exist_ok=True)
             progress_file = os.path.join(data_dir, "anime_progress.json")
             with open(progress_file, 'w', encoding='utf-8') as f:
@@ -4483,7 +4483,7 @@ class MainWindow(ctk.CTk):
             except Exception as e:
                 self.message(f"Bölüm yükleme hatası: {str(e)}")
             finally:
-                self.status_label.configure(text="TürkAnimu hazır")
+                self.status_label.configure(text="TürkAnime hazır")
 
         threading.Thread(target=load_worker, daemon=True).start()
 
@@ -4510,7 +4510,7 @@ class MainWindow(ctk.CTk):
             except Exception as e:
                 self.message(f"Bölüm yükleme hatası: {str(e)}")
             finally:
-                self.status_label.configure(text="TürkAnimu hazır")
+                self.status_label.configure(text="TürkAnime hazır")
 
         threading.Thread(target=load_worker, daemon=True).start()
 
