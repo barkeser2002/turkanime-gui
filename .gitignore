@@ -13,3 +13,34 @@ turkanime_api/sources/__pycache__/*
 turkanime_api/common/__pycache__/*
 turkanime_server/
 debug.log
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+__pycache__/
+*.egg-info/
+venv/
+ENV/
+env/
+.venv
+
+# Next.js / Frontend
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.env*.local
+frontend/.vercel
+frontend_build/
+
+# Backend
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+backend/.venv/
+backend/venv/
+
+# OS
+.DS_Store
+Thumbs.db

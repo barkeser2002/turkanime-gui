@@ -12,35 +12,86 @@
 
 # TürkAnime GUI
 
-TürkAnime artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi sunuyor. Terminal (CLI) sürümü destek dışı bırakıldı; tüm geliştirme modern masaüstü uygulamasına odaklanıyor.
+TürkAnime artık **modern web teknolojileri** ile yeniden yapılandırıldı. Python backend ve Next.js frontend ile anime keşif, izleme ve indirme deneyimi sunuyor.
+
+## 🏗️ Yeni Mimari
+
+### Python Backend (FastAPI)
+- LiveChart.me entegrasyonu (güncel sezon anime'leri)
+- Gelişmiş başlık eşleştirme (Japonca, Romaji, İngilizce)
+- AniList OAuth2 entegrasyonu (sadece kayıt ve ilerleme takibi)
+- RESTful API endpoints
+
+### Next.js Frontend
+- Modern React uygulaması
+- TypeScript tip güvenliği
+- Tailwind CSS responsive tasarım
+- Backend API entegrasyonu
+
+## 🚀 Hızlı Başlangıç
+
+### Backend
+```bash
+cd backend
+pip install -r requirements.txt
+python start_server.py
+```
+Backend `http://localhost:8000` adresinde çalışır.
+
+### Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Frontend `http://localhost:3000` adresinde çalışır.
+
+**Detaylı kurulum için:** [QUICKSTART.md](QUICKSTART.md)
 
 ## ✨ Öne Çıkan Özellikler
 
-- **Çoklu kaynak desteği:** Anizle, AnimeCix ve TürkAnime'den tek arayüzle erişim.
-- **Hızlı stream çekme:** Paralel işleme ile 8 kat hızlı video link alma.
-- **Tek tıkla indirme ve oynatma:** Bölümleri sıra bekletmeden indir, izlerken otomatik kaydet.
-- **AniList entegrasyonu:** OAuth2 ile hesabına bağlan, listelerini senkron tut.
-- **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur.
-- **Netflix benzeri arayüz:** Hover efektli kartlar, poster galerileri, akıcı animasyonlar.
-- **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
-- **Çoklu platform:** Windows için hazır paket, Python 3.9+ olan her platformdan pip ile çalıştır.
+### Yeni Özellikler (v10+)
+- **🌐 Modern Web Stack:** Python backend (FastAPI) + Next.js frontend
+- **📊 LiveChart.me Entegrasyonu:** Güncel sezon anime'leri ve trendler
+- **🔤 Gelişmiş Başlık Eşleştirme:** Japonca, Romaji ve İngilizce başlık desteği
+- **🎯 AniList Sadece İlerleme:** AniList artık sadece kayıt ve ilerleme takibi için
+- **⚡ RESTful API:** Temiz ve belgelenmiş API endpoints
+
+### Mevcut Özellikler
+- **Çoklu kaynak desteği:** Anizle, AnimeCix ve TürkAnime'den tek arayüzle erişim
+- **Hızlı stream çekme:** Paralel işleme ile 8 kat hızlı video link alma
+- **Tek tıkla indirme ve oynatma:** Bölümleri sıra bekletmeden indir, izlerken otomatik kaydet
+- **AniList OAuth2:** Güvenli hesap bağlantısı ve liste senkronizasyonu
+- **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur
+- **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş
+- **Çoklu platform:** Windows, macOS, Linux desteği
 
 ## 🧭 Uygulama Akışı
 
-1. **Keşfet:** Trend listeler ve kişisel öneriler tek ekranda.
-2. **Ara:** Yerel kaynaklarla AniList veritabanını aynı anda gez.
-3. **İndir & Oynat:** mpv entegrasyonu sayesinde indirme ve izleme tek pencerede.
-4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, AniList'e anında yansır.
+### Modern Web Uygulaması (Yeni)
+1. **Backend Başlat:** FastAPI sunucusu ile anime verilerine erişim
+2. **Frontend Aç:** Next.js uygulaması ile modern arayüz
+3. **Keşfet:** LiveChart.me'den güncel sezon anime'leri
+4. **Ara:** Gelişmiş başlık eşleştirme ile arama
+5. **İzle & Takip Et:** AniList ile ilerleme kaydet
+
+### Desktop Uygulaması (Mevcut)
+1. **Keşfet:** Trend listeler ve kişisel öneriler tek ekranda
+2. **Ara:** Yerel kaynaklarla AniList veritabanını aynı anda gez
+3. **İndir & Oynat:** mpv entegrasyonu sayesinde indirme ve izleme tek pencerede
+4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, AniList'e anında yansır
 
 ## 📺 Ekran Görüntüleri
 
-### Anasayfa Ekranı
+### Desktop Uygulaması
+
+#### Anasayfa Ekranı
 ![anasayfa.png](https://i.imgur.com/Mh353OU.png)
 
-### Anime Ekranı
+#### Anime Ekranı
 ![animesayfası.png](https://i.imgur.com/9D4yUdn.png)
 
-## � Discord Rich Presence
+## 💬 Discord Rich Presence
 
 TürkAnime GUI, Discord profilinde canlı durum gösterebilir:
 
@@ -53,19 +104,39 @@ TürkAnime GUI, Discord profilinde canlı durum gösterebilir:
 
 ## 📥 Kurulum
 
-### 1. Hazır Paket (Önerilen)
-- [Releases](https://github.com/barkeser2002/turkanime-gui/releases/latest) sayfasından en güncel `.exe` dosyasını indir.
-- Çalıştır ve kurulum sihirbazını tamamla.
+### Web Uygulaması (Yeni - Önerilen)
 
-### 2. PyPI Üzerinden
+1. **Backend'i başlatın:**
+```bash
+cd backend
+pip install -r requirements.txt
+python start_server.py
+```
+
+2. **Frontend'i başlatın:**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+3. **Tarayıcınızda açın:** `http://localhost:3000`
+
+**Detaylı kurulum:** [QUICKSTART.md](QUICKSTART.md) | **Mimari:** [ARCHITECTURE.md](ARCHITECTURE.md)
+
+### Desktop Uygulaması (Mevcut)
+
+#### 1. Hazır Paket
+- [Releases](https://github.com/barkeser2002/turkanime-gui/releases/latest) sayfasından en güncel `.exe` dosyasını indir
+- Çalıştır ve kurulum sihirbazını tamamla
+
+#### 2. PyPI Üzerinden
 ```bash
 pip install turkanime-gui
 turkanime-gui
-&
-turkanime-cli
 ```
 
-### 3. Kaynak Koddan
+#### 3. Kaynak Koddan
 ```bash
 git clone https://github.com/barkeser2002/turkanime-gui.git
 cd turkanime-indirici
