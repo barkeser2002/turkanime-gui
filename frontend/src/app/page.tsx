@@ -106,7 +106,7 @@ export default function Home() {
                     alt={anime.title}
                     fill
                     className="object-cover"
-                    unoptimized
+                    sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
                   />
                 </div>
               )}

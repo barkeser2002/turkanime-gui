@@ -44,6 +44,10 @@ class TitleMatchRequest(BaseModel):
     candidates: List[str]
 
 
+class TitleNormalizeRequest(BaseModel):
+    title: str
+
+
 class SearchRequest(BaseModel):
     query: str
     source: Optional[str] = "all"  # "all", "livechart", "anilist"
@@ -139,10 +143,10 @@ async def match_titles(request: TitleMatchRequest):
 
 
 @app.post("/api/titles/normalize")
-async def normalize_title(title: str):
+async def normalize_title(request: TitleNormalizeRequest):
     """Normalize a title for comparison"""
     try:
-        normalized = TitleMatcher.normalize_title(title)
+        normalized = TitleMatcher.normalize_title(request.title)
         return {"success": True, "data": {"normalized": normalized}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
