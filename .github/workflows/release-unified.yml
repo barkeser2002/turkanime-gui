@@ -1,0 +1,169 @@
+name: Build and Release Unified GUI
+
+on:
+  push:
+    tags:
+      - '*v*'
+  workflow_dispatch:
+
+jobs:
+  build-unified:
+    name: Build Unified (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+
+      - name: Build Frontend
+        shell: bash
+        run: |
+          cd frontend
+          npm install
+          npm run build
+          cd ..
+          # Copy build output to frontend_build
+          if [ -d "frontend/out" ]; then
+            cp -r frontend/out frontend_build
+          else
+            cp -r frontend/.next frontend_build
+          fi
+
+      - name: Prepare embedded runtime (Windows only)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "7zr.exe"
+          # yt-dlp
+          curl.exe -L -o bin/yt-dlp.exe "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+          # aria2c
+          curl.exe -L -o aria2.zip "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip"
+          Expand-Archive -LiteralPath aria2.zip -DestinationPath tmp_aria2
+          $aria2Dir = Get-ChildItem -Recurse -Path tmp_aria2 -Filter aria2c.exe | Select-Object -First 1 | Split-Path -Parent
+          Copy-Item -Recurse -Force "$aria2Dir\*" "bin\"
+          # mpv
+          $mpvUrl = "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20231231-git-abc2a74.7z/download"
+          curl.exe -L -o mpv.7z $mpvUrl
+          ./7zr.exe x mpv.7z -obin -y | Out-Null
+          $mpvExe = Get-ChildItem -Recurse -Path bin -Filter mpv.exe | Select-Object -First 1
+          if (-not $mpvExe) { throw "mpv.exe not found after extraction" }
+          # ffmpeg
+          curl.exe -L -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+          Expand-Archive -LiteralPath ffmpeg.zip -DestinationPath tmp_ffmpeg
+          $ffmpegExe = Get-ChildItem -Recurse -Path tmp_ffmpeg -Filter ffmpeg.exe | Select-Object -First 1
+          $ffprobeExe = Get-ChildItem -Recurse -Path tmp_ffmpeg -Filter ffprobe.exe | Select-Object -First 1
+          if (-not $ffmpegExe) { throw "ffmpeg.exe not found after extraction" }
+          Copy-Item -Force $ffmpegExe.FullName bin/
+          if ($ffprobeExe) { Copy-Item -Force $ffprobeExe.FullName bin/ }
+
+      - name: Build with PyInstaller (unified)
+        shell: bash
+        run: |
+          python -m PyInstaller turkanime-gui-unified.spec
+
+      - name: Rename artifact per OS
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            mv dist/turkanime-gui-unified.exe dist/turkanime-gui-unified-windows.exe
+            certutil -hashfile dist/turkanime-gui-unified-windows.exe MD5 > dist/turkanime-gui-unified-windows.exe.md5 || echo "md5 skipped"
+          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            mv dist/turkanime-gui-unified dist/turkanime-gui-unified-linux
+            chmod +x dist/turkanime-gui-unified-linux
+            md5sum dist/turkanime-gui-unified-linux > dist/turkanime-gui-unified-linux.md5 || echo "md5 skipped"
+          else
+            mv dist/turkanime-gui-unified dist/turkanime-gui-unified-macos
+            chmod +x dist/turkanime-gui-unified-macos
+            md5 -r dist/turkanime-gui-unified-macos > dist/turkanime-gui-unified-macos.md5 || echo "md5 skipped"
+          fi
+
+      - name: Create version.json
+        shell: bash
+        run: |
+          python -c "
+          import json
+          import datetime
+          import os
+          os.chdir('turkanime_api/cli')
+          from version import __version__
+          tag_name = os.environ.get('GITHUB_REF_NAME', 'latest')
+          version_data = {
+              'version': __version__,
+              'release_date': datetime.datetime.now().isoformat(),
+              'changelog': 'Unified backend and frontend in single executable',
+              'platforms': {
+                  'windows': {
+                      'url': f'https://github.com/barkeser2002/turkanime-gui/releases/download/{tag_name}/turkanime-gui-unified-windows.exe',
+                      'checksum': ''
+                  },
+                  'linux': {
+                      'url': f'https://github.com/barkeser2002/turkanime-gui/releases/download/{tag_name}/turkanime-gui-unified-linux',
+                      'checksum': ''
+                  },
+                  'macos': {
+                      'url': f'https://github.com/barkeser2002/turkanime-gui/releases/download/{tag_name}/turkanime-gui-unified-macos',
+                      'checksum': ''
+                  }
+              }
+          }
+          with open('../../docs/version.json', 'w') as f:
+              json.dump(version_data, f, indent=2)
+          "
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turkanime-gui-unified-${{ matrix.os }}
+          path: |
+            dist/turkanime-gui-unified-windows.exe
+            dist/turkanime-gui-unified-windows.exe.md5
+            dist/turkanime-gui-unified-linux
+            dist/turkanime-gui-unified-linux.md5
+            dist/turkanime-gui-unified-macos
+            dist/turkanime-gui-unified-macos.md5
+            docs/version.json
+          if-no-files-found: ignore
+
+  release:
+    needs: build-unified
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: turkanime-gui-unified-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

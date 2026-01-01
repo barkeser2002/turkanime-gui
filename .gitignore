@@ -32,6 +32,7 @@ frontend/out/
 frontend/node_modules/
 frontend/.env*.local
 frontend/.vercel
+frontend_build/
 
 # Backend
 backend/__pycache__/
