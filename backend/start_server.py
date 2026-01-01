@@ -18,10 +18,12 @@ if __name__ == "__main__":
     print(f"API Documentation: http://{API_HOST}:{API_PORT}/docs")
     print(f"Press CTRL+C to stop the server")
     
+    # Use reload=False by default to avoid issues with multiprocessing
+    # Set reload=True during development if needed
     uvicorn.run(
         "backend.server:app",
         host=API_HOST,
         port=API_PORT,
-        reload=True,
+        reload=False,
         log_level="info"
     )
