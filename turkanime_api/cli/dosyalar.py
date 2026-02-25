@@ -45,7 +45,10 @@ class Dosyalar:
             "dakika hatirla" : True,
             "aria2c kullan" : False,
             "kaynak": "turkanime",
-            "discord_rich_presence": True
+            "discord_rich_presence": True,
+            "tranime_cookie": "",
+            "flaresolverr_url": "http://node-kyb.bariskeser.com:8191",
+            "cookie_tutorial_dismissed": False
         }
         # Gerekli dosyalar eğer daha önce yaratılmadıysa yarat.
         if not path.isdir(".git") and not path.isdir(self.ta_path):

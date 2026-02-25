@@ -1039,3 +1039,340 @@ DEBUG: Animely tamamlandý: 15.14s
 DEBUG: render_sources_page tamamlandý
 DEBUG: create_accordion baþladý
 DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: Sousou no Frieren 2nd Season
+DEBUG: Thread baþlatýlýyor
+DEBUG: Thread baþlatýldý
+DEBUG: load_sources_worker baþladý
+DEBUG: show_anime_details tamamlandý
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Animely aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 0.04s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.35s
+DEBUG: AnimeciX tamamlandý - 29 bölüm
+DEBUG: AnimeciX tamamlandý: 0.91s
+DEBUG: TürkAnime tamamlandý - 1 bölüm
+DEBUG: TürkAnime tamamlandý: 1.39s
+DEBUG: Anizle tamamlandý - 1 bölüm
+DEBUG: Anizle tamamlandý: 2.89s
+ERROR: Animely timeout (10s) - kaynak atlandý
+DEBUG: Animely - sonuç bulunamadý
+DEBUG: Animely tamamlandý: 15.15s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: Animely, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'AnimeciX', 'TürkAnime', 'Anizle', 'Animely']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'AnimeciX', 'TürkAnime', 'Anizle', 'Animely']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: Ore dake Level Up na Ken
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Animely aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.28s
+DEBUG: AnimeciX tamamlandý - 26 bölüm
+DEBUG: AnimeciX tamamlandý: 1.04s
+DEBUG: TürkAnime tamamlandý - 12 bölüm
+DEBUG: TürkAnime tamamlandý: 1.32s
+DEBUG: Anizle tamamlandý - 12 bölüm
+DEBUG: Anizle tamamlandý: 2.74s
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 3.77s
+ERROR: Animely timeout (10s) - kaynak atlandý
+DEBUG: Animely - sonuç bulunamadý
+DEBUG: Animely tamamlandý: 15.15s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: Animely, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'AnimeciX', 'TürkAnime', 'Anizle', 'Animely']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'AnimeciX', 'TürkAnime', 'Anizle', 'Animely']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: HUNTER×HUNTER
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: Animely aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Animely - sonuç bulunamadý
+DEBUG: Animely tamamlandý: 0.40s
+DEBUG: AnimeciX - sonuç bulunamadý
+DEBUG: AnimeciX tamamlandý: 0.71s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.87s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 3.06s
+DEBUG: show_anime_details çaðrýldý: HUNTER×HUNTER (2011)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: Animely aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Animely - sonuç bulunamadý
+DEBUG: Animely tamamlandý: 0.57s
+ERROR: Anizle timeout (8s) - kaynak atlandý
+DEBUG: AnimeciX - sonuç bulunamadý
+DEBUG: AnimeciX tamamlandý: 1.08s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 1.18s
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 8.69s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 1.35s
+DEBUG: Anizle tamamlandý - 148 bölüm
+DEBUG: Anizle tamamlandý: 14.26s
+INFO: Baþarýyla yüklenen kaynaklar: AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime, AnimeciX, Animely, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'Anizle']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+ERROR: Anizle timeout (8s) - kaynak atlandý
+DEBUG: Anizle tamamlandý - 148 bölüm
+DEBUG: Anizle tamamlandý: 8.95s
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 11.13s
+INFO: Baþarýyla yüklenen kaynaklar: AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime, AnimeciX, Animely, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'Anizle']
+DEBUG: create_accordion tamamlandý
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+DEBUG: show_anime_details çaðrýldý: Sousou no Frieren 2nd Season
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Animely aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Animely - sonuç bulunamadý
+DEBUG: Animely tamamlandý: 1.18s
+DEBUG: TürkAnime tamamlandý - 5 bölüm
+DEBUG: TürkAnime tamamlandý: 1.59s
+DEBUG: Anizle tamamlandý - 5 bölüm
+DEBUG: Anizle tamamlandý: 2.25s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 2.35s
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 7.18s
+ERROR: AnimeciX timeout (8s) - kaynak atlandý
+DEBUG: AnimeciX tamamlandý - 33 bölüm
+DEBUG: AnimeciX tamamlandý: 16.80s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: Animely, TRAnimeÝzle
+DEBUG: all_episodes set to: ['TürkAnime', 'Anizle', 'AniList', 'AnimeciX']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['TürkAnime', 'Anizle', 'AniList', 'AnimeciX']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+DEBUG: show_anime_details çaðrýldý: HUNTER×HUNTER (2011)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: Animely aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 0.37s
+DEBUG: Animely - sonuç bulunamadý
+DEBUG: Animely tamamlandý: 0.44s
+DEBUG: AnimeciX - sonuç bulunamadý
+DEBUG: AnimeciX tamamlandý: 0.52s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 0.67s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.73s
+DEBUG: Anizle tamamlandý - 148 bölüm
+DEBUG: Anizle tamamlandý: 1.02s
+INFO: Baþarýyla yüklenen kaynaklar: AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime, AnimeciX, Animely, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'Anizle']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: Sousou no Frieren 2nd Season (rid=3faf57c2)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.55s
+DEBUG: AnimeciX tamamlandý - 33 bölüm
+DEBUG: AnimeciX tamamlandý: 1.26s
+DEBUG: TürkAnime tamamlandý - 5 bölüm
+DEBUG: TürkAnime tamamlandý: 1.31s
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 2.89s
+DEBUG: Anizle tamamlandý - 5 bölüm
+DEBUG: Anizle tamamlandý: 7.27s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'AnimeciX', 'TürkAnime', 'Anizle']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'AnimeciX', 'TürkAnime', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+DEBUG: show_anime_details çaðrýldý: Sousou no Frieren 2nd Season (rid=99d5d694)
+DEBUG: Thread baþlatýlýyor
+DEBUG: Thread baþlatýldý
+DEBUG: load_sources_worker baþladý
+DEBUG: show_anime_details tamamlandý
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 0.32s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.77s
+DEBUG: TürkAnime tamamlandý - 5 bölüm
+DEBUG: TürkAnime tamamlandý: 1.06s
+DEBUG: Anizle tamamlandý - 5 bölüm
+DEBUG: Anizle tamamlandý: 1.06s
+DEBUG: AnimeciX tamamlandý - 33 bölüm
+DEBUG: AnimeciX tamamlandý: 1.37s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'TürkAnime', 'Anizle', 'AnimeciX']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'TürkAnime', 'Anizle', 'AnimeciX']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+DEBUG: show_anime_details çaðrýldý: Sousou no Frieren 2nd Season (rid=acc051ca)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: show_anime_details tamamlandý
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 0.34s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.82s
+DEBUG: TürkAnime tamamlandý - 5 bölüm
+DEBUG: TürkAnime tamamlandý: 0.96s
+DEBUG: Anizle tamamlandý - 5 bölüm
+DEBUG: Anizle tamamlandý: 1.06s
+DEBUG: AnimeciX tamamlandý - 33 bölüm
+DEBUG: AnimeciX tamamlandý: 1.48s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'TürkAnime', 'Anizle', 'AnimeciX']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'TürkAnime', 'Anizle', 'AnimeciX']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: Yuusha Party wo Oidasareta Kiyoubinbou (rid=a1cdde70)
+DEBUG: Thread baþlatýlýyor
+DEBUG: Thread baþlatýldý
+DEBUG: load_sources_worker baþladý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.54s
+DEBUG: AnimeciX tamamlandý - 9 bölüm
+DEBUG: AnimeciX tamamlandý: 0.77s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 1.05s
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 3.14s
+DEBUG: Anizle tamamlandý - 9 bölüm
+DEBUG: Anizle tamamlandý: 5.82s
+INFO: Baþarýyla yüklenen kaynaklar: AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'AnimeciX', 'Anizle']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'AnimeciX', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+DEBUG: show_anime_details çaðrýldý: Yuusha Party wo Oidasareta Kiyoubinbou (rid=de145395)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: TRAnimeÝzle - sonuç bulunamadý
+DEBUG: TRAnimeÝzle tamamlandý: 0.40s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 0.79s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.82s
+DEBUG: AnimeciX tamamlandý - 9 bölüm
+DEBUG: AnimeciX tamamlandý: 1.06s
+DEBUG: Anizle tamamlandý - 9 bölüm
+DEBUG: Anizle tamamlandý: 1.10s
+INFO: Baþarýyla yüklenen kaynaklar: AnimeciX, AniList, Anizle
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime, TRAnimeÝzle
+DEBUG: all_episodes set to: ['AniList', 'AnimeciX', 'Anizle']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'AnimeciX', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi

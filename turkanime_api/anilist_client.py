@@ -51,9 +51,7 @@ class AniListClient:
             ("redirect_uri", self.redirect_uri),
             ("response_type", response_type),
         ]
-        # Scope code akışında gerekli değildir; implicit (token) akışında eklenebilir.
-        if response_type == "token":
-            params.append(("scope", "user:read"))
+        # AniList API scope desteklemiyor — parametre eklemeye gerek yok.
         if state:
             params.append(("state", state))
 
@@ -88,7 +86,7 @@ class AniListClient:
             token_data = response.json()
 
             self.access_token = token_data.get('access_token')
-            self.refresh_token = token_data.get('refresh_token')
+            # AniList refresh token desteklemiyor — sadece access_token kaydedilir
             try:
                 self._save_tokens()
             except Exception:
@@ -99,36 +97,18 @@ class AniListClient:
             return False
 
     def refresh_access_token(self) -> bool:
-        """Refresh access token using refresh token."""
-        if not self.refresh_token:
-            return False
+        """AniList refresh token desteklemiyor. Token süresi dolunca yeniden giriş gerekir.
 
-        data = {
-            'grant_type': 'refresh_token',
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
-            'refresh_token': self.refresh_token
-        }
-
-        try:
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
-            response = requests.post(self.TOKEN_URL, data=data, headers=headers, timeout=10)
-            response.raise_for_status()
-            token_data = response.json()
-
-            self.access_token = token_data.get('access_token')
-            self.refresh_token = token_data.get('refresh_token')
-            try:
-                self._save_tokens()
-            except Exception:
-                pass
-            return True
-        except Exception as e:
-            print(f"Token refresh failed: {e}")
-            return False
+        Not: AniList token'ları 1 yıl geçerlidir. Süresi dolduğunda
+        kullanıcı tekrar OAuth2 ile giriş yapmalıdır.
+        """
+        # AniList API refresh token'ları desteklemiyor
+        # https://docs.anilist.co/guide/auth/
+        print("[AniList] Token yenileme desteklenmiyor. Yeniden giriş yapın.")
+        return False
 
     def _make_request(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Make authenticated GraphQL request with basic token refresh retry."""
+        """Make authenticated GraphQL request."""
         headers = {'Content-Type': 'application/json'}
         if self.access_token:
             headers['Authorization'] = f'Bearer {self.access_token}'
@@ -137,27 +117,21 @@ class AniListClient:
         if variables:
             data['variables'] = variables
 
-        def do_request() -> Optional[requests.Response]:
-            try:
-                resp = requests.post(self.BASE_URL, headers=headers, json=data, timeout=10)
-                return resp
-            except Exception as e:
-                print(f"API request failed: {e}")
-                return None
-
-        response = do_request()
-        if response is None:
+        try:
+            response = requests.post(self.BASE_URL, headers=headers, json=data, timeout=10)
+        except Exception as e:
+            print(f"API request failed: {e}")
             return None
 
-        # If unauthorized, try a one-time refresh (when available)
-        if response.status_code == 401 and self.refresh_token:
-            if self.refresh_access_token():
-                # Update header with new token and retry
-                if self.access_token:
-                    headers['Authorization'] = f'Bearer {self.access_token}'
-                response = do_request()
-                if response is None:
-                    return None
+        # Token süresi dolmuşsa (1 yıl) kullanıcıyı bilgilendir
+        if response.status_code == 401:
+            print("[AniList] Token geçersiz veya süresi dolmuş. Yeniden giriş gerekli.")
+            self.access_token = None
+            try:
+                self._save_tokens()
+            except Exception:
+                pass
+            return None
 
         try:
             response.raise_for_status()
@@ -450,7 +424,6 @@ class AniListClient:
         with open(path, 'w', encoding='utf-8') as f:
             json.dump({
                 'access_token': self.access_token,
-                'refresh_token': self.refresh_token,
             }, f)
 
     def _load_tokens(self) -> None:
@@ -459,7 +432,6 @@ class AniListClient:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 self.access_token = data.get('access_token')
-                self.refresh_token = data.get('refresh_token')
 
     # --- config persistence (client_id, client_secret, redirect_uri) ---
     def _config_path(self) -> str:

@@ -7,7 +7,7 @@ import customtkinter as ctk
 from typing import List, Dict, Any, Callable, Optional
 import threading
 import re
-from .adapters import AniListAdapter, TurkAnimeAdapter, AnimeciXAdapter, AnizleAdapter, AnimelyAdapter
+from .adapters import AniListAdapter, TurkAnimeAdapter, AnimeciXAdapter, AnizleAdapter
 
 
 def extract_episode_info(title: str) -> tuple[int, int]:
@@ -178,7 +178,7 @@ class AccordionSourceEpisodeList:
         
         # Sayfalama
         self.current_page = 0
-        self.episodes_per_page = 30
+        self.episodes_per_page = 15
         self.loaded_count = 0
         
         # Bölüm durumları
@@ -455,8 +455,16 @@ class AccordionSourceEpisodeList:
         self._load_more_episodes()
 
     def _create_episode_rows(self, episodes: List[Dict], start_number: int):
-        """Bölüm satırlarını oluştur - optimize edilmiş."""
-        for idx, merged_ep in enumerate(episodes):
+        """Bölüm satırlarını oluştur - batch rendering ile optimize edilmiş."""
+        self._batch_render_episodes(episodes, 0, start_number)
+
+    def _batch_render_episodes(self, episodes: List[Dict], batch_start: int, start_number: int):
+        """Bölüm satırlarını 10'luk batch'ler halinde after_idle ile render et."""
+        BATCH_SIZE = 10
+        batch_end = min(batch_start + BATCH_SIZE, len(episodes))
+
+        for idx in range(batch_start, batch_end):
+            merged_ep = episodes[idx]
             ep_num = merged_ep['number']
             ep_title = merged_ep['title']
             sources = merged_ep['sources']
@@ -491,25 +499,28 @@ class AccordionSourceEpisodeList:
             sources_frame = ctk.CTkFrame(ep_frame, fg_color="transparent")
             sources_frame.pack(side="right", padx=10, pady=8)
             
-            # Her kaynak için buton - sadece mevcut olanlar
+            # Her kaynak için buton - dinamik renk ve kısaltma haritası
             source_colors = {
                 "TürkAnime": ("#ffd93d", "#e6c235"),
                 "AnimeciX": ("#ff6b6b", "#e65c5c"),
-                "Anizle": ("#9b59b6", "#8e44ad")
+                "Anizle": ("#9b59b6", "#8e44ad"),
+                "TRAnimeİzle": ("#e84393", "#c0392b"),
             }
             
-            # Kaynak kısaltmaları ve tam isimleri
+            # Kaynak kısaltmaları
             source_short_names = {
                 "TürkAnime": "TA",
                 "AnimeciX": "CX", 
-                "Anizle": "AZ"
+                "Anizle": "AZ",
+                "TRAnimeİzle": "TR",
             }
             
-            for source_name in ["Anizle", "AnimeciX", "TürkAnime"]:  # Ters sıra (sağdan sola)
+            # Dinamik: mevcut tüm kaynaklar için buton oluştur
+            for source_name in sorted(sources.keys(), reverse=True):
                 if source_name in sources:
                     ep_obj = sources[source_name].get('obj')
                     colors = source_colors.get(source_name, ("#666666", "#555555"))
-                    short_name = source_short_names.get(source_name, source_name[:2])
+                    short_name: str = source_short_names.get(source_name) or source_name[:2]
                     
                     # Kaynak butonu frame
                     source_btn_frame = ctk.CTkFrame(sources_frame, fg_color=colors[0], corner_radius=4)
@@ -545,6 +556,12 @@ class AccordionSourceEpisodeList:
             
             # Episode referansını sakla (seçim için) - TÜM kaynakları sakla
             self.episode_checkboxes[ep_key] = (var, checkbox, sources)
+
+        # Sonraki batch varsa after_idle ile planla
+        if batch_end < len(episodes):
+            self.episodes_frame.after_idle(
+                lambda: self._batch_render_episodes(episodes, batch_end, start_number)
+            )
 
     def _on_episode_toggle(self, var: ctk.BooleanVar, ep_key: str):
         """Bölüm checkbox'ı değiştiğinde."""
@@ -620,7 +637,7 @@ class AccordionSourceEpisodeList:
                             self.main_window.episodes_objs.append(ep_data['obj'])
                         break
 
-    def get_selected_episodes(self, source_name: str = None) -> List[Any]:
+    def get_selected_episodes(self, source_name: Optional[str] = None) -> List[Any]:
         """Seçili bölümlerin objelerini döndür.
         
         Args:
@@ -778,7 +795,7 @@ class AccordionSourceEpisodeList:
                                   command=dialog.destroy)
         cancel_btn.pack(pady=15)
 
-    def _safe_play(self, episode_obj, source_name: str = None):
+    def _safe_play(self, episode_obj, source_name: Optional[str] = None):
         """Güvenli oynatma."""
         if self.on_play and episode_obj:
             try:
@@ -786,7 +803,7 @@ class AccordionSourceEpisodeList:
             except Exception as e:
                 print(f"Oynatma hatası: {e}")
 
-    def _safe_download(self, episode_obj, source_name: str = None):
+    def _safe_download(self, episode_obj, source_name: Optional[str] = None):
         """Güvenli indirme - tek bölüm."""
         if self.on_download and episode_obj:
             try:

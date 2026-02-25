@@ -6,7 +6,9 @@ farklı yöntemleri bir arada sunar:
 
 1. curl_cffi - Firefox/Chrome TLS fingerprint taklidi
 2. cloudscraper - JS Challenge çözümü
-3. undetected-chromedriver - Selenium tabanlı tam bypass
+3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu)
+4. undetected-chromedriver - Selenium tabanlı tam bypass
+5. Normal requests - Fallback
 
 Kullanım:
     from turkanime_api.common.cf_bypass import CFSession
@@ -67,9 +69,13 @@ class CFSession:
     Sırasıyla şu yöntemleri dener:
     1. curl_cffi (Firefox TLS fingerprint)
     2. cloudscraper (JS Challenge)
-    3. undetected-chromedriver (Selenium)
-    4. Normal requests (fallback)
+    3. FlareSolverr (uzak headless browser)
+    4. undetected-chromedriver (Selenium)
+    5. Normal requests (fallback)
     """
+
+    # Varsayılan FlareSolverr adresi
+    DEFAULT_FLARESOLVERR_URL = "http://node-kyb.bariskeser.com:8191"
 
     def __init__(
         self,
@@ -77,17 +83,20 @@ class CFSession:
         timeout: int = 30,
         max_retries: int = 3,
         retry_delay: float = 2.0,
+        flaresolverr_url: Optional[str] = None,
     ):
         self.impersonate = impersonate
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.flaresolverr_url = flaresolverr_url or self.DEFAULT_FLARESOLVERR_URL
         
         self._curl_session: Optional[Any] = None
         self._cloud_session: Optional[Any] = None
         self._uc_driver: Optional[Any] = None
         self._cookies: Dict[str, str] = {}
         self._last_method: Optional[str] = None
+        self._flaresolverr_user_agent: Optional[str] = None
         
         # Hangi yöntemlerin mevcut olduğunu kontrol et
         self._available_methods = []
@@ -95,6 +104,7 @@ class CFSession:
             self._available_methods.append("curl_cffi")
         if HAS_CLOUDSCRAPER:
             self._available_methods.append("cloudscraper")
+        self._available_methods.append("flaresolverr")  # Her zaman denenebilir
         if HAS_UC:
             self._available_methods.append("undetected_chrome")
         self._available_methods.append("requests")  # Her zaman mevcut
@@ -211,6 +221,68 @@ class CFSession:
             print(f"[CF Bypass] cloudscraper hatası: {e}")
         return None
 
+    def _try_flaresolverr(self, url: str, method: str = "GET", post_data: Optional[str] = None) -> Optional[requests.Response]:
+        """FlareSolverr ile CF bypass dene.
+        
+        FlareSolverr uzak bir headless browser sunucusudur.
+        API: POST http://host:8191/v1
+        """
+        try:
+            api_url = f"{self.flaresolverr_url.rstrip('/')}/v1"
+            payload: Dict[str, Any] = {
+                "cmd": f"request.{method.lower()}",
+                "url": url,
+                "maxTimeout": 60000,
+            }
+            if method.upper() == "POST" and post_data:
+                payload["postData"] = post_data
+
+            resp = requests.post(api_url, json=payload, timeout=65)
+            resp.raise_for_status()
+            data = resp.json()
+
+            if data.get("status") != "ok":
+                print(f"[CF Bypass] FlareSolverr durum hatası: {data.get('message', 'bilinmeyen')}")
+                return None
+
+            solution = data.get("solution", {})
+            sol_status = solution.get("status", 0)
+
+            if sol_status != 200:
+                print(f"[CF Bypass] FlareSolverr HTTP {sol_status}")
+                return None
+
+            # Çerezleri kaydet
+            for cookie in solution.get("cookies", []):
+                name = cookie.get("name", "")
+                value = cookie.get("value", "")
+                if name and value:
+                    self._cookies[name] = value
+
+            # User-Agent'i sakla
+            ua = solution.get("userAgent")
+            if ua:
+                self._flaresolverr_user_agent = ua
+
+            # Sahte Response nesnesi oluştur
+            html_content = solution.get("response", "")
+            fake_resp = requests.Response()
+            fake_resp.status_code = 200
+            fake_resp._content = html_content.encode("utf-8") if isinstance(html_content, str) else html_content
+            fake_resp.headers["Content-Type"] = "text/html; charset=utf-8"
+            fake_resp.url = solution.get("url", url)
+
+            self._last_method = "flaresolverr"
+            return fake_resp
+
+        except requests.exceptions.ConnectionError:
+            print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı")
+        except requests.exceptions.Timeout:
+            print("[CF Bypass] FlareSolverr zaman aşımı")
+        except Exception as e:
+            print(f"[CF Bypass] FlareSolverr hatası: {e}")
+        return None
+
     def _try_undetected_chrome(self, url: str, headers: Dict[str, str]) -> Optional[str]:
         """undetected-chromedriver ile sayfa al (sadece GET)."""
         if not HAS_UC:
@@ -291,7 +363,12 @@ class CFSession:
             if resp is not None:
                 return resp
             
-            # 3. undetected-chrome dene (HTML döner, Response değil)
+            # 3. FlareSolverr dene
+            resp = self._try_flaresolverr(url, "GET")
+            if resp is not None:
+                return resp
+            
+            # 4. undetected-chrome dene (HTML döner, Response değil)
             html = self._try_undetected_chrome(url, headers)
             if html is not None:
                 # Sahte Response nesnesi oluştur
@@ -301,7 +378,7 @@ class CFSession:
                 fake_resp.headers["Content-Type"] = "text/html; charset=utf-8"
                 return fake_resp
             
-            # 4. Normal requests dene
+            # 5. Normal requests dene
             resp = self._try_requests_fallback(url, headers, "GET", **kwargs)
             if resp is not None:
                 return resp
@@ -324,6 +401,15 @@ class CFSession:
                 return resp
             
             resp = self._try_cloudscraper(url, headers, "POST", **kwargs)
+            if resp is not None:
+                return resp
+            
+            # FlareSolverr POST desteği
+            post_data = kwargs.get("data", "")
+            if isinstance(post_data, dict):
+                from urllib.parse import urlencode
+                post_data = urlencode(post_data)
+            resp = self._try_flaresolverr(url, "POST", post_data=str(post_data) if post_data else None)
             if resp is not None:
                 return resp
             
@@ -382,7 +468,17 @@ def get_cf_session() -> CFSession:
     """Global CF session'ı döndür (singleton)."""
     global _global_session
     if _global_session is None:
-        _global_session = CFSession()
+        # Ayarlardan FlareSolverr URL'sini oku
+        flaresolverr_url = None
+        try:
+            from turkanime_api.cli.dosyalar import Dosyalar
+            dosya = Dosyalar()
+            flaresolverr_url = dosya.ayarlar.get("flaresolverr_url", "")
+        except Exception:
+            pass
+        _global_session = CFSession(
+            flaresolverr_url=flaresolverr_url or None
+        )
     return _global_session
 
 

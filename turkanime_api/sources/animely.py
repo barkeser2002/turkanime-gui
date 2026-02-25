@@ -371,7 +371,7 @@ def get_anime_by_id(anime_id: int) -> Optional[AnimelyAnime]:
     return None
 
 
-def get_anime_url(slug: str, episode_number: int = None) -> str:
+def get_anime_url(slug: str, episode_number: Optional[int] = None) -> str:
     """
     Anime veya bölüm URL'i oluştur.
     
@@ -382,7 +382,7 @@ def get_anime_url(slug: str, episode_number: int = None) -> str:
     Returns:
         str: Tam URL
     """
-    if episode_number:
+    if episode_number is not None:
         return f"{BASE_URL}/anime/{slug}/izle/{episode_number}"
     return f"{BASE_URL}/anime/{slug}"
 

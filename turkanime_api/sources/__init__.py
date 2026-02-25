@@ -6,7 +6,6 @@ yardımıyla sisteme kaydedilebilir.
 
 from .animecix import CixAnime, search_animecix  # noqa: F401
 from .anizle import AnizleAnime, search_anizle  # noqa: F401
-from .animely import AnimelyAnime, search_animely, get_anime_episodes as get_animely_episodes  # noqa: F401
 from .tranime import (  # noqa: F401
     TRAnimeAnime, TRAnimeEpisode, TRAnimeVideo,
     search_tranime, get_anime_by_slug as get_tranime_anime,
@@ -29,17 +28,11 @@ PROVIDERS = {
         "enabled": True,
         "priority": 2
     },
-    "animely": {
-        "name": "Animely",
-        "adapter": None,
-        "enabled": True,
-        "priority": 3
-    },
     "tranime": {
         "name": "TRAnimeİzle",
         "adapter": None,
         "enabled": True,
-        "priority": 4
+        "priority": 3
     }
 }
 

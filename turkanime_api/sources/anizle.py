@@ -68,7 +68,7 @@ def _get_cf_session() -> Any:
     return _cf_session
 
 
-def _http_get(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = None) -> Optional[requests.Response]:
+def _http_get(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = None) -> Optional[Any]:
     """HTTP GET isteği yap (curl_cffi ile)."""
     
     default_headers = {
@@ -101,7 +101,7 @@ def _http_get(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = N
         return None
 
 
-def _http_post(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = None, data: Optional[Dict] = None) -> Optional[requests.Response]:
+def _http_post(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = None, data: Optional[Dict] = None) -> Optional[Any]:
     """HTTP POST isteği yap (curl_cffi ile)."""
     
     default_headers = {
@@ -332,38 +332,58 @@ def _fetch_all_episodes_from_page(slug: str, timeout: int = 60) -> List[Tuple[st
         html = response.text
         
         # Bölüm linklerini regex ile çek
-        # Format: href="/episode-slug" data-order="X" title="Episode Title"
-        # veya: <a href="/episode-slug">Episode Title</a>
+        # Site hem absolute hem relative URL kullanabilir:
+        # href="https://anizm.pro/anime-slug-1-bolum-izle"
+        # href="/anime-slug-1-bolum-izle"
         
         episodes: List[Tuple[int, str, str]] = []
         seen_episode_nums: set = set()  # Bölüm numarasına göre duplikasyon kontrolü
         
-        # Pattern 1: data-order ile
-        pattern1 = r'href="/?([^"]+?-bolum[^"]*)"[^>]*data-order="(\d+)"[^>]*>([^<]+)'
-        matches1 = re.findall(pattern1, html, re.IGNORECASE)
-        for ep_slug, order, title in matches1:
-            ep_slug_clean = ep_slug.strip('/')
-            try:
-                order_num = int(order)
-                if order_num not in seen_episode_nums:
-                    seen_episode_nums.add(order_num)
-                    episodes.append((order_num, ep_slug_clean, title.strip()))
-            except ValueError:
-                pass
-        
-        # Pattern 2: Basit link
-        pattern2 = r'href="/?([^"]+?-(\d+)-bolum[^"]*)"[^>]*>([^<]*)'
-        matches2 = re.findall(pattern2, html, re.IGNORECASE)
-        for ep_slug, ep_num, title in matches2:
+        # Pattern 1: Absolute URL (https://anizm.pro/slug-N-bolum-izle)
+        abs_pattern = re.escape(BASE_URL) + r'/([^"]+?-(\d+)-bolum[^"]*)'
+        matches_abs = re.findall(r'href="' + abs_pattern + r'"', html, re.IGNORECASE)
+        for ep_slug, ep_num in matches_abs:
             ep_slug_clean = ep_slug.strip('/')
             try:
                 order_num = int(ep_num)
                 if order_num not in seen_episode_nums:
                     seen_episode_nums.add(order_num)
-                    final_title = title.strip() if title.strip() else f"{ep_num}. Bölüm"
-                    episodes.append((order_num, ep_slug_clean, final_title))
+                    episodes.append((order_num, ep_slug_clean, f"{ep_num}. Bölüm"))
             except ValueError:
                 pass
+        
+        # Pattern 2: data-order ile (relative veya absolute)
+        if not episodes:
+            pattern1 = r'href="(?:' + re.escape(BASE_URL) + r')?/?([^"]+?-bolum[^"]*)"[^>]*data-order="(\d+)"[^>]*>([^<]+)'
+            matches1 = re.findall(pattern1, html, re.IGNORECASE)
+            for ep_slug, order, title in matches1:
+                ep_slug_clean = ep_slug.strip('/')
+                try:
+                    order_num = int(order)
+                    if order_num not in seen_episode_nums:
+                        seen_episode_nums.add(order_num)
+                        episodes.append((order_num, ep_slug_clean, title.strip()))
+                except ValueError:
+                    pass
+        
+        # Pattern 3: Relative URL fallback
+        if not episodes:
+            pattern2 = r'href="/?([^"]+?-(\d+)-bolum[^"]*)"[^>]*>([^<]*)'
+            matches2 = re.findall(pattern2, html, re.IGNORECASE)
+            for ep_slug, ep_num, title in matches2:
+                ep_slug_clean = ep_slug.strip('/')
+                # Absolute URL temizleme
+                if ep_slug_clean.startswith(('http://', 'https://')):
+                    from urllib.parse import urlparse
+                    ep_slug_clean = urlparse(ep_slug_clean).path.strip('/')
+                try:
+                    order_num = int(ep_num)
+                    if order_num not in seen_episode_nums:
+                        seen_episode_nums.add(order_num)
+                        final_title = title.strip() if title.strip() else f"{ep_num}. Bölüm"
+                        episodes.append((order_num, ep_slug_clean, final_title))
+                except ValueError:
+                    pass
         
         if not episodes:
             return _get_episodes_remote(slug, timeout)
@@ -599,41 +619,61 @@ def _get_episode_translators(episode_slug: str) -> List[Dict[str, str]]:
     # URL'yi düzelt
     clean_slug = episode_slug
     if clean_slug.startswith(("http://", "https://")):
-        # Tam URL verilmişse
-        url = clean_slug
+        # Tam URL verilmişse — anizm.pro URL'sini anizle.org'a çevir
+        if "anizm.pro" in clean_slug:
+            from urllib.parse import urlparse
+            path = urlparse(clean_slug).path
+            url = f"{API_BASE_URL}{path}"
+        else:
+            url = clean_slug
     else:
         clean_slug = clean_slug.lstrip("/")
         url = f"{API_BASE_URL}/{clean_slug}"
     
-    try:
-        response = _http_get(url)
+    # anizle.org'da dene, sonra anizm.pro dene
+    urls_to_try = [url]
+    if API_BASE_URL in url:
+        urls_to_try.append(url.replace(API_BASE_URL, BASE_URL))
+    elif BASE_URL in url:
+        urls_to_try.insert(0, url.replace(BASE_URL, API_BASE_URL))
+    
+    for try_url in urls_to_try:
+        try:
+            response = _http_get(try_url)
+            
+            if response is None or response.status_code != 200:
+                continue
+            
+            html = response.text
+            
+            # translator attribute'li elementleri bul
+            # translator="https://anizle.org/episode/18851/translator/83196"
+            # data-fansub-name="VictoriaSubs"
+            pattern = r'translator="([^"]+)"[^>]*data-fansub-name="([^"]*)"'
+            matches = re.findall(pattern, html)
+            
+            # Alternatif sıralama: data-fansub-name önce
+            if not matches:
+                pattern2 = r'data-fansub-name="([^"]*)"[^>]*translator="([^"]+)"'
+                matches2 = re.findall(pattern2, html)
+                matches = [(url, name) for name, url in matches2]
+            
+            seen_urls = set()
+            for tr_url, fansub_name in matches:
+                if tr_url not in seen_urls:
+                    seen_urls.add(tr_url)
+                    translators.append({
+                        "url": tr_url,
+                        "name": fansub_name or "Fansub"
+                    })
+            
+            if translators:
+                return translators
         
-        if response is None or response.status_code != 200:
-            print(f"[Anizle] Episode sayfası alınamadı: {url}")
-            return []
-        
-        html = response.text
-        
-        # translator attribute'li elementleri bul
-        # translator="https://anizle.org/episode/18851/translator/83196"
-        # data-fansub-name="VictoriaSubs"
-        pattern = r'translator="([^"]+)"[^>]*data-fansub-name="([^"]*)"'
-        matches = re.findall(pattern, html)
-        
-        seen_urls = set()
-        for tr_url, fansub_name in matches:
-            if tr_url not in seen_urls:
-                seen_urls.add(tr_url)
-                translators.append({
-                    "url": tr_url,
-                    "name": fansub_name or "Fansub"
-                })
-        
-        return translators
-        
-    except Exception as e:
-        print(f"[Anizle] Translator listesi hatası: {e}")
-        return []
+        except Exception as e:
+            print(f"[Anizle] Translator listesi hatası ({try_url}): {e}")
+    
+    return translators
 
 
 def _process_single_video(video_info: Dict[str, str]) -> Optional[Dict[str, str]]:

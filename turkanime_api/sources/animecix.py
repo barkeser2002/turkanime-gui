@@ -88,14 +88,38 @@ def _seasons_for_title(title_id: int) -> List[int]:
     except (ValueError, TypeError):
         safe_id = hash(str(title_id)) % 1000000 if title_id else 0
     
-    url = f"{ALT_URL}secure/related-videos?episode=1&season=1&titleId={safe_id}&videoId=637113"
-    data = json.loads(_http_get(url))
-    videos = data.get("videos") or []
-    if not videos:
+    # Önce title bilgisini al ve video ID'yi dinamik çek
+    video_id = ""
+    try:
+        title_url = f"{BASE_URL}secure/titles/{safe_id}"
+        title_data = json.loads(_http_get(title_url))
+        title_obj = title_data.get("title", title_data)
+        # İlk video'nun ID'sini bul
+        videos = title_obj.get("videos", [])
+        if videos:
+            video_id = str(videos[0].get("id", ""))
+        # Sezon sayısını direkt al
+        seasons = title_obj.get("seasons", [])
+        if seasons:
+            return list(range(len(seasons)))
+    except Exception:
+        pass
+    
+    # Fallback: related-videos endpoint
+    if not video_id:
+        video_id = "637113"  # Eski hardcoded değer
+    
+    url = f"{ALT_URL}secure/related-videos?episode=1&season=1&titleId={safe_id}&videoId={video_id}"
+    try:
+        data = json.loads(_http_get(url))
+        videos = data.get("videos") or []
+        if not videos:
+            return []
+        title = (videos[0] or {}).get("title") or {}
+        seasons = title.get("seasons") or []
+        return list(range(len(seasons)))
+    except Exception:
         return []
-    title = (videos[0] or {}).get("title") or {}
-    seasons = title.get("seasons") or []
-    return list(range(len(seasons)))
 
 
 def _episodes_for_title(title_id: int) -> List[Dict[str, Any]]:
@@ -105,23 +129,41 @@ def _episodes_for_title(title_id: int) -> List[Dict[str, Any]]:
     except (ValueError, TypeError):
         safe_id = hash(str(title_id)) % 1000000 if title_id else 0
     
+    # Dinamik video ID al
+    video_id = ""
+    try:
+        title_url = f"{BASE_URL}secure/titles/{safe_id}"
+        title_data = json.loads(_http_get(title_url))
+        title_obj = title_data.get("title", title_data)
+        videos = title_obj.get("videos", [])
+        if videos:
+            video_id = str(videos[0].get("id", ""))
+    except Exception:
+        pass
+    
+    if not video_id:
+        video_id = "637113"  # Eski hardcoded fallback
+    
     episodes: List[Dict[str, Any]] = []
     seen = set()
     for sidx in _seasons_for_title(safe_id):
         url = (
             f"{ALT_URL}secure/related-videos?"
-            f"episode=1&season={sidx+1}&titleId={safe_id}&videoId=637113"
+            f"episode=1&season={sidx+1}&titleId={safe_id}&videoId={video_id}"
         )
-        data = json.loads(_http_get(url))
-        for v in data.get("videos", []):
-            name = v.get("name")
-            ep_url = v.get("url")
-            if not name or not ep_url:
-                continue
-            if name in seen:
-                continue
-            episodes.append({"name": name, "url": ep_url, "season_num": v.get("season_num")})
-            seen.add(name)
+        try:
+            data = json.loads(_http_get(url))
+            for v in data.get("videos", []):
+                name = v.get("name")
+                ep_url = v.get("url")
+                if not name or not ep_url:
+                    continue
+                if name in seen:
+                    continue
+                episodes.append({"name": name, "url": ep_url, "season_num": v.get("season_num")})
+                seen.add(name)
+        except Exception:
+            continue
     return episodes
 
 

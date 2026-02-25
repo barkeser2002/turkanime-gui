@@ -11,7 +11,10 @@ import subprocess as sp
 import re
 import json
 from yt_dlp import YoutubeDL
-from yt_dlp.networking.impersonate import ImpersonateTarget
+try:
+    from yt_dlp.networking.impersonate import ImpersonateTarget
+except ImportError:
+    ImpersonateTarget = None
 from .common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 from .bypass import get_real_url, unmask_real_url, fetch, get_alucard_m3u8

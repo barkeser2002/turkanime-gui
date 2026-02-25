@@ -285,28 +285,3 @@ class AdapterBolum:
             return vid
         callback({"current": 1, "total": 1, "player": player_label, "status": "çalışmıyor"})
         return None
-
-
-class SearchEngine:
-    def __init__(self):
-        from ..common.adapters import AniListAdapter, TurkAnimeAdapter, AnimeciXAdapter
-        self.adapters = {
-            "AniList": AniListAdapter(),
-            "TürkAnime": TurkAnimeAdapter(),
-            "AnimeciX": AnimeciXAdapter()
-        }
-    
-    def search_all_sources(self, query, limit_per_source=10):
-        results = {}
-        # Tüm adapter'ları kullanarak arama yap
-        for source_name, adapter in self.adapters.items():
-            try:
-                results[source_name] = adapter.search_anime(query, limit=limit_per_source)
-            except Exception:
-                results[source_name] = []
-        
-        return results
-    
-    def get_adapter(self, source_name):
-        """Kaynak adına göre adapter döndürür."""
-        return self.adapters.get(source_name)

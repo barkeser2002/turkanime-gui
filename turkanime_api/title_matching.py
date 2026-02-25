@@ -37,7 +37,7 @@ class TitleMatchingClient:
     # Local cache file
     CACHE_FILE = "anime_matches_cache.json"
     
-    def __init__(self, api_url: str = None):
+    def __init__(self, api_url: Optional[str] = None):
         if api_url:
             self.API_BASE_URL = api_url
         
@@ -48,7 +48,7 @@ class TitleMatchingClient:
         })
         
         # Local cache for offline access
-        self._cache: Dict[str, List[AnimeMatch]] = {}
+        self._cache: Dict[str, Any] = {}
         self._load_cache()
     
     def _get_cache_path(self) -> str:
@@ -143,9 +143,9 @@ class TitleMatchingClient:
         return matches
     
     def save_match(self, source: str, anime_id: str, anime_title: str,
-                   title_romaji: str = None, title_english: str = None,
-                   title_native: str = None, anilist_id: int = None,
-                   mal_id: int = None) -> bool:
+                   title_romaji: Optional[str] = None, title_english: Optional[str] = None,
+                   title_native: Optional[str] = None, anilist_id: Optional[int] = None,
+                   mal_id: Optional[int] = None) -> bool:
         """
         Save anime match to API.
         
@@ -204,7 +204,7 @@ class TitleMatchingClient:
             'created_at': match.created_at
         }
     
-    def find_match_for_anime(self, anime_title: str, source: str = None) -> Optional[AnimeMatch]:
+    def find_match_for_anime(self, anime_title: str, source: Optional[str] = None) -> Optional[AnimeMatch]:
         """
         Find matching anime entry across all sources.
         
@@ -241,7 +241,7 @@ class TitleMatchingClient:
         
         return result
     
-    def get_episode_matches(self, episode_title: str, anime_title: str = None) -> List[Dict]:
+    def get_episode_matches(self, episode_title: str, anime_title: Optional[str] = None) -> Dict[str, Any]:
         """
         Find matching episodes across sources.
         
@@ -274,7 +274,7 @@ class UserTrackingClient:
     
     API_BASE_URL = "https://turkanimeapi.bariskeser.com"
     
-    def __init__(self, user_id: str, api_url: str = None):
+    def __init__(self, user_id: str, api_url: Optional[str] = None):
         self.user_id = user_id
         if api_url:
             self.API_BASE_URL = api_url
@@ -352,7 +352,7 @@ class UserTrackingClient:
         """Mark episode as downloaded."""
         return self._update_status(episode_id, downloaded=downloaded)
     
-    def _update_status(self, episode_id: str, watched: bool = None, downloaded: bool = None) -> bool:
+    def _update_status(self, episode_id: str, watched: Optional[bool] = None, downloaded: Optional[bool] = None) -> bool:
         """Update episode status."""
         # Get current status
         current = self._episode_status.get(episode_id, {'watched': False, 'downloaded': False})

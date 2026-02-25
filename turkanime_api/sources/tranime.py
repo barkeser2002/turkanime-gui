@@ -22,8 +22,9 @@ try:
     from curl_cffi import requests as curl_requests
     HAS_CURL = True
 except ImportError:
-    import requests as std_requests
     HAS_CURL = False
+
+import requests as std_requests
 
 # ─────────────────────────────────────────────────────────────────────────────
 # YAPILANDIRMA
@@ -36,12 +37,56 @@ HTTP_TIMEOUT = 15
 # Cookie - bot korumasını aşmak için gerekli
 # Bu cookie kullanıcının tarayıcısından alınmalı
 SESSION_COOKIE = None
+# Ek cookie'ler (age_verified, Verification vb.)
+_EXTRA_COOKIES: Dict[str, str] = {}
 
 
 def set_session_cookie(cookie_value: str):
-    """Session cookie'yi ayarla."""
-    global SESSION_COOKIE
-    SESSION_COOKIE = unquote(cookie_value) if '%' in cookie_value else cookie_value
+    """Session cookie'yi ayarla.
+
+    Netscape HTTP Cookie File formatını da kabul eder.
+    Eğer birden fazla satır varsa ve 'tranimeizle' içeriyorsa,
+    tüm cookie'ler otomatik olarak parse edilir.
+    Tek satır verilirse sadece .AitrWeb.Session olarak kullanılır.
+    """
+    global SESSION_COOKIE, _EXTRA_COOKIES
+    value = cookie_value.strip()
+    if not value:
+        SESSION_COOKIE = None
+        _EXTRA_COOKIES = {}
+        return
+
+    # Netscape cookie file formatı kontrolü (birden fazla satır + tab ayrımı)
+    lines = value.splitlines()
+    parsed_cookies: Dict[str, str] = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = line.split('\t')
+        if len(parts) >= 7:
+            # Netscape: domain  flag  path  secure  expiry  name  value
+            name = parts[5].strip()
+            val = parts[6].strip()
+            if name and val:
+                parsed_cookies[name] = val
+
+    if parsed_cookies:
+        # Netscape formatı başarıyla parse edildi
+        session_val = parsed_cookies.pop('.AitrWeb.Session', '')
+        if session_val:
+            SESSION_COOKIE = unquote(session_val) if '%' in session_val else session_val
+        else:
+            # .AitrWeb.Session yoksa en uzun cookie'yi session olarak kullan
+            longest = max(parsed_cookies.items(), key=lambda x: len(x[1]), default=('', ''))
+            if longest[1]:
+                SESSION_COOKIE = unquote(longest[1]) if '%' in longest[1] else longest[1]
+                parsed_cookies.pop(longest[0], None)
+        _EXTRA_COOKIES = parsed_cookies
+    else:
+        # Tek satır — doğrudan .AitrWeb.Session değeri
+        SESSION_COOKIE = unquote(value) if '%' in value else value
+        _EXTRA_COOKIES = {}
 
 
 def _get_session():
@@ -57,10 +102,15 @@ def _get_session():
 
 
 def _get_cookies() -> dict:
-    """Cookie'leri döndür."""
+    """Cookie'leri döndür (Session + ek cookie'ler)."""
+    cookies: dict = {}
+    if _EXTRA_COOKIES:
+        cookies.update(_EXTRA_COOKIES)
     if SESSION_COOKIE:
-        return {'.AitrWeb.Session': SESSION_COOKIE}
-    return {}
+        cookies['.AitrWeb.Session'] = SESSION_COOKIE
+    # age_verified her zaman gönder
+    cookies.setdefault('age_verified', 'true')
+    return cookies if SESSION_COOKIE else {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +171,6 @@ class TRAnimeVideo:
             session = _get_session()
             resp = session.post(
                 f"{BASE_URL}/api/sourcePlayer/{self.source_id}",
-                impersonate="chrome110" if HAS_CURL else None,
                 cookies=_get_cookies(),
                 timeout=HTTP_TIMEOUT
             )
@@ -155,7 +204,7 @@ class TRAnimeEpisode:
     def url(self) -> str:
         return f"{BASE_URL}/{self.slug}"
     
-    def get_sources(self, fansub_id: str = None) -> List[TRAnimeVideo]:
+    def get_sources(self, fansub_id: Optional[str] = None) -> List[TRAnimeVideo]:
         """Bölümün video kaynaklarını al."""
         if not fansub_id and self.fansubs:
             fansub_id = self.fansubs[0][0]
@@ -168,7 +217,6 @@ class TRAnimeEpisode:
             resp = session.post(
                 f"{BASE_URL}/api/fansubSources",
                 json={"EpisodeId": self.episode_id, "FansubId": int(fansub_id)},
-                impersonate="chrome110" if HAS_CURL else None,
                 cookies=_get_cookies(),
                 timeout=HTTP_TIMEOUT
             )
@@ -241,7 +289,6 @@ def get_anime_by_slug(slug: str) -> Optional[TRAnimeAnime]:
         session = _get_session()
         resp = session.get(
             f"{BASE_URL}/anime/{slug}",
-            impersonate="chrome110" if HAS_CURL else None,
             cookies=_get_cookies(),
             timeout=HTTP_TIMEOUT
         )
@@ -249,16 +296,45 @@ def get_anime_by_slug(slug: str) -> Optional[TRAnimeAnime]:
         
         # Bot kontrolü varsa
         if 'Bot Kontrol' in resp.text:
-            print("[TRAnime] Bot kontrolü - cookie gerekli")
+            if not SESSION_COOKIE:
+                print("[TRAnime] Bot kontrolü - cookie ayarlanmamış. Ayarlar'dan TRAnimeİzle cookie'si girin.")
+            else:
+                print("[TRAnime] Bot kontrolü - cookie geçersiz veya süresi dolmuş. Yeni cookie alın.")
             return None
         
-        # Başlık
+        # Başlık - birden fazla yöntem dene
+        title = None
+        # Yöntem 1: H1
         title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', resp.text)
-        title = title_match.group(1).strip() if title_match else slug
+        if title_match:
+            title = title_match.group(1).strip()
+        # Yöntem 2: og:title
+        if not title:
+            og_match = re.search(r'<meta[^>]*property="og:title"[^>]*content="([^"]*)"', resp.text)
+            if og_match:
+                title = og_match.group(1).strip()
+        # Yöntem 3: <title> etiketi
+        if not title:
+            page_match = re.search(r'<title>([^<]+)</title>', resp.text)
+            if page_match:
+                title = page_match.group(1).split(' - ')[0].strip()
+        if not title:
+            title = slug.replace('-izle', '').replace('-', ' ').title()
         
-        # Poster
+        # Poster - birden fazla yöntem dene
+        poster = ""
         poster_match = re.search(r'<img[^>]*src="([^"]+)"[^>]*class="[^"]*thumbnail', resp.text)
-        poster = poster_match.group(1) if poster_match else ""
+        if poster_match:
+            poster = poster_match.group(1)
+        else:
+            og_img = re.search(r'<meta[^>]*property="og:image"[^>]*content="([^"]*)"', resp.text)
+            if og_img:
+                poster = og_img.group(1)
+            else:
+                poster_alt = re.search(r'<img[^>]*src="([^"]+)"[^>]*(?:alt|class)="[^"]*(?:poster|cover|thumbnail)[^"]*"', resp.text, re.I)
+                if poster_alt:
+                    poster = poster_alt.group(1)
+        
         if poster and not poster.startswith('http'):
             poster = BASE_URL + poster
         
@@ -290,14 +366,16 @@ def get_anime_episodes(anime_slug: str) -> List[TRAnimeEpisode]:
         session = _get_session()
         resp = session.get(
             f"{BASE_URL}/anime/{anime_slug}",
-            impersonate="chrome110" if HAS_CURL else None,
             cookies=_get_cookies(),
             timeout=HTTP_TIMEOUT
         )
         resp.raise_for_status()
         
         if 'Bot Kontrol' in resp.text:
-            print("[TRAnime] Bot kontrolü - cookie gerekli")
+            if not SESSION_COOKIE:
+                print("[TRAnime] Bot kontrolü - cookie ayarlanmamış. Ayarlar'dan TRAnimeİzle cookie'si girin.")
+            else:
+                print("[TRAnime] Bot kontrolü - cookie geçersiz veya süresi dolmuş.")
             return []
         
         # Bölüm linklerini bul
@@ -339,14 +417,16 @@ def get_episode_details(episode_slug: str) -> Optional[TRAnimeEpisode]:
         session = _get_session()
         resp = session.get(
             f"{BASE_URL}/{episode_slug}",
-            impersonate="chrome110" if HAS_CURL else None,
             cookies=_get_cookies(),
             timeout=HTTP_TIMEOUT
         )
         resp.raise_for_status()
         
         if 'Bot Kontrol' in resp.text:
-            print("[TRAnime] Bot kontrolü - cookie gerekli")
+            if not SESSION_COOKIE:
+                print("[TRAnime] Bot kontrolü - cookie ayarlanmamış. Ayarlar'dan TRAnimeİzle cookie'si girin.")
+            else:
+                print("[TRAnime] Bot kontrolü - cookie geçersiz veya süresi dolmuş.")
             return None
         
         # Episode ID
@@ -390,14 +470,16 @@ def search_by_letter(letter: str, page: int = 1) -> List[Tuple[str, str]]:
         session = _get_session()
         resp = session.get(
             f"{BASE_URL}/harfler/{letter.lower()}/sayfa-{page}",
-            impersonate="chrome110" if HAS_CURL else None,
             cookies=_get_cookies(),
             timeout=HTTP_TIMEOUT
         )
         resp.raise_for_status()
         
         if 'Bot Kontrol' in resp.text:
-            print("[TRAnime] Bot kontrolü - cookie gerekli")
+            if not SESSION_COOKIE:
+                print("[TRAnime] Bot kontrolü - cookie ayarlanmamış.")
+            else:
+                print("[TRAnime] Bot kontrolü - cookie geçersiz.")
             return []
         
         # Anime linklerini bul
@@ -416,12 +498,90 @@ def search_by_letter(letter: str, page: int = 1) -> List[Tuple[str, str]]:
         return []
 
 
+def _search_direct(query: str, limit: int = 10) -> List[Tuple[str, str]]:
+    """
+    Doğrudan arama sayfası üzerinden anime ara.
+    Site path-based arama kullanır: /arama/{query}
+    Cookie gerektirir - Bot kontrolü varsa boş döner.
+    
+    Args:
+        query: Arama sorgusu
+        limit: Maksimum sonuç sayısı
+        
+    Returns:
+        [(slug, title), ...]
+    """
+    if not SESSION_COOKIE:
+        return []
+    
+    try:
+        from urllib.parse import quote
+        encoded_query = quote(query.strip(), safe='')
+        search_url = f"{BASE_URL}/arama/{encoded_query}"
+        
+        session = _get_session()
+        resp = session.get(
+            search_url,
+            cookies=_get_cookies(),
+            timeout=HTTP_TIMEOUT,
+            allow_redirects=True
+        )
+        
+        if resp.status_code != 200 or 'Bot Kontrol' in resp.text:
+            return []
+        
+        # Anime linklerini bul
+        results = []
+        seen = set()
+        
+        # Pattern 1: h3/h4 iç içe link
+        pattern = r'href="/anime/([^"]+?)-izle"[^>]*>.*?<h\d[^>]*>([^<]+)</h\d>'
+        matches = re.findall(pattern, resp.text, re.DOTALL)
+        
+        for slug, title in matches:
+            if slug not in seen:
+                seen.add(slug)
+                results.append((slug, title.strip().replace(' İzle', '')))
+                if len(results) >= limit:
+                    break
+        
+        # Pattern 2: Sadece anime link'leri
+        if not results:
+            links = re.findall(r'href="/anime/([^"]+?)-izle"', resp.text)
+            for slug in links:
+                if slug not in seen:
+                    seen.add(slug)
+                    title = slug.replace('-', ' ').title()
+                    results.append((slug, title))
+                    if len(results) >= limit:
+                        break
+        
+        return results
+    except Exception:
+        return []
+
+
+def _fuzzy_match(query: str, text: str) -> float:
+    """Basit fuzzy eşleşme skoru hesapla."""
+    from difflib import SequenceMatcher
+    q = query.lower()
+    t = text.lower()
+    
+    if q == t:
+        return 1.0
+    if q in t:
+        return 0.9
+    if t in q:
+        return 0.7
+    return SequenceMatcher(None, q, t).ratio()
+
+
 def search_anime(query: str, limit: int = 10) -> List[Tuple[str, str]]:
     """
-    Anime ara (harfler sayfasından).
+    Anime ara.
     
-    Not: Site arama özelliği bot korumalı olduğundan,
-    harfler sayfasından filtreleme yapılır.
+    Önce doğrudan arama (cookie varsa), ardından harfler sayfasından
+    fuzzy matching ile filtreler.
     
     Args:
         query: Arama sorgusu
@@ -434,6 +594,11 @@ def search_anime(query: str, limit: int = 10) -> List[Tuple[str, str]]:
     
     if not query_lower:
         return []
+    
+    # Önce doğrudan aramayı dene (cookie varsa)
+    direct_results = _search_direct(query, limit)
+    if direct_results:
+        return direct_results
     
     # İlk harfi al
     first_letter = query_lower[0]
@@ -457,15 +622,20 @@ def search_anime(query: str, limit: int = 10) -> List[Tuple[str, str]]:
         _save_cache(cache_key, all_results)
         cached = all_results
     
-    # Filtrele
-    matches = []
+    # Fuzzy matching ile filtrele ve skorla
+    scored_matches = []
     for slug, title in cached:
-        if query_lower in title.lower() or query_lower in slug.lower():
-            matches.append((slug, title))
-            if len(matches) >= limit:
-                break
+        score = max(
+            _fuzzy_match(query_lower, title.lower()),
+            _fuzzy_match(query_lower, slug.replace('-', ' '))
+        )
+        if score > 0.3:
+            scored_matches.append((score, slug, title))
     
-    return matches
+    # Skora göre sırala
+    scored_matches.sort(key=lambda x: x[0], reverse=True)
+    
+    return [(slug, title) for _, slug, title in scored_matches[:limit]]
 
 
 def search_tranime(query: str, limit: int = 10) -> List[Tuple[str, str]]:

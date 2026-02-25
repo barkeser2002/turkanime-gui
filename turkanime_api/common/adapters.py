@@ -4,11 +4,11 @@ Provides unified interface for searching anime across different sources.
 """
 
 from typing import List, Tuple, Optional, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..anilist_client import anilist_client
 from ..objects import Anime
 from ..sources.animecix import search_animecix
 from ..sources.anizle import search_anizle
-from ..sources.animely import search_animely
 from ..sources.tranime import search_tranime
 
 
@@ -110,26 +110,6 @@ class AnizleAdapter:
             return []
 
 
-class AnimelyAdapter:
-    """Adapter for Animely.net API search."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        """Search anime on Animely.net.
-        
-        Args:
-            query: Search query
-            limit: Maximum number of results
-            
-        Returns:
-            List of (slug, title) tuples
-        """
-        try:
-            results = search_animely(query, limit=limit)
-            return results[:limit]
-        except Exception:
-            return []
-
-
 class TRAnimeAdapter:
     """Adapter for TRAnimeİzle.io website search."""
 
@@ -159,12 +139,11 @@ class SearchEngine:
             "TürkAnime": TurkAnimeAdapter(),
             "AnimeciX": AnimeciXAdapter(),
             "Anizle": AnizleAdapter(),
-            "Animely": AnimelyAdapter(),
             "TRAnimeİzle": TRAnimeAdapter()
         }
     
     def search_all_sources(self, query: str, limit_per_source: int = 10) -> Dict[str, List[Tuple[str, str]]]:
-        """Search anime across all sources.
+        """Search anime across all sources in parallel.
         
         Args:
             query: Search query
@@ -173,13 +152,26 @@ class SearchEngine:
         Returns:
             Dict mapping source names to list of (slug, title) tuples
         """
-        results = {}
-        for source_name, adapter in self.adapters.items():
+        results: Dict[str, List[Tuple[str, str]]] = {}
+
+        def _search_single(source_name: str):
+            adapter = self.adapters[source_name]
             try:
-                results[source_name] = adapter.search_anime(query, limit=limit_per_source)
-            except Exception as e:
-                print(f"{source_name} arama hatası: {e}")
-                results[source_name] = []
+                return source_name, adapter.search_anime(query, limit=limit_per_source)
+            except Exception as exc:
+                print(f"{source_name} arama hatası: {exc}")
+                return source_name, []
+
+        with ThreadPoolExecutor(max_workers=len(self.adapters)) as executor:
+            futures = {executor.submit(_search_single, name): name for name in self.adapters}
+            for future in as_completed(futures, timeout=12):
+                try:
+                    source_name, source_results = future.result(timeout=8)
+                    results[source_name] = source_results
+                except Exception as exc:
+                    source_name = futures[future]
+                    print(f"{source_name} arama hatası (timeout/exception): {exc}")
+                    results[source_name] = []
         
         return results
     

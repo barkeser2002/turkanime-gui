@@ -24,7 +24,7 @@ import time
 from ..objects import Anime, Bolum
 
 
-class TemplateAnimeAdapter:
+class TemplateAnimeAdapter(ABC):
     """Anime sağlayıcıları için base adapter sınıfı."""
 
     # Sağlayıcı konfigürasyonu

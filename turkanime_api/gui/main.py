@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import sys
 import os
 import concurrent.futures as cf
@@ -29,7 +29,6 @@ from turkanime_api.cli.cli_tools import VidSearchCLI, indir_aria2c
 from turkanime_api.cli.gereksinimler import Gereksinimler
 from turkanime_api.sources.animecix import CixAnime, search_animecix
 from turkanime_api.sources.anizle import AnizleAnime, search_anizle, get_episode_streams
-from turkanime_api.sources.animely import search_animely, get_anime_episodes as get_animely_episodes, AnimelyAnime
 from turkanime_api.sources.tranime import (
     TRAnimeAnime, TRAnimeEpisode, search_tranime, 
     get_anime_by_slug as get_tranime_anime,
@@ -44,12 +43,17 @@ from turkanime_api.common.utils import get_platform, get_arch
 from turkanime_api.common.ui_helpers import create_progress_section
 from turkanime_api.common.db import APIManager
 from turkanime_api.common.adapters import SearchEngine
+from turkanime_api.gui.cookie_browser import CookieBrowserWorker, is_available as cookie_browser_available
 
 # Jikan API (MyAnimeList) importları
 try:
-    from turkanime_api.jikan_client import jikan_client, get_seasonal_anime_list, get_trending_anime_list, JIKAN_AVAILABLE
+    from turkanime_api.jikan_client import (
+        jikan_client, get_seasonal_anime_list, get_trending_anime_list,
+        search_anime as jikan_search_anime, JIKAN_AVAILABLE
+    )
 except ImportError:
     JIKAN_AVAILABLE = False
+    jikan_search_anime = None  # type: ignore[assignment]
 
 try:
     from turkanime_api.title_matching import get_title_matching_client, get_user_tracking_client
@@ -61,7 +65,7 @@ except ImportError:
 search_engine = SearchEngine()
 
 try:
-    from pypresence import Presence
+    from pypresence.presence import Presence
     DISCORD_RPC_AVAILABLE = True
 except ImportError:
     DISCORD_RPC_AVAILABLE = False
@@ -407,13 +411,22 @@ class DownloadWorker:
         self.bolumler = bolumler
         self.signals = WorkerSignals()
         self.update_callback = update_callback
+        self._cancelled = False
+
+    def cancel(self):
+        """İndirmeyi iptal et."""
+        self._cancelled = True
 
     def run(self):
         try:
             dosya = Dosyalar()
             paralel = dosya.ayarlar.get("paralel indirme sayisi", 2)
+            max_retries = 2  # Hata durumunda tekrar deneme sayısı
 
             def dl_one(bolum: Bolum):
+                if self._cancelled:
+                    return
+
                 self.signals.emit_progress(f"{bolum.slug} için video aranıyor…")
                 self.signals.emit_progress_item({
                     "slug": bolum.slug,
@@ -425,6 +438,7 @@ class DownloadWorker:
                     "speed": None,
                     "eta": None,
                 })
+
                 best_video = bolum.best_video(
                     by_res=dosya.ayarlar.get("max resolution", True),
                     early_subset=dosya.ayarlar.get("1080p aday sayısı", 8),
@@ -436,25 +450,27 @@ class DownloadWorker:
                         "error": "Uygun video bulunamadı",
                     })
                     return
-                down_dir = dosya.ayarlar.get("indirilenler", ".")
 
+                down_dir = dosya.ayarlar.get("indirilenler", ".")
                 last = {"t": None, "b": 0}
+
                 def hook(h):
-                    # İlerleme bilgilerini topla
+                    if self._cancelled:
+                        return
                     st = h.get("status")
-                    # aria2c hata mesajı varsa GUI loguna da düş
                     if st == "error":
                         msg = h.get("message")
                         if msg:
-                            self.signals.emit_progress(f"{bolum.slug}: aria2c hata: {msg}")
+                            self.signals.emit_progress(f"{bolum.slug}: hata: {msg}")
+
                     cur = h.get("downloaded_bytes") or h.get("downloaded")
                     tot = h.get("total_bytes") or h.get("total_bytes_estimate") or h.get("total")
                     eta = h.get("eta")
                     spd = h.get("speed")
-                    # Hız yoksa hesaplamayı dene
+
                     try:
-                        import time
-                        now = time.time()
+                        import time as _t
+                        now = _t.time()
                         if cur is not None:
                             if last["t"] is not None:
                                 dt = max(1e-3, now - last["t"])
@@ -465,7 +481,6 @@ class DownloadWorker:
                     except Exception:
                         pass
 
-                    # Yüzde
                     pct = None
                     if cur and tot:
                         try:
@@ -473,7 +488,6 @@ class DownloadWorker:
                         except Exception:
                             pct = None
 
-                    # Genel durum mesajı
                     if st == "downloading":
                         if cur and tot:
                             self.signals.emit_progress(f"{bolum.slug}: {int(cur/1024/1024)}/{int(tot/1024/1024)} MB")
@@ -482,7 +496,6 @@ class DownloadWorker:
                     elif st == "finished":
                         self.signals.emit_progress(f"{bolum.slug}: indirildi")
 
-                    # Tablo güncellemesi
                     self.signals.emit_progress_item({
                         "slug": bolum.slug,
                         "title": bolum.title,
@@ -494,43 +507,75 @@ class DownloadWorker:
                         "eta": eta,
                     })
 
+                # İndirme denemesi (retry mekanizması)
                 success = False
-                if best_video.player != "ALUCARD(BETA)" and dosya.ayarlar.get("aria2c kullan"):
-                    try:
-                        success = bool(indir_aria2c(best_video, callback=hook, output=down_dir))
-                    except Exception:
-                        # Güvenli geri dönüş: yt-dlp ile devam et
-                        try:
-                            best_video.indir(callback=hook, output=down_dir)
-                            success = True
-                        except Exception:
-                            success = False
-                else:
-                    try:
-                        best_video.indir(callback=hook, output=down_dir)
-                        success = True
-                    except Exception:
-                        if success:
-                            dosya.set_gecmis(bolum.anime.slug if bolum.anime else "", bolum.slug, "indirildi")
-                            # İndirilenler listesini güncelle
-                            if self.update_callback:
-                                self.update_callback(bolum, down_dir)
-                            # Tamamlandı sinyali
+                last_error = None
+                for attempt in range(1, max_retries + 1):
+                    if self._cancelled:
+                        break
+
+                    if attempt > 1:
+                        self.signals.emit_progress(f"{bolum.slug}: {attempt}. deneme...")
                         self.signals.emit_progress_item({
                             "slug": bolum.slug,
                             "title": bolum.title,
-                            "status": ("tamamlandı" if success else "hata"),
-                            "downloaded": last.get("b"),
-                            "total": last.get("b"),
-                            "percent": (100 if success else None),
+                            "status": f"tekrar ({attempt}/{max_retries})",
+                            "downloaded": 0,
+                            "total": None,
+                            "percent": 0,
                             "speed": None,
-                            "eta": 0,
+                            "eta": None,
                         })
+                        last["t"], last["b"] = None, 0
+
+                    try:
+                        if best_video.player != "ALUCARD(BETA)" and dosya.ayarlar.get("aria2c kullan"):
+                            try:
+                                success = bool(indir_aria2c(best_video, callback=hook, output=down_dir))
+                            except Exception:
+                                best_video.indir(callback=hook, output=down_dir)
+                                success = True
+                        else:
+                            best_video.indir(callback=hook, output=down_dir)
+                            success = True
+                    except Exception as e:
+                        last_error = str(e)
+                        success = False
+
+                    if success:
+                        break
+
+                # Sonuç işleme
+                if success:
+                    try:
+                        dosya.set_gecmis(bolum.anime.slug if bolum.anime else "", bolum.slug, "indirildi")
+                    except Exception:
+                        pass
+                    if self.update_callback:
+                        try:
+                            self.update_callback(bolum, down_dir)
+                        except Exception:
+                            pass
+
+                self.signals.emit_progress_item({
+                    "slug": bolum.slug,
+                    "title": bolum.title,
+                    "status": ("tamamlandı" if success else "iptal" if self._cancelled else "hata"),
+                    "downloaded": last.get("b"),
+                    "total": last.get("b") if success else None,
+                    "percent": (100 if success else None),
+                    "speed": None,
+                    "eta": 0,
+                    "error": last_error if not success and not self._cancelled else None,
+                })
 
             with cf.ThreadPoolExecutor(max_workers=paralel) as executor:
                 futures = [executor.submit(dl_one, b) for b in self.bolumler]
                 for fut in cf.as_completed(futures):
-                    fut.result()
+                    try:
+                        fut.result()
+                    except Exception:
+                        pass
             self.signals.emit_success()
         except Exception as e:
             self.signals.emit_error(str(e))
@@ -699,12 +744,19 @@ class MainWindow(ctk.CTk):
         self.episodes_vars = []  # [(var, obj)]
         self.episodes_objs = []
         self.episodes_list = None
-        self.source_accordion = None
+        self.source_accordion: Optional[Any] = None
+
+        # İndirme sistemi değişkenleri
+        self._active_download_worker = None
+        self._download_panel = {}
+        self._download_frame = None
 
         # Discord Rich Presence değişkenleri
         self.discord_rpc = None
         self.discord_connected = False
         self.discord_update_timer = None
+        self._resize_timer = None
+        self.user_tooltip = None
 
         # Manager değişkenleri
         self.requirements_manager: Optional[RequirementsManager] = None
@@ -764,6 +816,11 @@ class MainWindow(ctk.CTk):
                 set_tranime_cookie(tranime_cookie)
                 with open("debug.log", "a") as f:
                     f.write("INFO: TRAnimeİzle cookie yüklendi\n")
+            else:
+                # Cookie boşsa ve daha önce sorulmadıysa otomatik toplama teklif et
+                prompted = dosya.ayarlar.get("cookie_browser_prompted", False)
+                if not prompted:
+                    self.after(3000, self._prompt_cookie_browser)
         except Exception as e:
             with open("debug.log", "a") as f:
                 f.write(f"ERROR: TRAnimeİzle cookie yükleme hatası: {e}\n")
@@ -1086,7 +1143,7 @@ class MainWindow(ctk.CTk):
         selectors_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
         selectors_frame.pack(side="left", padx=(0, 10))
 
-        self.cmbSource = ctk.CTkComboBox(selectors_frame, values=["TürkAnime", "AnimeciX", "Anizle", "Animely", "TRAnimeİzle"],
+        self.cmbSource = ctk.CTkComboBox(selectors_frame, values=["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle"],
                                        width=110, height=30,
                                        command=self.on_source_change,
                                        font=ctk.CTkFont(size=10))
@@ -1154,6 +1211,15 @@ class MainWindow(ctk.CTk):
         self.avatarLabel.bind("<Enter>", self.show_user_tooltip)
         self.avatarLabel.bind("<Leave>", self.hide_user_tooltip)
 
+        # AniList panel toggle butonu
+        self.btnAniListToggle = ctk.CTkButton(
+            user_frame, text="👤 Gizle",
+            command=self.toggle_anilist_panel,
+            fg_color="#555555", hover_color="#666666",
+            width=80, height=30, corner_radius=15,
+            font=ctk.CTkFont(size=10))
+        self.btnAniListToggle.pack(side="right", padx=(0, 5))
+
         self.anilist_visible = True
 
     def show_season(self):
@@ -1220,8 +1286,8 @@ class MainWindow(ctk.CTk):
                         self.after(0, lambda: self.display_season_anime(seasonal, loading_label))
                         return
                 
-                # Fallback to AniList seasonal
-                seasonal = anilist_client.get_seasonal_anime()
+                # Fallback to AniList trending
+                seasonal = anilist_client.get_trending_anime()
                 self.after(0, lambda: self.display_season_anime(seasonal, loading_label))
             except Exception as e:
                 error_msg = str(e)
@@ -1592,20 +1658,20 @@ class MainWindow(ctk.CTk):
 
                         # Sonuçları göster
                         success_count = sum(1 for r in results if r["success"])
-                    total_count = len(results)
+                        total_count = len(results)
 
-                    if success_count == total_count:
-                        progress_label.configure(text="✅ Tüm gereksinimler başarıyla kuruldu!")
-                        progress_bar.set(1.0)
-                        download_btn.configure(text="✅ Tamamlandı")
-                    else:
-                        failed = [r["name"] for r in results if not r["success"]]
-                        progress_label.configure(text=f"❌ {len(failed)} gereksinim kurulamadı")
-                        progress_bar.set(0.0)
-                        download_btn.configure(text="❌ Hata Oluştu")
+                        if success_count == total_count:
+                            progress_label.configure(text="✅ Tüm gereksinimler başarıyla kuruldu!")
+                            progress_bar.set(1.0)
+                            download_btn.configure(text="✅ Tamamlandı")
+                        else:
+                            failed = [r["name"] for r in results if not r["success"]]
+                            progress_label.configure(text=f"❌ {len(failed)} gereksinim kurulamadı")
+                            progress_bar.set(0.0)
+                            download_btn.configure(text="❌ Hata Oluştu")
 
-                    # 2 saniye sonra dialog'u kapat
-                    self.after(2000, dialog.destroy)
+                        # 2 saniye sonra dialog'u kapat
+                        self.after(2000, dialog.destroy)
 
                 except Exception as e:
                     progress_label.configure(text=f"❌ Hata: {str(e)}")
@@ -1777,6 +1843,12 @@ class MainWindow(ctk.CTk):
             self.loading_label.pack(pady=20)
             return
 
+        # Arama iptal mekanizması: mevcut aramanın sürümünü takip et
+        if not hasattr(self, '_search_version'):
+            self._search_version = 0
+        self._search_version += 1
+        current_version = self._search_version
+
         # Loading göster
         self._clear_results()
         self.loading_label.configure(text="🔍 Tüm kaynaklarda aranıyor...")
@@ -1787,6 +1859,10 @@ class MainWindow(ctk.CTk):
             try:
                 # Tüm kaynaklarda paralel arama yap
                 all_results = search_engine.search_all_sources(query, limit_per_source=10)
+
+                # İptal edildi mi kontrol et
+                if getattr(self, '_search_version', 0) != current_version:
+                    return
 
                 # Sonuçları birleştir ve kaynak bilgisi ekle
                 combined_results = []
@@ -2424,6 +2500,76 @@ class MainWindow(ctk.CTk):
         ctk.CTkLabel(tracking_content, text="ℹ️ User ID ile izlediğin bölümler\nfarklı cihazlarda senkronize edilir.",
                     font=ctk.CTkFont(size=10), text_color="#888888").pack(anchor="w")
 
+        # TRAnimeİzle Cookie ayarları
+        tranime_frame = ctk.CTkFrame(right_column, fg_color="#1a1a1a", corner_radius=12)
+        tranime_frame.pack(fill="x", pady=(0, 15))
+
+        tranime_header = ctk.CTkFrame(tranime_frame, fg_color="#e84393", corner_radius=8, height=40)
+        tranime_header.pack(fill="x", padx=3, pady=3)
+        tranime_header.pack_propagate(False)
+        ctk.CTkLabel(tranime_header, text="🌐 TRAnimeİzle Cookie",
+                    font=ctk.CTkFont(size=14, weight="bold"),
+                    text_color="#ffffff").pack(side="left", padx=15, pady=8)
+
+        tranime_content = ctk.CTkFrame(tranime_frame, fg_color="transparent")
+        tranime_content.pack(fill="x", padx=15, pady=15)
+
+        ctk.CTkLabel(tranime_content, text="TRAnimeİzle Cookie (Netscape veya .AitrWeb.Session):",
+                    font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.txtTranimeCookie = ctk.CTkTextbox(tranime_content, width=250, height=80,
+                                               font=ctk.CTkFont(size=10))
+        self.txtTranimeCookie.pack(anchor="w", pady=(3, 10), fill="x")
+        tranime_cookie_val = a.get("tranime_cookie", "")
+        if tranime_cookie_val:
+            self.txtTranimeCookie.insert("0.0", tranime_cookie_val)
+
+        ctk.CTkLabel(tranime_content,
+                    text="ℹ️ Netscape cookie dosyasının içeriğini veya\nsadece .AitrWeb.Session değerini yapıştırın.\nNetscape formatı tüm cookie'leri otomatik parse eder.",
+                    font=ctk.CTkFont(size=10), text_color="#888888",
+                    justify="left").pack(anchor="w")
+
+        cookie_buttons_frame = ctk.CTkFrame(tranime_content, fg_color="transparent")
+        cookie_buttons_frame.pack(anchor="w", pady=(8, 0))
+
+        if cookie_browser_available():
+            ctk.CTkButton(cookie_buttons_frame, text="🌐 Otomatik Cookie Al",
+                         width=160, height=28, font=ctk.CTkFont(size=11),
+                         fg_color="#00b894", hover_color="#00a381",
+                         command=self.start_cookie_browser).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(cookie_buttons_frame, text="❓ Nasıl Alınır?",
+                     width=130, height=28, font=ctk.CTkFont(size=11),
+                     fg_color="#6c5ce7", hover_color="#5a4bd1",
+                     command=self.show_cookie_tutorial).pack(side="left")
+
+        # FlareSolverr
+        flare_frame = ctk.CTkFrame(right_column, fg_color="#1a1a1a", corner_radius=12)
+        flare_frame.pack(fill="x", pady=(0, 15))
+
+        flare_header = ctk.CTkFrame(flare_frame, fg_color="#fd79a8", corner_radius=8, height=40)
+        flare_header.pack(fill="x", padx=3, pady=3)
+        flare_header.pack_propagate(False)
+        ctk.CTkLabel(flare_header, text="🛡️ FlareSolverr (CF Bypass)",
+                    font=ctk.CTkFont(size=14, weight="bold"),
+                    text_color="#ffffff").pack(side="left", padx=15, pady=8)
+
+        flare_content = ctk.CTkFrame(flare_frame, fg_color="transparent")
+        flare_content.pack(fill="x", padx=15, pady=15)
+
+        ctk.CTkLabel(flare_content, text="FlareSolverr URL:",
+                    font=ctk.CTkFont(size=11)).pack(anchor="w")
+        self.txtFlaresolverrUrl = ctk.CTkEntry(flare_content, width=250, height=30,
+                                              placeholder_text="http://localhost:8191")
+        self.txtFlaresolverrUrl.pack(anchor="w", pady=(3, 5))
+        flare_url_val = a.get("flaresolverr_url", "")
+        if flare_url_val:
+            self.txtFlaresolverrUrl.insert(0, flare_url_val)
+
+        ctk.CTkLabel(flare_content,
+                    text="ℹ️ Cloudflare korumasını aşmak için FlareSolverr\nkullanılır. Boş bırakırsanız varsayılan\nsunucu kullanılır.",
+                    font=ctk.CTkFont(size=10), text_color="#888888",
+                    justify="left").pack(anchor="w")
+
         # İndirme klasörü
         folder_frame = ctk.CTkFrame(right_column, fg_color="#1a1a1a", corner_radius=12)
         folder_frame.pack(fill="x", pady=(0, 15))
@@ -2469,6 +2615,239 @@ class MainWindow(ctk.CTk):
             self.txtDownloadFolder.delete(0, "end")
             self.txtDownloadFolder.insert(0, folder)
 
+    def _prompt_cookie_browser(self):
+        """İlk açılışta TRAnimeİzle cookie'si yoksa kullanıcıya sor."""
+        # Bir daha sorma
+        self.dosya.set_ayar("cookie_browser_prompted", True)
+
+        if not cookie_browser_available():
+            return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("🍪 TRAnimeİzle Cookie")
+        dialog.geometry("440x260")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#0f0f0f")
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="🍪 TRAnimeİzle Cookie Gerekli",
+                    font=ctk.CTkFont(size=18, weight="bold"),
+                    text_color="#e84393").pack(pady=(25, 8))
+
+        ctk.CTkLabel(dialog,
+                    text="TRAnimeİzle kaynağını kullanabilmek için\n"
+                         "oturum cookie'si gereklidir.\n\n"
+                         "Tarayıcı açılarak cookie'ler otomatik alınabilir.\n"
+                         "(Captcha çıkarsa çözmeniz yeterli)",
+                    font=ctk.CTkFont(size=12), text_color="#aaaaaa",
+                    justify="center").pack(pady=(0, 20))
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=(0, 25))
+
+        def accept():
+            dialog.destroy()
+            self.start_cookie_browser()
+
+        def decline():
+            dialog.destroy()
+
+        ctk.CTkButton(btn_frame, text="✅ Evet, Otomatik Al",
+                     width=160, height=38,
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     fg_color="#00b894", hover_color="#00a381",
+                     command=accept).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(btn_frame, text="Hayır, Sonra",
+                     width=120, height=38,
+                     font=ctk.CTkFont(size=13),
+                     fg_color="#636e72", hover_color="#535c60",
+                     command=decline).pack(side="left")
+
+        dialog.protocol("WM_DELETE_WINDOW", decline)
+
+    def start_cookie_browser(self):
+        """🌐 Selenium tarayıcı ile otomatik cookie toplama."""
+        # Zaten çalışıyorsa engelle
+        if hasattr(self, '_cookie_worker') and self._cookie_worker and self._cookie_worker.is_running:
+            messagebox.showinfo("Bilgi", "Cookie tarayıcısı zaten çalışıyor.")
+            return
+
+        # Dialog penceresi
+        self._cookie_dialog = ctk.CTkToplevel(self)
+        self._cookie_dialog.title("🌐 Otomatik Cookie Toplama")
+        self._cookie_dialog.geometry("460x320")
+        self._cookie_dialog.resizable(False, False)
+        self._cookie_dialog.configure(fg_color="#0f0f0f")
+        self._cookie_dialog.attributes("-topmost", True)
+        self._cookie_dialog.grab_set()
+
+        # Başlık
+        ctk.CTkLabel(self._cookie_dialog, text="🌐 TRAnimeİzle Cookie Toplama",
+                    font=ctk.CTkFont(size=18, weight="bold"),
+                    text_color="#00b894").pack(pady=(20, 5))
+        ctk.CTkLabel(self._cookie_dialog,
+                    text="Tarayıcı açılacak ve cookie'ler otomatik toplanacak.\nCaptcha çıkarsa tarayıcıda çözmeniz yeterli.",
+                    font=ctk.CTkFont(size=12), text_color="#aaaaaa",
+                    justify="center").pack(pady=(0, 15))
+
+        # Durum etiketi
+        status_frame = ctk.CTkFrame(self._cookie_dialog, fg_color="#1a1a1a", corner_radius=12)
+        status_frame.pack(fill="x", padx=20, pady=(0, 15))
+        self._cookie_status_label = ctk.CTkLabel(
+            status_frame,
+            text="⏳ Hazırlanıyor...",
+            font=ctk.CTkFont(size=12),
+            text_color="#ffeaa7",
+            justify="left",
+            wraplength=380,
+        )
+        self._cookie_status_label.pack(padx=15, pady=15)
+
+        # İptal butonu
+        self._cookie_cancel_btn = ctk.CTkButton(
+            self._cookie_dialog, text="❌ İptal",
+            width=120, height=35,
+            fg_color="#d63031", hover_color="#c0392b",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._cancel_cookie_browser,
+        )
+        self._cookie_cancel_btn.pack(pady=(0, 20))
+
+        # Worker başlat
+        def on_status(msg: str):
+            try:
+                self.after(0, lambda: self._cookie_status_label.configure(text=msg))
+            except Exception:
+                pass
+
+        def on_cookies(netscape_str: str):
+            def _apply():
+                try:
+                    # Textbox'a yaz
+                    self.txtTranimeCookie.delete("0.0", "end")
+                    self.txtTranimeCookie.insert("0.0", netscape_str)
+                    # Cookie'yi uygula
+                    set_tranime_cookie(netscape_str)
+                    # Ayarlara kaydet
+                    self.dosya.set_ayar("tranime_cookie", netscape_str)
+                    # Durum güncelle
+                    self._cookie_status_label.configure(
+                        text="✅ Cookie'ler başarıyla kaydedildi!\nArtık bu pencereyi kapatabilirsiniz.",
+                        text_color="#00b894",
+                    )
+                    self._cookie_cancel_btn.configure(text="✔ Kapat", fg_color="#00b894",
+                                                       hover_color="#00a381")
+                except Exception as e:
+                    self._cookie_status_label.configure(
+                        text=f"⚠️ Cookie kaydetme hatası: {e}",
+                        text_color="#d63031",
+                    )
+            self.after(0, _apply)
+
+        def on_error(msg: str):
+            def _show():
+                try:
+                    self._cookie_status_label.configure(text=f"❌ {msg}", text_color="#d63031")
+                    self._cookie_cancel_btn.configure(text="Kapat", fg_color="#636e72",
+                                                       hover_color="#535c60")
+                except Exception:
+                    pass
+            self.after(0, _show)
+
+        self._cookie_worker = CookieBrowserWorker(
+            on_status=on_status,
+            on_cookies=on_cookies,
+            on_error=on_error,
+        )
+        self._cookie_worker.start()
+
+        # Dialog kapatılırsa worker'ı da durdur
+        def on_dialog_close():
+            self._cancel_cookie_browser()
+
+        self._cookie_dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+
+    def _cancel_cookie_browser(self):
+        """Cookie tarayıcı işlemini iptal et."""
+        if hasattr(self, '_cookie_worker') and self._cookie_worker:
+            self._cookie_worker.stop()
+            self._cookie_worker = None
+        if hasattr(self, '_cookie_dialog') and self._cookie_dialog:
+            try:
+                self._cookie_dialog.destroy()
+            except Exception:
+                pass
+            self._cookie_dialog = None
+
+    def show_cookie_tutorial(self):
+        """🍪 TRAnimeİzle cookie nasıl alınır tutorial dialog'ı."""
+        tutorial = ctk.CTkToplevel(self)
+        tutorial.title("🍪 TRAnimeİzle Cookie Rehberi")
+        tutorial.geometry("520x520")
+        tutorial.resizable(False, False)
+        tutorial.configure(fg_color="#0f0f0f")
+        tutorial.attributes("-topmost", True)
+        tutorial.grab_set()
+
+        # Başlık
+        ctk.CTkLabel(tutorial, text="🍪 TRAnimeİzle Cookie Nasıl Alınır?",
+                    font=ctk.CTkFont(size=18, weight="bold"),
+                    text_color="#e84393").pack(pady=(20, 5))
+        ctk.CTkLabel(tutorial, text="TRAnimeİzle kaynağını kullanmak için\noturum cookie'si gereklidir.",
+                    font=ctk.CTkFont(size=12), text_color="#aaaaaa",
+                    justify="center").pack(pady=(0, 15))
+
+        # Adımlar
+        steps_frame = ctk.CTkFrame(tutorial, fg_color="#1a1a1a", corner_radius=12)
+        steps_frame.pack(fill="x", padx=20, pady=(0, 15))
+
+        steps = [
+            ("🌐", "Tarayıcınızda tranimeizle.io adresine gidin"),
+            ("🔑", "Siteye giriş yapın (hesap yoksa kayıt olun)"),
+            ("🛠️", "F12 tuşuna basarak DevTools'u açın"),
+            ("📂", 'Chrome: "Application" sekmesine gidin\nFirefox: "Storage" sekmesine gidin'),
+            ("🍪", 'Sol panelde Cookies → tranimeizle.io seçin'),
+            ("🔍", '.AitrWeb.Session satırını bulun'),
+            ("📋", '"Value" sütunundaki değeri kopyalayın'),
+            ("✅", 'Ayarlar\'daki TRAnimeİzle Cookie alanına yapıştırın'),
+        ]
+
+        for i, (icon, text) in enumerate(steps, 1):
+            step_row = ctk.CTkFrame(steps_frame, fg_color="transparent")
+            step_row.pack(fill="x", padx=12, pady=(8 if i == 1 else 3, 3 if i < len(steps) else 8))
+            ctk.CTkLabel(step_row, text=f"{icon} {i}.",
+                        font=ctk.CTkFont(size=12, weight="bold"),
+                        text_color="#e84393", width=40).pack(side="left", anchor="n")
+            ctk.CTkLabel(step_row, text=text,
+                        font=ctk.CTkFont(size=11), text_color="#dddddd",
+                        justify="left", wraplength=400).pack(side="left", fill="x", padx=(5, 0))
+
+        # Not
+        ctk.CTkLabel(tutorial, text="⚠️ Cookie süresi dolunca yenilemeniz gerekebilir.",
+                    font=ctk.CTkFont(size=10), text_color="#fdcb6e").pack(pady=(0, 10))
+
+        # Bir daha gösterme checkbox
+        dismiss_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(tutorial, text="Bir daha gösterme",
+                       variable=dismiss_var, font=ctk.CTkFont(size=11),
+                       text_color="#888888", fg_color="#e84393",
+                       hover_color="#d63031").pack(pady=(0, 10))
+
+        def close_tutorial():
+            if dismiss_var.get():
+                try:
+                    self.dosya.set_ayar("cookie_tutorial_dismissed", True)
+                except Exception:
+                    pass
+            tutorial.destroy()
+
+        ctk.CTkButton(tutorial, text="Tamam", width=120, height=35,
+                     fg_color="#e84393", hover_color="#d63031",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     command=close_tutorial).pack(pady=(0, 20))
+
     def save_settings(self):
         """Ayarları kaydet."""
         try:
@@ -2482,6 +2861,19 @@ class MainWindow(ctk.CTk):
             self.dosya.set_ayar("indirilenler", self.txtDownloadFolder.get())
             self.dosya.set_ayar("izlendi ikonu", self.chkWatchedIcon.get())
             self.dosya.set_ayar("discord_rich_presence", self.chkDiscordRPC.get())
+            
+            # TRAnimeİzle cookie kaydet ve uygula
+            tranime_cookie = self.txtTranimeCookie.get("0.0", "end").strip()
+            self.dosya.set_ayar("tranime_cookie", tranime_cookie)
+            if tranime_cookie:
+                try:
+                    set_tranime_cookie(tranime_cookie)
+                except Exception:
+                    pass
+            
+            # FlareSolverr URL kaydet
+            flare_url = self.txtFlaresolverrUrl.get().strip()
+            self.dosya.set_ayar("flaresolverr_url", flare_url)
             
             # User ID kaydet
             user_id = self.txtUserId.get().strip()
@@ -2531,7 +2923,7 @@ class MainWindow(ctk.CTk):
                     for meth in ("check_for_updates", "check_updates", "check_update", "run_update_check"):
                         fn = getattr(self.update_manager, meth, None)
                         if callable(fn):
-                            fn()
+                            fn()  # pylint: disable=not-callable
                             return
                     # Yedek: sürümler sayfasını aç
                     webbrowser.open("https://github.com/barkeser2002/turkanime-gui/releases")
@@ -2690,8 +3082,13 @@ class MainWindow(ctk.CTk):
 
     def show_anime_details(self, anime_data):
         """Anime detaylarını göster."""
+        # Race condition önleme: benzersiz request ID
+        import uuid as _uuid
+        request_id = str(_uuid.uuid4())
+        self._current_detail_request_id = request_id
+
         with open("debug.log", "a") as f:
-            f.write(f"DEBUG: show_anime_details çağrıldı: {anime_data.get('title', {}).get('romaji', 'Unknown')}\n")
+            f.write(f"DEBUG: show_anime_details çağrıldı: {anime_data.get('title', {}).get('romaji', 'Unknown')} (rid={request_id[:8]})\n")
         # Detay görünümü oluştur
         self.clear_content_area()
         # Seçili animeyi sakla (global oynat/indir butonları için)
@@ -2966,7 +3363,6 @@ class MainWindow(ctk.CTk):
                     "TürkAnime": 8,   # 8 saniye
                     "AnimeciX": 8,    # 8 saniye
                     "Anizle": 8,      # 8 saniye
-                    "Animely": 10,    # 10 saniye
                     "TRAnimeİzle": 12, # 12 saniye (bot koruma)
                     "AniList": 5      # 5 saniye (daha hızlı)
                 }
@@ -3111,48 +3507,6 @@ class MainWindow(ctk.CTk):
                                 with open("debug.log", "a") as f:
                                     f.write(f"ERROR: {source_name} adapter bulunamadı\n")
 
-                        elif source_name == "Animely":
-                            # SearchEngine kullanarak Animely'de ara
-                            adapter = search_engine.get_adapter(source_name)
-                            if adapter:
-                                search_results = adapter.search_anime(query_title, limit=1)
-                                if search_results:
-                                    slug, name = search_results[0]
-                                    
-                                    # Animely bölümlerini al
-                                    animely_episodes = get_animely_episodes(slug)
-                                    episodes = []
-                                    ada = AdapterAnime(slug=slug, title=name)
-                                    
-                                    for e in animely_episodes:
-                                        # Animely direkt video linki veriyor
-                                        streams = e.get_streams()
-                                        video_url = streams[0].url if streams else ""
-                                        
-                                        ab = AdapterBolum(
-                                            url=video_url,
-                                            title=e.title,
-                                            anime=ada,
-                                            player_name="ANIMELY"
-                                        )
-                                        episodes.append({
-                                            "title": e.title,
-                                            "obj": ab,
-                                            "anime_title": name
-                                        })
-                                    sources_data[source_name] = episodes
-                                    source_status[source_name] = "completed"
-                                    with open("debug.log", "a") as f:
-                                        f.write(f"DEBUG: {source_name} tamamlandı - {len(episodes)} bölüm\n")
-                                else:
-                                    source_status[source_name] = "no_results"
-                                    with open("debug.log", "a") as f:
-                                        f.write(f"DEBUG: {source_name} - sonuç bulunamadı\n")
-                            else:
-                                source_status[source_name] = "error"
-                                with open("debug.log", "a") as f:
-                                    f.write(f"ERROR: {source_name} adapter bulunamadı\n")
-
                         elif source_name == "TRAnimeİzle":
                             # TRAnimeİzle'de ara
                             try:
@@ -3226,7 +3580,7 @@ class MainWindow(ctk.CTk):
 
                 # Paralel arama - her kaynak için ayrı thread
                 threads = []
-                all_sources = ["TürkAnime", "AnimeciX", "AniList", "Anizle", "Animely", "TRAnimeİzle"]
+                all_sources = ["TürkAnime", "AnimeciX", "AniList", "Anizle", "TRAnimeİzle"]
                 for source_name in all_sources:
                     timeout = source_timeouts.get(source_name, 10)
                     thread = threading.Thread(
@@ -3279,12 +3633,16 @@ class MainWindow(ctk.CTk):
                     if no_results_sources:
                         f.write(f"INFO: Sonuç bulunmayan kaynaklar: {', '.join(no_results_sources)}\n")
 
-                # Bölümleri sakla ve render et
+                # Bölümleri sakla ve render et — sadece bu request hala aktifse
+                if getattr(self, '_current_detail_request_id', None) != request_id:
+                    with open("debug.log", "a") as f:
+                        f.write(f"WARN: load_sources_worker tamamlandı ama request_id değişti, render iptal (rid={request_id[:8]})\n")
+                    return
                 self.all_episodes = sources_data
                 with open("debug.log", "a") as f:
                     f.write(f"DEBUG: all_episodes set to: {list(sources_data.keys())}\n")
                 self.after(0, lambda: self._update_loading_status("Kaynaklar işleniyor..."))
-                self.after(100, lambda: self.render_sources_page(db_matches))
+                self.after(100, lambda: self.render_sources_page(db_matches) if getattr(self, '_current_detail_request_id', None) == request_id else None)
                 with open("debug.log", "a") as f:
                     f.write("DEBUG: render_sources_page scheduled\n")
 
@@ -3294,8 +3652,9 @@ class MainWindow(ctk.CTk):
                 import traceback
                 traceback.print_exc()
                 # Hata durumunda boş veri ile devam et
-                self.all_episodes = {}
-                self.after(0, lambda: self.render_sources_page(db_matches))
+                if getattr(self, '_current_detail_request_id', None) == request_id:
+                    self.all_episodes = {}
+                    self.after(0, lambda: self.render_sources_page(db_matches))
 
         # Kaynak yükleme worker'ını başlat
         with open("debug.log", "a") as f:
@@ -3330,6 +3689,7 @@ class MainWindow(ctk.CTk):
         
         Sadece benzer isimler arasında düzeltme yapar.
         Tamamen farklı animeleri düzeltmez.
+        Alternatif başlıkları (İngilizce, Japonca, Romaji) da karşılaştırır.
         """
         if not hasattr(self, 'selected_anime') or not self.selected_anime:
             return
@@ -3346,11 +3706,19 @@ class MainWindow(ctk.CTk):
                 b_lower = b.lower().strip()
                 return SequenceMatcher(None, a_lower, b_lower).ratio()
 
-            # Mevcut anime adını al
-            current_name = self.selected_anime.get('title', {}).get('romaji', '') or \
-                         self.selected_anime.get('title', {}).get('english', '') or \
-                         self.selected_anime.get('title', {}).get('native', '')
+            def best_similarity_for_title(candidate: str, titles: list) -> float:
+                """Bir adayı tüm alternatif başlıklara karşı en yüksek benzerlikle eşleştir."""
+                return max((similarity(candidate, t) for t in titles if t), default=0.0)
 
+            # Mevcut anime adları (tüm alternatifler)
+            title_data = self.selected_anime.get('title', {})
+            romaji = title_data.get('romaji', '') or ''
+            english = title_data.get('english', '') or ''
+            native = title_data.get('native', '') or ''
+            all_titles = [t for t in [romaji, english, native] if t]
+
+            # Ana başlık
+            current_name = romaji or english or native
             if not current_name:
                 return
 
@@ -3359,13 +3727,13 @@ class MainWindow(ctk.CTk):
             if not matches:
                 return
 
-            # Sadece benzer isimleri say (benzerlik > 0.5)
-            SIMILARITY_THRESHOLD = 0.5
-            name_counts = {}
+            # Sadece benzer isimleri say (benzerlik > 0.4 — düşürüldü)
+            SIMILARITY_THRESHOLD = 0.4
+            name_counts: dict = {}
             for match in matches:
                 anime_title = match.get('anime_title', '')
                 if anime_title:
-                    sim = similarity(current_name, anime_title)
+                    sim = best_similarity_for_title(anime_title, all_titles)
                     if sim >= SIMILARITY_THRESHOLD:
                         # Benzerlik skoru ile birlikte say
                         if anime_title not in name_counts:
@@ -3405,8 +3773,13 @@ class MainWindow(ctk.CTk):
         with open("debug.log", "a") as f:
             f.write(f"DEBUG: render_sources_page çağrıldı, all_episodes: {list(self.all_episodes.keys()) if self.all_episodes else 'None'}\n")
 
-        # Anime adı kontrolü ve otomatik düzeltme
-        self._check_and_correct_anime_name()
+        # Anime adı kontrolü — arka planda yap (UI'yı bloke etmesin)
+        def _bg_name_check():
+            try:
+                self._check_and_correct_anime_name()
+            except Exception:
+                pass
+        threading.Thread(target=_bg_name_check, daemon=True).start()
 
         # Discord Rich Presence güncelle
         if hasattr(self, 'selected_anime') and self.selected_anime:
@@ -3443,11 +3816,11 @@ class MainWindow(ctk.CTk):
             return
 
         # Sadece bölümler için kullanılacak kaynakları ayır (AniList hariç)
-        display_sources = {k: v for k, v in self.all_episodes.items() if k in ["TürkAnime", "AnimeciX", "Anizle", "Animely", "TRAnimeİzle"]}
+        display_sources = {k: v for k, v in self.all_episodes.items() if k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle"]}
 
         # Kaynak durumlarını kontrol et ve kullanıcıya bildir
         loaded_sources = [k for k, v in display_sources.items() if v and len(v) > 0]
-        failed_sources = [k for k in ["TürkAnime", "AnimeciX", "Anizle", "Animely", "TRAnimeİzle"] if k not in display_sources or not display_sources.get(k)]
+        failed_sources = [k for k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle"] if k not in display_sources or not display_sources.get(k)]
 
         if loaded_sources:
             status_msg = f"✅ {len(loaded_sources)} kaynak yüklendi: {', '.join(loaded_sources)}"
@@ -3638,17 +4011,177 @@ class MainWindow(ctk.CTk):
                 # Discord Rich Presence güncelle
                 if episode_obj and episode_obj.anime:
                     anime_title = episode_obj.anime.title
-                    episode_title = episode_obj.title
                     self.update_discord_presence_download(anime_title, "0")
                 
                 dw = DownloadWorker([episode_obj])
-                dw.signals.connect_progress(lambda msg: self.status_label.configure(text=msg))
-                dw.signals.connect_success(lambda: self.message("İndirme tamamlandı!"))
-                dw.signals.connect_error(lambda msg: self.message(f"İndirme hatası: {msg}", error=True))
+                self._active_download_worker = dw
+                
+                # İndirme panelini göster
+                self.after(0, lambda: self._show_download_panel([episode_obj]))
+                
+                # Progress bar güncelleme
+                def on_progress_item(data):
+                    pct = data.get("percent")
+                    status = data.get("status", "")
+                    slug = data.get("slug", "")
+                    speed = data.get("speed")
+                    
+                    # Hız formatlama
+                    speed_str = ""
+                    if speed:
+                        if speed > 1024 * 1024:
+                            speed_str = f" ({speed / 1024 / 1024:.1f} MB/s)"
+                        elif speed > 1024:
+                            speed_str = f" ({speed / 1024:.0f} KB/s)"
+                    
+                    if pct is not None:
+                        self.after(0, lambda: self._update_download_progress(
+                            slug, pct / 100.0, f"{status} %{pct}{speed_str}"))
+                    else:
+                        self.after(0, lambda: self._update_download_progress(
+                            slug, 0, status))
+                
+                dw.signals.connect_progress(lambda msg: self.after(0, lambda m=msg: self.status_label.configure(text=m) if hasattr(self, 'status_label') else None))
+                dw.signals.connect_progress_item(on_progress_item)
+                dw.signals.connect_success(lambda: self.after(0, lambda: self._on_download_complete("İndirme tamamlandı!")))
+                dw.signals.connect_error(lambda msg: self.after(0, lambda m=msg: self.message(f"İndirme hatası: {m}", error=True)))
                 dw.run()
             except Exception as e:
-                self.message(f"İndirme başlatılamadı: {e}", error=True)
+                self.after(0, lambda: self.message(f"İndirme başlatılamadı: {e}", error=True))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _show_download_panel(self, bolumler):
+        """İndirme panelini göster - her bölüm için progress bar."""
+        if not hasattr(self, '_download_panel') or self._download_panel is None:
+            self._download_panel = {}
+        
+        # Mevcut paneli temizle
+        if hasattr(self, '_download_frame') and self._download_frame:
+            try:
+                self._download_frame.destroy()
+            except Exception:
+                pass
+        
+        # content_area'nın en altına panel ekle
+        parent = self.content_area if hasattr(self, 'content_area') else self
+        
+        self._download_frame = ctk.CTkFrame(parent, fg_color="#1a1a2e", corner_radius=12)
+        self._download_frame.pack(fill="x", padx=10, pady=(5, 10))
+        
+        # Başlık satırı
+        header_frame = ctk.CTkFrame(self._download_frame, fg_color="#16213e", corner_radius=8, height=40)
+        header_frame.pack(fill="x", padx=3, pady=3)
+        header_frame.pack_propagate(False)
+        
+        ctk.CTkLabel(header_frame, text=f"⬇️ İndirme Kuyruğu ({len(bolumler)} bölüm)",
+                    font=ctk.CTkFont(size=13, weight="bold"),
+                    text_color="#e94560").pack(side="left", padx=15, pady=8)
+        
+        # İptal butonu
+        cancel_btn = ctk.CTkButton(header_frame, text="✕ İptal", width=70, height=28,
+                                   fg_color="#c0392b", hover_color="#e74c3c",
+                                   font=ctk.CTkFont(size=11),
+                                   command=self._cancel_downloads)
+        cancel_btn.pack(side="right", padx=10, pady=6)
+        
+        # İndirme satırları
+        items_frame = ctk.CTkFrame(self._download_frame, fg_color="transparent")
+        items_frame.pack(fill="x", padx=10, pady=(5, 10))
+        
+        for bolum in bolumler:
+            slug = bolum.slug
+            row = ctk.CTkFrame(items_frame, fg_color="#0f3460", corner_radius=6, height=50)
+            row.pack(fill="x", pady=2)
+            row.pack_propagate(False)
+            
+            # Sol: başlık
+            title_label = ctk.CTkLabel(row, text=f"📄 {bolum.title}",
+                                       font=ctk.CTkFont(size=11),
+                                       text_color="#e0e0e0", anchor="w")
+            title_label.pack(side="left", padx=10, fill="x", expand=True)
+            
+            # Sağ taraf: durum + progress bar
+            right_frame = ctk.CTkFrame(row, fg_color="transparent", width=250)
+            right_frame.pack(side="right", padx=10)
+            right_frame.pack_propagate(False)
+            
+            progress_bar = ctk.CTkProgressBar(right_frame, width=150, height=12,
+                                              progress_color="#e94560",
+                                              fg_color="#1a1a2e")
+            progress_bar.pack(side="left", padx=(0, 8), pady=15)
+            progress_bar.set(0)
+            
+            status_label = ctk.CTkLabel(right_frame, text="bekliyor",
+                                        font=ctk.CTkFont(size=10),
+                                        text_color="#999999", width=80)
+            status_label.pack(side="left")
+            
+            self._download_panel[slug] = {
+                "progress_bar": progress_bar,
+                "status_label": status_label,
+                "title_label": title_label,
+            }
+
+    def _update_download_progress(self, slug, value, status_text):
+        """İndirme panelindeki bir öğeyi güncelle."""
+        if not hasattr(self, '_download_panel') or not self._download_panel:
+            return
+        
+        item = self._download_panel.get(slug)
+        if not item:
+            return
+        
+        try:
+            bar = item.get("progress_bar")
+            lbl = item.get("status_label")
+            title_lbl = item.get("title_label")
+            
+            if bar and value is not None:
+                bar.set(min(1.0, max(0, value)))
+            
+            if lbl and status_text:
+                lbl.configure(text=status_text[:30])
+                # Renge göre güncelle
+                if "tamamlandı" in status_text or "indirildi" in status_text:
+                    lbl.configure(text_color="#2ecc71")
+                    if bar:
+                        bar.configure(progress_color="#2ecc71")
+                elif "hata" in status_text:
+                    lbl.configure(text_color="#e74c3c")
+                    if bar:
+                        bar.configure(progress_color="#e74c3c")
+                elif "indiriliyor" in status_text:
+                    lbl.configure(text_color="#3498db")
+                elif "tekrar" in status_text:
+                    lbl.configure(text_color="#f39c12")
+                else:
+                    lbl.configure(text_color="#999999")
+        except Exception:
+            pass
+
+    def _on_download_complete(self, msg):
+        """İndirme tamamlandığında çağrılır."""
+        self.message(msg)
+        # Panel'i 5 saniye sonra temizle
+        if hasattr(self, '_download_frame') and self._download_frame:
+            self.after(5000, self._cleanup_download_panel)
+
+    def _cancel_downloads(self):
+        """Aktif indirmeyi iptal et."""
+        if hasattr(self, '_active_download_worker') and self._active_download_worker:
+            self._active_download_worker.cancel()
+            self.message("⚠️ İndirme iptal ediliyor...", error=False)
+
+    def _cleanup_download_panel(self):
+        """İndirme panelini temizle."""
+        try:
+            if hasattr(self, '_download_frame') and self._download_frame:
+                self._download_frame.destroy()
+                self._download_frame = None
+            self._download_panel = {}
+            self._active_download_worker = None
+        except Exception:
+            pass
 
     def _play_first_selected_episode(self):
         """İlk seçili bölümü oynat."""
@@ -3685,15 +4218,22 @@ class MainWindow(ctk.CTk):
         # Discord Rich Presence güncelle
         self.update_discord_presence(f"'{original_title}' arıyor", "TürkAnime GUI")
 
-        # AniList'te ara
-        self.message("AniList'te aranıyor…")
+        # Jikan (MAL) ile ara, başarısız olursa AniList'e fallback
+        self.message("Jikan (MAL) ile aranıyor…")
 
         def search_worker():
             try:
-                results = anilist_client.search_anime(original_title)
-                self.after(0, lambda: self.display_anilist_search_results(results, f"AniList Arama: {original_title}"))
+                results = None
+                if JIKAN_AVAILABLE and jikan_search_anime:
+                    try:
+                        results = jikan_search_anime(original_title, limit=20)
+                    except Exception:
+                        results = None
+                if not results:
+                    results = anilist_client.search_anime(original_title)
+                self.after(0, lambda: self.display_anilist_search_results(results, f"Arama: {original_title}"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"AniList arama hatası: {e}", error=True))
+                self.after(0, lambda: self.message(f"Arama hatası: {e}", error=True))
 
         threading.Thread(target=search_worker, daemon=True).start()
 
@@ -3711,7 +4251,7 @@ class MainWindow(ctk.CTk):
         # Kaynak seçim dialogunu göster
         def start_download(source_name: str):
             """Seçilen kaynaktan indirmeyi başlat."""
-            selected = self.source_accordion.get_selected_episodes(source_name)
+            selected = self.source_accordion.get_selected_episodes(source_name)  # type: ignore[union-attr]
             
             if not selected:
                 self.message(f"❌ {source_name} kaynağında seçili bölüm bulunamadı!", error=True)
@@ -3728,8 +4268,41 @@ class MainWindow(ctk.CTk):
                         self.update_discord_presence_download(anime_title, "0")
                     
                     dw = DownloadWorker(selected, update_callback=self.update_downloaded_list)
+                    self._active_download_worker = dw
+                    
+                    # İndirme panelini göster
+                    self.after(0, lambda: self._show_download_panel(selected))
+                    
+                    def on_progress_item(data):
+                        pct = data.get("percent")
+                        status = data.get("status", "")
+                        slug = data.get("slug", "")
+                        speed = data.get("speed")
+                        error = data.get("error")
+                        
+                        speed_str = ""
+                        if speed:
+                            if speed > 1024 * 1024:
+                                speed_str = f" ({speed / 1024 / 1024:.1f} MB/s)"
+                            elif speed > 1024:
+                                speed_str = f" ({speed / 1024:.0f} KB/s)"
+                        
+                        status_text = status
+                        if error:
+                            status_text = f"hata: {error[:50]}"
+                        elif pct is not None:
+                            status_text = f"{status} %{pct}{speed_str}"
+                        
+                        if pct is not None:
+                            self.after(0, lambda: self._update_download_progress(
+                                slug, pct / 100.0, status_text))
+                        else:
+                            self.after(0, lambda: self._update_download_progress(
+                                slug, 0, status_text))
+                    
                     dw.signals.connect_progress(lambda msg: self.after(0, lambda m=msg: self.status_label.configure(text=m) if hasattr(self, 'status_label') else None))
-                    dw.signals.connect_success(lambda: self.after(0, lambda: self.message(f"✅ {source_name}'dan indirme tamamlandı!")))
+                    dw.signals.connect_progress_item(on_progress_item)
+                    dw.signals.connect_success(lambda: self.after(0, lambda: self._on_download_complete(f"✅ {source_name}'dan {len(selected)} bölüm indirildi!")))
                     dw.signals.connect_error(lambda msg: self.after(0, lambda m=msg: self.message(f"❌ İndirme hatası: {m}", error=True)))
                     dw.run()
                 except Exception as e:
@@ -4090,7 +4663,7 @@ class MainWindow(ctk.CTk):
             return
         
         # Debounce için timer kullan
-        if hasattr(self, '_resize_timer'):
+        if hasattr(self, '_resize_timer') and self._resize_timer is not None:
             self.after_cancel(self._resize_timer)
         
         self._resize_timer = self.after(150, self._update_trending_grid)
@@ -4421,15 +4994,29 @@ class MainWindow(ctk.CTk):
         # Discord Rich Presence güncelle
         self.update_discord_presence(f"'{search_query}' arıyor", "TürkAnime GUI")
 
-        # AniList'te ara
-        self.message("AniList'te aranıyor…")
+        # Jikan (MAL) ile ara, başarısız olursa AniList'e fallback
+        self.message("Jikan (MAL) ile aranıyor…")
 
         def search_worker():
             try:
-                results = anilist_client.search_anime(search_query)
-                self.after(0, lambda: self.display_anilist_search_results(results, f"AniList Arama: {search_query}"))
+                results = None
+                # Önce Jikan dene
+                if JIKAN_AVAILABLE and jikan_search_anime:
+                    try:
+                        results = jikan_search_anime(search_query, limit=20)
+                    except Exception as jikan_err:
+                        with open("debug.log", "a") as f:
+                            f.write(f"WARN: Jikan arama başarısız, AniList'e fallback: {jikan_err}\n")
+                        results = None
+
+                # Jikan başarısız olduysa AniList'e fallback
+                if not results:
+                    self.after(0, lambda: self.message("Jikan başarısız, AniList deneniyor…"))
+                    results = anilist_client.search_anime(search_query)
+
+                self.after(0, lambda: self.display_anilist_search_results(results, f"Arama: {search_query}"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"AniList arama hatası: {e}", error=True))
+                self.after(0, lambda: self.message(f"Arama hatası: {e}", error=True))
 
         threading.Thread(target=search_worker, daemon=True).start()
 
@@ -4690,17 +5277,36 @@ class MainWindow(ctk.CTk):
                     except:
                         pass
                 
-                # Disk cache'de yoksa indir
+                # Disk cache'de yoksa indir (retry mantığı ile)
                 if image is None:
-                    response = requests.get(url, timeout=10)
-                    response.raise_for_status()
-                    image = Image.open(io.BytesIO(response.content))
-                    image.thumbnail((width, height), Image.Resampling.LANCZOS)
+                    max_retries = 3
+                    user_agents = [
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.2 Safari/605.1.15",
+                    ]
+                    last_err = None
+                    for attempt in range(max_retries):
+                        try:
+                            headers = {"User-Agent": user_agents[attempt % len(user_agents)]}
+                            response = requests.get(url, timeout=20, headers=headers)
+                            response.raise_for_status()
+                            image = Image.open(io.BytesIO(response.content))
+                            image.thumbnail((width, height), Image.Resampling.LANCZOS)
+                            break
+                        except Exception as retry_err:
+                            last_err = retry_err
+                            if attempt < max_retries - 1:
+                                time.sleep(1.5 * (attempt + 1))
+                    if image is None and last_err:
+                        raise last_err  # pylint: disable=raising-bad-type
+                    if image is None:
+                        raise RuntimeError("Thumbnail indirilemedi")
                     
                     # Disk cache'e kaydet
                     try:
                         image.save(cache_path, "PNG")
-                    except:
+                    except Exception:
                         pass
                 
                 # Convert to CTkImage
@@ -5243,9 +5849,9 @@ class MainWindow(ctk.CTk):
 
     def hide_user_tooltip(self, event):
         """Kullanıcı tooltip'ini gizle."""
-        if hasattr(self, 'user_tooltip') and self.user_tooltip:
+        if hasattr(self, 'user_tooltip') and self.user_tooltip is not None:
             self.user_tooltip.destroy()
-            self.user_tooltip = None
+        self.user_tooltip = None
         # Label rengini geri döndür
         self.lblAniListUser.configure(text_color="#cccccc", font=ctk.CTkFont(size=9))
 

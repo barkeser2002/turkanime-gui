@@ -55,7 +55,7 @@ class JikanCache:
     DEFAULT_CACHE_DURATION = 86400  # 24 hours (matches Jikan server cache)
     LOCAL_CACHE_DURATION = 600  # 10 minutes for local freshness check
     
-    def __init__(self, cache_dir: str = None):
+    def __init__(self, cache_dir: Optional[str] = None):
         if cache_dir is None:
             # ~/.turkanime klasörü
             cache_dir = os.path.join(os.path.expanduser("~"), ".turkanime")
@@ -129,7 +129,7 @@ class JikanCache:
             print(f"[JikanCache] Cache read error: {e}")
             return None, None, True
     
-    def set(self, key: str, data: Any, etag: str = None, expires: str = None, last_modified: str = None):
+    def set(self, key: str, data: Any, etag: Optional[str] = None, expires: Optional[str] = None, last_modified: Optional[str] = None):
         """
         Save data to cache with metadata.
         
@@ -240,7 +240,7 @@ class JikanClient:
             time.sleep(self.RATE_LIMIT_DELAY - elapsed)
         self._last_request_time = time.time()
     
-    def _make_request(self, endpoint: str, params: Dict = None, use_cache: bool = True) -> Optional[Dict]:
+    def _make_request(self, endpoint: str, params: Optional[Dict] = None, use_cache: bool = True) -> Optional[Dict]:
         """
         Make API request with ETag-based caching and rate limiting.
         
@@ -502,14 +502,14 @@ class JikanClient:
             'Finished Airing': 'FINISHED',
             'Not yet aired': 'NOT_YET_RELEASED'
         }
-        return status_map.get(status, 'RELEASING')
+        return status_map.get(status or '', 'RELEASING')
 
 
 # Global client instance
 jikan_client = JikanClient()
 
 
-def get_seasonal_anime_list(year: int = None, season: str = None) -> List[Dict]:
+def get_seasonal_anime_list(year: Optional[int] = None, season: Optional[str] = None) -> List[Dict]:
     """
     Get seasonal anime list in format compatible with existing UI.
     

@@ -11,6 +11,5 @@ cloudscraper
 Pillow
 pypresence
 toml
-selenium==4.22.0
-webdriver-manager==4.0.1
+selenium>=4.11.0
 beautifulsoup4>=4.12.0

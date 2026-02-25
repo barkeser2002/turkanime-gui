@@ -22,6 +22,25 @@ from tempfile import NamedTemporaryFile
 from Crypto.Cipher import AES
 from curl_cffi import requests
 
+# CF Bypass modülünü içe aktar
+try:
+    from turkanime_api.common.cf_bypass import CFSession, CFBypassError
+    HAS_CF_BYPASS = True
+except ImportError:
+    CFBypassError = ConnectionError  # Fallback exception type
+    HAS_CF_BYPASS = False
+
+
+def _get_cf_session():
+    """CF bypass session döndür."""
+    if not HAS_CF_BYPASS:
+        return None
+    try:
+        return CFSession(timeout=60)
+    except Exception:
+        return None
+
+
 session = None
 BASE_URL = "https://turkanime.tv/"
 
