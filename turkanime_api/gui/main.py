@@ -117,18 +117,6 @@ class RequirementsManager:
         """Uygulamanın mevcut olup olmadığını kontrol et."""
         try:
             import subprocess
-            # Özel kontrol: mpv için placeholder kontrolü
-            if app_name == "mpv":
-                mpv_path = self._get_embedded_tool_path("mpv.exe")
-                if mpv_path and os.path.exists(mpv_path):
-                    # Placeholder kontrolü
-                    with open(mpv_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        first_line = f.readline().strip()
-                        if first_line.startswith("#"):
-                            return False  # Placeholder, gerçek mpv yok
-                else:
-                    return False
-            
             result = subprocess.run([app_name, "--version"],
                                   capture_output=True, text=True, timeout=5)
             return result.returncode == 0
@@ -2715,6 +2703,75 @@ class MainWindow(ctk.CTk):
         )
         self._cookie_cancel_btn.pack(pady=(0, 20))
 
+        # Eğer gerekli ise otomatik Chromium indirmesi büyük dosya olabilir.
+        # Kullanıcıya onay sor (ayar kaydetme seçeneğiyle).
+        allow_download_fn = None
+        try:
+            settings = self.dosya.ayarlar
+            if bool(settings.get("allow_chromium_download", False)):
+                allow_download_fn = lambda: True
+            else:
+                # Modal onay penceresi
+                choice: Dict[str, Optional[str]] = {"value": None}
+                dlg = ctk.CTkToplevel(self)
+                dlg.title("Chromium İndirilsin mi?")
+                dlg.geometry("520x220")
+                dlg.resizable(False, False)
+                # ensure dialog appears on top
+                try:
+                    dlg.attributes("-topmost", True)
+                except Exception:
+                    pass
+                dlg.lift()
+                dlg.grab_set()
+                ctk.CTkLabel(dlg, text="🔽 Yerel Chromium gerekli olabilir",
+                            font=ctk.CTkFont(size=15, weight="bold"),
+                            text_color="#ffeaa7").pack(pady=(18, 6))
+                ctk.CTkLabel(dlg, text="Uygulama yerel Chromium indirmek zorunda kalabilir.\nBu indirme büyük (onlarca MB) olabilir ve uzun sürebilir.\nİzninize ihtiyaç var.",
+                            font=ctk.CTkFont(size=12), text_color="#bbbbbb", justify="center").pack(pady=(0, 12))
+
+                btn_frame2 = ctk.CTkFrame(dlg, fg_color="transparent")
+                btn_frame2.pack(pady=(6, 12))
+
+                def _always():
+                    choice["value"] = "always"
+                    try:
+                        self.dosya.set_ayar("allow_chromium_download", True)
+                    except Exception:
+                        pass
+                    dlg.destroy()
+
+                def _once():
+                    choice["value"] = "once"
+                    dlg.destroy()
+
+                def _never():
+                    choice["value"] = "never"
+                    dlg.destroy()
+
+                ctk.CTkButton(btn_frame2, text="✅ Evet — Bir daha sorma",
+                             width=190, height=38, fg_color="#00b894",
+                             command=_always).pack(side="left", padx=(0, 8))
+                ctk.CTkButton(btn_frame2, text="✅ Evet — Sadece bu sefer",
+                             width=160, height=38, fg_color="#0984e3",
+                             command=_once).pack(side="left", padx=(0, 8))
+                ctk.CTkButton(btn_frame2, text="❌ Hayır",
+                             width=120, height=38, fg_color="#636e72",
+                             command=_never).pack(side="left")
+
+                dlg.protocol("WM_DELETE_WINDOW", _never)
+                # Wait until dialog closed
+                self.wait_window(dlg)
+
+                if choice["value"] == "always":
+                    allow_download_fn = lambda: True
+                elif choice["value"] == "once":
+                    allow_download_fn = lambda: True
+                else:
+                    allow_download_fn = lambda: False
+        except Exception:
+            allow_download_fn = None
+
         # Worker başlat
         def on_status(msg: str):
             try:
@@ -2756,10 +2813,22 @@ class MainWindow(ctk.CTk):
                     pass
             self.after(0, _show)
 
+        # Dispatcher to schedule callbacks on the Tk main thread
+        def _tk_dispatch(fn, args_tuple, kwargs_dict):
+            try:
+                self.after(0, lambda: fn(*args_tuple, **(kwargs_dict or {})))
+            except Exception:
+                try:
+                    fn(*args_tuple, **(kwargs_dict or {}))
+                except Exception:
+                    pass
+
         self._cookie_worker = CookieBrowserWorker(
             on_status=on_status,
             on_cookies=on_cookies,
             on_error=on_error,
+            dispatch=_tk_dispatch,
+            allow_download=allow_download_fn,
         )
         self._cookie_worker.start()
 

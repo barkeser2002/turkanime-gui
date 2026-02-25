@@ -21,6 +21,9 @@ import platform
 import shutil
 import threading
 import time
+import tempfile
+import zipfile
+import requests
 from typing import Optional, Callable, Dict, List
 
 log = logging.getLogger(__name__)
@@ -87,6 +90,94 @@ def _find_linux_chromium() -> Optional[str]:
     return None
 
 
+def _ensure_chromium_local(status_fn) -> Optional[str]:
+    """Chromium binary yoksa otomatik indir ve cache'e al.
+    Returns binary path or None.
+    """
+    cache_dir = os.path.join(os.path.expanduser("~"), ".turkanime_chromium")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    base = "https://commondatastorage.googleapis.com/chromium-browser-snapshots"
+    if _IS_WINDOWS:
+        platform_key = "Win"
+        archive_name = "chrome-win.zip"
+    elif _IS_LINUX:
+        platform_key = "Linux_x64"
+        archive_name = "chrome-linux.zip"
+    elif _IS_MAC:
+        platform_key = "Mac"
+        archive_name = "chrome-mac.zip"
+    else:
+        return None
+
+    try:
+        status_fn("⬇️ Chromium bulunamadı, indiriliyor (büyük dosya)...")
+        # get latest revision
+        last_change_url = f"{base}/{platform_key}/LAST_CHANGE"
+        r = requests.get(last_change_url, timeout=15)
+        r.raise_for_status()
+        rev = r.text.strip()
+
+        dest_dir = os.path.join(cache_dir, rev)
+        binary = None
+        if os.path.isdir(dest_dir):
+            # already extracted
+            for root, _, files in os.walk(dest_dir):
+                for fname in files:
+                    if fname.lower().startswith("chrome") or fname.lower().startswith("chromium") or fname == "chrome.exe":
+                        candidate = os.path.join(root, fname)
+                        if os.access(candidate, os.X_OK) or fname.endswith('.exe'):
+                            binary = candidate
+                            break
+                if binary:
+                    break
+            if binary:
+                status_fn("✅ Yerel Chromium bulundu.")
+                return binary
+
+        # download archive
+        download_url = f"{base}/{platform_key}/{rev}/{archive_name}"
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        try:
+            with requests.get(download_url, stream=True, timeout=60) as r2:
+                r2.raise_for_status()
+                for chunk in r2.iter_content(chunk_size=8192):
+                    if chunk:
+                        tmp.write(chunk)
+            tmp.close()
+            # extract
+            os.makedirs(dest_dir, exist_ok=True)
+            with zipfile.ZipFile(tmp.name, 'r') as z:
+                z.extractall(dest_dir)
+
+            # find binary
+            for root, _, files in os.walk(dest_dir):
+                for fname in files:
+                    if fname.lower() in ("chrome.exe", "chrome", "chromium") or fname.lower().startswith("chrome"):
+                        candidate = os.path.join(root, fname)
+                        if os.access(candidate, os.X_OK) or fname.endswith('.exe'):
+                            binary = candidate
+                            break
+                if binary:
+                    break
+
+            if binary:
+                status_fn(f"✅ Chromium indirildi: {binary}")
+                return binary
+            else:
+                status_fn("⚠️ Chromium indirildi ama binary bulunamadı.")
+                return None
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("Chromium indirme hatası: %s", e)
+        status_fn(f"Chromium indirilemedi: {e}")
+        return None
+
+
 # ── Driver oluşturma (Chrome → Edge → Firefox → Linux Chromium) ─────────────
 
 def _apply_stealth(driver, is_chromium_based: bool = True):
@@ -123,7 +214,7 @@ def _common_chrome_options(options):
     return options
 
 
-def _try_chrome(status_fn) -> Optional[webdriver.Chrome]:
+def _try_chrome(status_fn, allow_download: Optional[Callable[[], bool]] = None) -> Optional[webdriver.Chrome]:
     """Chrome tarayıcısı ile driver oluştur."""
     status_fn("🔍 Chrome deneniyor...")
     try:
@@ -134,11 +225,32 @@ def _try_chrome(status_fn) -> Optional[webdriver.Chrome]:
         log.info("Chrome driver başarıyla oluşturuldu")
         return driver
     except Exception as exc:
-        log.debug("Chrome başarısız: %s", exc)
+        log.debug("Chrome ilk deneme başarısız: %s", exc)
+        # Eğer sistemde Chrome yoksa, lokal Chromium indir ve tekrar dene (izin varsa)
+        try:
+            do_download = True
+            if allow_download is not None:
+                try:
+                    do_download = bool(allow_download())
+                except Exception:
+                    do_download = False
+            if do_download:
+                local = _ensure_chromium_local(status_fn)
+            else:
+                local = None
+
+            if local:
+                options.binary_location = local
+                driver = webdriver.Chrome(options=options)
+                _apply_stealth(driver, True)
+                log.info("Chrome driver (local chromium) başarıyla oluşturuldu")
+                return driver
+        except Exception as exc2:
+            log.debug("Chrome local chromium denemesi başarısız: %s", exc2)
         return None
 
 
-def _try_edge(status_fn) -> Optional[webdriver.Edge]:
+def _try_edge(status_fn, allow_download: Optional[Callable[[], bool]] = None) -> Optional[webdriver.Edge]:
     """Microsoft Edge tarayıcısı ile driver oluştur."""
     status_fn("🔍 Edge deneniyor...")
     try:
@@ -152,7 +264,7 @@ def _try_edge(status_fn) -> Optional[webdriver.Edge]:
         return None
 
 
-def _try_firefox(status_fn) -> Optional[webdriver.Firefox]:
+def _try_firefox(status_fn, allow_download: Optional[Callable[[], bool]] = None) -> Optional[webdriver.Firefox]:
     """Firefox tarayıcısı ile driver oluştur."""
     status_fn("🔍 Firefox deneniyor...")
     try:
@@ -172,13 +284,16 @@ def _try_firefox(status_fn) -> Optional[webdriver.Firefox]:
         return None
 
 
-def _try_linux_chromium(status_fn) -> Optional[webdriver.Chrome]:
+def _try_linux_chromium(status_fn, allow_download: Optional[Callable[[], bool]] = None) -> Optional[webdriver.Chrome]:
     """Linux'ta Chromium binary'si ile Chrome driver oluştur."""
     if not _IS_LINUX:
         return None
     chromium_path = _find_linux_chromium()
     if not chromium_path:
-        return None
+        # deneyelim otomatik indirip getirip getiremediğine
+        chromium_path = _ensure_chromium_local(status_fn)
+        if not chromium_path:
+            return None
     status_fn(f"🔍 Chromium deneniyor ({chromium_path})...")
     try:
         options = _common_chrome_options(ChromeOptions())
@@ -192,7 +307,7 @@ def _try_linux_chromium(status_fn) -> Optional[webdriver.Chrome]:
         return None
 
 
-def _create_driver(status_fn=None):
+def _create_driver(status_fn=None, allow_download: Optional[Callable[[], bool]] = None):
     """
     Tüm tarayıcıları sırayla dene: Chrome → Edge → Firefox → Chromium (Linux).
     Selenium 4.6+ dahili SeleniumManager ile driver'lar otomatik indirilir.
@@ -207,7 +322,7 @@ def _create_driver(status_fn=None):
         ("Chromium", _try_linux_chromium),
     ]:
         try:
-            driver = factory(_status)
+            driver = factory(_status, allow_download)
             if driver is not None:
                 _status(f"✅ {name} tarayıcısı başlatıldı")
                 return driver
@@ -277,10 +392,18 @@ class CookieBrowserWorker:
         on_status: Optional[Callable[[str], None]] = None,
         on_cookies: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
+        # Optional dispatcher to run callbacks on the main/UI thread.
+        # Signature: dispatcher(func, args_tuple, kwargs_dict)
+        dispatch: Optional[Callable[[Callable, tuple, dict], None]] = None,
+        # Optional allow_download hook. If provided, it's called to ask
+        # whether automatic Chromium download is permitted. Signature: ()->bool
+        allow_download: Optional[Callable[[], bool]] = None,
     ):
         self.on_status = on_status or (lambda m: None)
         self.on_error = on_error or (lambda m: None)
         self.on_cookies = on_cookies or (lambda m: None)
+        self._dispatch = dispatch
+        self._allow_download = allow_download
         self._driver = None
         self._thread: Optional[threading.Thread] = None
         self._stop_flag = False
@@ -319,15 +442,31 @@ class CookieBrowserWorker:
         except Exception:
             pass
 
+    def _dispatch_call(self, callback: Callable, *args, **kwargs):
+        """Run callback either via dispatcher or directly.
+
+        The `dispatch` attribute is an optional function provided by the
+        caller that schedules execution on the main/UI thread. It should
+        accept (func, args_tuple, kwargs_dict). If no dispatcher is
+        supplied we invoke the callback directly.
+        """
+        try:
+            if self._dispatch:
+                self._dispatch(callback, args, kwargs)
+            else:
+                callback(*args, **kwargs)
+        except Exception:
+            pass
+
     def _run(self):
         """Ana worker döngüsü."""
         try:
             # 1) Tarayıcı oluştur
             self._emit_status("🚀 Tarayıcı aranıyor ve başlatılıyor...\n(Driver otomatik indirilecek)")
-            self._driver = _create_driver(status_fn=self._emit_status)
+            self._driver = _create_driver(status_fn=self._emit_status, allow_download=self._allow_download)
 
             if self._driver is None:
-                self.on_error(
+                self._dispatch_call(self.on_error,
                     "Hiçbir tarayıcı bulunamadı!\n\n"
                     "Aşağıdakilerden en az biri yüklü olmalıdır:\n"
                     "• Google Chrome\n"
@@ -356,8 +495,7 @@ class CookieBrowserWorker:
             self._emit_status("📺 Anime sayfasına yönlendiriliyor...")
             self._driver.get(TARGET_ANIME)
             time.sleep(2)
-
-            # 4) age_verified cookie'sini otomatik ekle
+            # 4) age_verified cookie'sini otomatik ekle (deneme)
             try:
                 self._driver.add_cookie({
                     "name": "age_verified",
@@ -368,7 +506,7 @@ class CookieBrowserWorker:
             except Exception:
                 pass
 
-            # 5) Bot Kontrol var mı kontrol et
+            # 5) Bot Kontrol var mı kontrol et (ve yönlendirme bekle)
             page_source = self._driver.page_source or ""
             has_bot_check = "Bot Kontrol" in page_source or "captcha" in page_source.lower()
 
@@ -376,7 +514,7 @@ class CookieBrowserWorker:
                 self._emit_status(
                     "🔐 Bot kontrolü algılandı!\n"
                     "Tarayıcıda captcha'yı çözün.\n"
-                    "Cookie'ler otomatik kaydedilecek..."
+                    "Sayfa yönlendirmesi tamamlandıktan sonra cookie otomatik kaydedilecek..."
                 )
             else:
                 self._emit_status(
@@ -386,24 +524,52 @@ class CookieBrowserWorker:
             # 6) Cookie polling döngüsü
             start_time = time.time()
             last_status = ""
+            # Kaydettiğimiz başlangıç URL'si; yönlendirme olup olmadığını anlamak için
+            try:
+                last_url = self._driver.current_url
+            except Exception:
+                last_url = None
             while not self._stop_flag:
                 elapsed = time.time() - start_time
                 if elapsed > MAX_WAIT_SECONDS:
-                    self.on_error(
+                    self._dispatch_call(self.on_error,
                         f"⏰ Süre doldu ({MAX_WAIT_SECONDS // 60} dakika).\n"
                         "Tekrar deneyin."
                     )
                     break
-
                 try:
                     all_cookies = self._driver.get_cookies()
                 except Exception:
                     # Tarayıcı kapanmış olabilir
                     if not self._stop_flag:
-                        self.on_error("Tarayıcı penceresi kapatıldı.")
+                        self._dispatch_call(self.on_error, "Tarayıcı penceresi kapatıldı.")
                     break
 
                 tranime_cookies = _filter_tranime_cookies(all_cookies)
+
+                # URL'in değişip değişmediğini kontrol et (yönlendirme tamamlandı mı?)
+                try:
+                    current_url = self._driver.current_url
+                except Exception:
+                    current_url = None
+
+                url_changed = False
+                if last_url is not None and current_url is not None:
+                    url_changed = current_url != last_url
+
+                # Eğer URL değişikliği gerçekleşmediyse, cookie olsa bile kabul etme
+                if not url_changed:
+                    # sadece durum güncellemesi göster
+                    if tranime_cookies:
+                        names = [c.get("name", "?") for c in tranime_cookies]
+                        status_preview = f"⏳ Cookie bulundu fakat yönlendirme bekleniyor. Bulunan: {', '.join(names[:5])}"
+                        if status_preview != last_status:
+                            self._emit_status(status_preview)
+                            last_status = status_preview
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                # Eğer URL değiştiyse, yeni URL'i kaydet
+                last_url = current_url
 
                 if _has_required_cookies(tranime_cookies):
                     # Başarı!
@@ -413,10 +579,14 @@ class CookieBrowserWorker:
                     )
                     self._done = True
 
+                    # Driver'ı önce kapat, sonra GUI'ye callback yollarız (ana thread'te olmalı)
                     try:
-                        self.on_cookies(netscape)
+                        self._close_driver()
                     except Exception:
                         pass
+
+                    # Dispatch cookie callback (may be scheduled to main thread by caller)
+                    self._dispatch_call(self.on_cookies, netscape)
                     break
 
                 # Durum güncelle
@@ -438,6 +608,6 @@ class CookieBrowserWorker:
 
         except Exception as e:
             if not self._stop_flag:
-                self.on_error(f"Hata: {e}")
+                self._dispatch_call(self.on_error, f"Hata: {e}")
         finally:
             self._close_driver()

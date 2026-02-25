@@ -1376,3 +1376,36 @@ DEBUG: render_sources_page tamamlandý
 DEBUG: create_accordion baþladý
 DEBUG: create_accordion tamamlandý
 INFO: TRAnimeÝzle cookie yüklendi
+INFO: TRAnimeÝzle cookie yüklendi
+INFO: TRAnimeÝzle cookie yüklendi
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: Yuusha Party wo Oidasareta Kiyoubinbou (rid=c4b248bc)
+DEBUG: Thread baþlatýlýyor
+DEBUG: Thread baþlatýldý
+DEBUG: load_sources_worker baþladý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle tamamlandý - 9 bölüm
+DEBUG: TRAnimeÝzle tamamlandý: 0.54s
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.70s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 0.98s
+DEBUG: AnimeciX tamamlandý - 9 bölüm
+DEBUG: AnimeciX tamamlandý: 1.09s
+DEBUG: Anizle tamamlandý - 9 bölüm
+DEBUG: Anizle tamamlandý: 4.83s
+INFO: Baþarýyla yüklenen kaynaklar: AnimeciX, AniList, Anizle, TRAnimeÝzle
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime
+DEBUG: all_episodes set to: ['TRAnimeÝzle', 'AniList', 'AnimeciX', 'Anizle']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['TRAnimeÝzle', 'AniList', 'AnimeciX', 'Anizle']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
+INFO: TRAnimeÝzle cookie yüklendi
