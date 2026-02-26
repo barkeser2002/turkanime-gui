@@ -241,7 +241,25 @@ def _try_chrome(status_fn, allow_download: Optional[Callable[[], bool]] = None) 
 
             if local:
                 options.binary_location = local
-                driver = webdriver.Chrome(options=options)
+                # Eğer local Chromium kullanılıyorsa bazı Windows ortamlarında
+                # sandbox erişimi engellenebilir. İzin problemi görülürse
+                # --no-sandbox ile yeniden denemek yardımcı olabilir.
+                try:
+                    driver = webdriver.Chrome(options=options)
+                    _apply_stealth(driver, True)
+                    log.info("Chrome driver (local chromium) başarıyla oluşturuldu")
+                    return driver
+                except Exception:
+                    try:
+                        options.add_argument("--no-sandbox")
+                        options.add_argument("--disable-gpu")
+                        options.add_argument("--disable-software-rasterizer")
+                        driver = webdriver.Chrome(options=options)
+                        _apply_stealth(driver, True)
+                        log.info("Chrome driver (local chromium, no-sandbox) başarıyla oluşturuldu")
+                        return driver
+                    except Exception:
+                        raise
                 _apply_stealth(driver, True)
                 log.info("Chrome driver (local chromium) başarıyla oluşturuldu")
                 return driver
