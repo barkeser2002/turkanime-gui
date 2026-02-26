@@ -12,7 +12,7 @@
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V9.4.9.1](docs/V9.4.9.1.md)
+**Sürüm notları:** [V9.4.9.2](docs/V9.4.9.2.md)
 
 TürkAnime artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi sunuyor. Terminal (CLI) sürümü destek dışı bırakıldı; tüm geliştirme modern masaüstü uygulamasına odaklanıyor.
 

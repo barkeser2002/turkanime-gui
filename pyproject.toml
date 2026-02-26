@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "turkanime-gui"
-version = "9.4.9.1"
+version = "9.4.9.2"
 description = "Türkanime video oynatıcı ve indirici"
 authors = ["barkeser2002 <bariskeser@bariskeser.com>", "Junicchi <junicchi@waifu.club>"]
 readme = "README.md"
