@@ -36,6 +36,11 @@ from turkanime_api.sources.tranime import (
     get_episode_details as get_tranime_episode_details,
     set_session_cookie as set_tranime_cookie
 )
+from turkanime_api.sources.openani import (
+    search_openani, 
+    get_anime_episodes as get_openani_episodes, 
+    get_episode_streams as get_openani_streams
+)
 from turkanime_api.sources.adapter import AdapterAnime, AdapterBolum
 from turkanime_api.anilist_client import anilist_client, AniListAuthServer
 from turkanime_api.gui.update_manager import UpdateManager
@@ -744,6 +749,7 @@ class MainWindow(ctk.CTk):
         self.discord_connected = False
         self.discord_update_timer = None
         self._resize_timer = None
+        self.bind("<Configure>", self._on_window_resize)
         self.user_tooltip = None
 
         # Manager değişkenleri
@@ -1131,7 +1137,7 @@ class MainWindow(ctk.CTk):
         selectors_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
         selectors_frame.pack(side="left", padx=(0, 10))
 
-        self.cmbSource = ctk.CTkComboBox(selectors_frame, values=["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle"],
+        self.cmbSource = ctk.CTkComboBox(selectors_frame, values=["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime"],
                                        width=110, height=30,
                                        command=self.on_source_change,
                                        font=ctk.CTkFont(size=10))
@@ -1876,6 +1882,16 @@ class MainWindow(ctk.CTk):
             if widget != self.loading_label:
                 widget.destroy()
 
+    @staticmethod
+    def _bind_recursive(widget, event, handler):
+        """CTk widget'larının iç canvas'ları dahil tüm çocuklarına event bağla."""
+        widget.bind(event, handler)
+        for child in widget.winfo_children():
+            child.bind(event, handler)
+            # CTk iç canvas'larına da bağla
+            for grandchild in child.winfo_children():
+                grandchild.bind(event, handler)
+
     def _display_search_results(self, results, dialog):
         """Arama sonuçlarını göster."""
         self._clear_results()
@@ -1891,29 +1907,29 @@ class MainWindow(ctk.CTk):
         # Sonuçları göster
         for i, (anime_id, anime_name) in enumerate(results[:20]):  # Max 20 sonuç
             result_frame = ctk.CTkFrame(self.results_scrollable, fg_color="#2a2a2a",
-                                       border_width=1, border_color="#444444")
+                                       border_width=1, border_color="#444444",
+                                       cursor="hand2")
             result_frame.pack(fill="x", pady=2, padx=5)
 
             # Anime adı
             name_label = ctk.CTkLabel(result_frame, text=anime_name,
                                     font=ctk.CTkFont(size=13),
                                     text_color="#ffffff",
-                                    anchor="w")
+                                    anchor="w",
+                                    cursor="hand2")
             name_label.pack(side="left", fill="x", expand=True, padx=10, pady=8)
 
             # ID göster
             id_label = ctk.CTkLabel(result_frame, text=f"#{anime_id}",
                                   font=ctk.CTkFont(size=11),
-                                  text_color="#cccccc")
+                                  text_color="#cccccc",
+                                  cursor="hand2")
             id_label.pack(side="right", padx=10, pady=8)
 
-            # Tıklama eventi
-            def make_click_handler(aid=anime_id, aname=anime_name, dlg=dialog):
-                return lambda e: self._on_anime_selected(aid, aname, dlg)
-
-            result_frame.bind("<Button-1>", make_click_handler(aid=anime_id, aname=anime_name, dlg=dialog))
-            name_label.bind("<Button-1>", make_click_handler(aid=anime_id, aname=anime_name, dlg=dialog))
-            id_label.bind("<Button-1>", make_click_handler(aid=anime_id, aname=anime_name, dlg=dialog))
+            # Tıklama eventi - recursive bind ile CTk iç canvas'larına da bağla
+            click_handler = (lambda e, aid=anime_id, aname=anime_name, dlg=dialog:
+                             self._on_anime_selected(aid, aname, dlg))
+            self._bind_recursive(result_frame, "<Button-1>", click_handler)
 
             # Hover efekti
             def on_enter(e, frame=result_frame):
@@ -1922,8 +1938,8 @@ class MainWindow(ctk.CTk):
             def on_leave(e, frame=result_frame):
                 frame.configure(fg_color="#2a2a2a")
 
-            result_frame.bind("<Enter>", on_enter)
-            result_frame.bind("<Leave>", on_leave)
+            self._bind_recursive(result_frame, "<Enter>", on_enter)
+            self._bind_recursive(result_frame, "<Leave>", on_leave)
 
     def _display_combined_search_results(self, results, dialog):
         """Birleştirilmiş arama sonuçlarını göster - kaynak bilgisi ile."""
@@ -1957,37 +1973,31 @@ class MainWindow(ctk.CTk):
             # Kaynak sonuçları
             for result in source_results[:10]:  # Kaynak başına max 10 sonuç
                 result_frame = ctk.CTkFrame(self.results_scrollable, fg_color="#2a2a2a",
-                                           border_width=1, border_color="#444444")
+                                           border_width=1, border_color="#444444",
+                                           cursor="hand2")
                 result_frame.pack(fill="x", pady=2, padx=10)
 
                 # Anime adı
                 name_label = ctk.CTkLabel(result_frame, text=result['name'],
                                         font=ctk.CTkFont(size=13),
                                         text_color="#ffffff",
-                                        anchor="w")
+                                        anchor="w",
+                                        cursor="hand2")
                 name_label.pack(side="left", fill="x", expand=True, padx=10, pady=8)
 
                 # Kaynak ve ID göster
                 info_label = ctk.CTkLabel(result_frame,
                                         text=f"{result['source']} #{result['id']}",
                                         font=ctk.CTkFont(size=11),
-                                        text_color="#cccccc")
+                                        text_color="#cccccc",
+                                        cursor="hand2")
                 info_label.pack(side="right", padx=10, pady=8)
 
-                # Tıklama eventi
-                def make_click_handler(aid=result['id'], aname=result['name'],
-                                     source=result['source'], dlg=dialog):
-                    return lambda e: self._on_anime_selected_with_source(aid, aname, source, dlg)
-
-                result_frame.bind("<Button-1>", make_click_handler(aid=result['id'],
-                                                                aname=result['name'],
-                                                                source=result['source'], dlg=dialog))
-                name_label.bind("<Button-1>", make_click_handler(aid=result['id'],
-                                                               aname=result['name'],
-                                                               source=result['source'], dlg=dialog))
-                info_label.bind("<Button-1>", make_click_handler(aid=result['id'],
-                                                               aname=result['name'],
-                                                               source=result['source'], dlg=dialog))
+                # Tıklama eventi - recursive bind ile CTk iç canvas'larına da bağla
+                click_handler = (lambda e, aid=result['id'], aname=result['name'],
+                                 source=result['source'], dlg=dialog:
+                                 self._on_anime_selected_with_source(aid, aname, source, dlg))
+                self._bind_recursive(result_frame, "<Button-1>", click_handler)
 
                 # Hover efekti
                 def on_enter(e, frame=result_frame):
@@ -1996,8 +2006,8 @@ class MainWindow(ctk.CTk):
                 def on_leave(e, frame=result_frame):
                     frame.configure(fg_color="#2a2a2a")
 
-                result_frame.bind("<Enter>", on_enter)
-                result_frame.bind("<Leave>", on_leave)
+                self._bind_recursive(result_frame, "<Enter>", on_enter)
+                self._bind_recursive(result_frame, "<Leave>", on_leave)
 
     def _show_search_error(self, error_msg, dialog):
         """Arama hatası göster."""
@@ -3016,6 +3026,26 @@ class MainWindow(ctk.CTk):
                 print(f"Otomatik güncelleme kontrolü hatası: {e}")
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_window_resize(self, event):
+        """Pencere boyutu değiştiğinde UI elementlerini esnek ayarlamak için tetiklenir."""
+        # Sadece ana pencere event'lerini al
+        if event.widget == self:
+            if getattr(self, '_resize_timer', None):
+                self.after_cancel(self._resize_timer)
+            self._resize_timer = self.after(300, self._handle_resize)
+
+    def _handle_resize(self):
+        """Debounce sonrası ekran genişliğine göre kolon sayısını günceller."""
+        width = self.winfo_width()
+        # Kart genişliği + margin (yaklaşık 230px). En az 1 kolon olsun.
+        new_max_cols = max(1, (width - 100) // 230)
+        
+        # Eğer sütun sayısı değiştiyse trend sayfasını yenile
+        if getattr(self, '_current_max_cols', 0) != new_max_cols:
+            self._current_max_cols = new_max_cols
+            if hasattr(self, '_current_trending_anime') and getattr(self, 'current_view', '') == 'home':
+                self.display_trending_anime(self._current_trending_anime)
+
     def load_trending_anime(self):
         """Trend animeleri yükle - Jikan API (top airing) veya AniList'ten."""
         def load_worker():
@@ -3040,16 +3070,26 @@ class MainWindow(ctk.CTk):
 
     def display_trending_anime(self, anime_list):
         """Trend animeleri göster."""
+        # Yeniden boyutlandırma için listeyi kaydet
+        self._current_trending_anime = anime_list
+        
         # Loading label'ı kaldır
-        if hasattr(self, 'loading_label'):
+        if hasattr(self, 'loading_label') and self.loading_label.winfo_exists():
             self.loading_label.destroy()
+
+        # Grid temizleme (resize'da üst üste binmesin)
+        if hasattr(self, 'trending_grid') and self.trending_grid.winfo_exists():
+            for widget in self.trending_grid.winfo_children():
+                widget.destroy()
 
         # Grid oluştur - responsive sütun sayısı
         row = 0
         col = 0
-        max_cols = 6  # 6'dan 5'e düşürdük, kartlar daha büyük görünsün
+        width = self.winfo_width()
+        max_cols = getattr(self, '_current_max_cols', max(1, (width - 100) // 230))
+        self._current_max_cols = max_cols
 
-        for anime in anime_list[:12]: # 12'den 10'a düşürdük, daha az ama daha büyük kart
+        for anime in anime_list[:24]: # max kart sayısı artırıldı, büyük ekranlarda daha fazla göstersin
             if col >= max_cols:
                 col = 0
                 row += 1
@@ -3060,27 +3100,19 @@ class MainWindow(ctk.CTk):
 
     def create_anime_card(self, parent, anime_data, row, col, max_cols):
         """Gelişmiş anime kartı oluştur - Netflix tarzı."""
-        # Daha büyük ve şık kart - genişlik artırıldı
-        card_width = 220 if max_cols == 5 else 200  # 5 sütun için daha geniş
+        # Daha büyük ve şık kart - genişlik otomatik, min 200px
+        card_width = 200
         card_frame = ctk.CTkFrame(parent, fg_color="#1a1a1a", width=card_width, height=340,
                                 border_width=1, border_color="#333333",
-                                corner_radius=12)
+                                corner_radius=12, cursor="hand2")
         card_frame.grid(row=row, column=col, padx=10, pady=10, sticky="nw")  # padding azaltıldı
         card_frame.pack_propagate(False)
 
-        # Gelişmiş hover efekti
-        def on_enter(e):
-            card_frame.configure(fg_color="#2a2a2a", border_color="#ff6b6b")
-
-        def on_leave(e):
-            card_frame.configure(fg_color="#1a1a1a", border_color="#333333")
-
-        card_frame.bind("<Enter>", on_enter)
-        card_frame.bind("<Leave>", on_leave)
+        # Gelişmiş hover efekti - tüm çocuklara da uygulanacak (aşağıda)
 
         # Büyük kapak görseli - optimize edilmiş boyut
-        cover_width = 200 if max_cols == 5 else 180
-        cover_height = 260 if max_cols == 5 else 240
+        cover_width = 180
+        cover_height = 240
         cover_frame = ctk.CTkFrame(card_frame, fg_color="#0f0f0f", width=cover_width, height=cover_height,
                                  corner_radius=8)
         cover_frame.pack(pady=(15, 0))
@@ -3139,15 +3171,20 @@ class MainWindow(ctk.CTk):
                                   text_color="#cccccc")
             ep_label.pack(side="right")
 
-        # Tıkla eventi - tüm alan tıklanabilir
-        def on_click():
-            self.show_anime_details(anime_data)
+        # Tıkla eventi - tüm alan tıklanabilir (recursive bind)
+        click_handler = lambda e: self.show_anime_details(anime_data)
 
+        # Hover efekti
+        def on_enter(e):
+            card_frame.configure(fg_color="#2a2a2a", border_color="#ff6b6b")
 
+        def on_leave(e):
+            card_frame.configure(fg_color="#1a1a1a", border_color="#333333")
 
-        card_frame.bind("<Button-1>", lambda e: on_click())
-        cover_label.bind("<Button-1>", lambda e: on_click())
-        title_label.bind("<Button-1>", lambda e: on_click())
+        # Tüm çocuk ve torun widgetlara bind et (CTk canvas dahil)
+        self._bind_recursive(card_frame, "<Button-1>", click_handler)
+        self._bind_recursive(card_frame, "<Enter>", on_enter)
+        self._bind_recursive(card_frame, "<Leave>", on_leave)
 
     def show_anime_details(self, anime_data):
         """Anime detaylarını göster."""
@@ -3632,6 +3669,52 @@ class MainWindow(ctk.CTk):
                                 with open("debug.log", "a") as f:
                                     f.write(f"ERROR: {source_name} hatası: {str(e)}\n")
 
+                        elif source_name == "OpenAnime":
+                            try:
+                                search_results = search_openani(query_title, limit=1)
+                                if search_results:
+                                    slug, name = search_results[0]
+                                    
+                                    # OpenAnime bölümlerini al
+                                    openani_episodes = get_openani_episodes(slug)
+                                    if openani_episodes:
+                                        episodes = []
+                                        ada = AdapterAnime(slug=slug, title=name)
+                                        
+                                        for ep_slug, ep_title in openani_episodes:
+                                            # Stream provider
+                                            def make_stream_provider(es):
+                                                def provider(url):
+                                                    try:
+                                                        return get_openani_streams(es)
+                                                    except Exception:
+                                                        return []
+                                                return provider
+                                            
+                                            ep_url = f"https://openani.me/anime/{ep_slug}"
+                                            ab = AdapterBolum(
+                                                url=ep_url,
+                                                title=ep_title,
+                                                anime=ada,
+                                                stream_provider=make_stream_provider(ep_slug),
+                                                player_name="OPENANI"
+                                            )
+                                            episodes.append({
+                                                "title": ep_title,
+                                                "obj": ab,
+                                                "anime_title": name
+                                            })
+                                        sources_data[source_name] = episodes
+                                        source_status[source_name] = "completed"
+                                    else:
+                                        source_status[source_name] = "no_results"
+                                else:
+                                    source_status[source_name] = "no_results"
+                            except Exception as e:
+                                source_status[source_name] = "error"
+                                with open("debug.log", "a") as f:
+                                    f.write(f"ERROR: {source_name} hatası: {str(e)}\n")
+
                         # Başarılı tamamlandı, timer'ı iptal et
                         timer.cancel()
                         elapsed_time = time.time() - start_time
@@ -3649,7 +3732,7 @@ class MainWindow(ctk.CTk):
 
                 # Paralel arama - her kaynak için ayrı thread
                 threads = []
-                all_sources = ["TürkAnime", "AnimeciX", "AniList", "Anizle", "TRAnimeİzle"]
+                all_sources = ["TürkAnime", "AnimeciX", "AniList", "Anizle", "TRAnimeİzle", "OpenAnime"]
                 for source_name in all_sources:
                     timeout = source_timeouts.get(source_name, 10)
                     thread = threading.Thread(
@@ -3857,7 +3940,7 @@ class MainWindow(ctk.CTk):
 
         try:
             # Loading label'ı kaldır
-            if self.episodes_list:
+            if self.episodes_list and self.episodes_list.winfo_exists():
                 for widget in self.episodes_list.winfo_children():
                     if hasattr(widget, 'cget') and widget.cget('text') == "Kaynaklar yükleniyor…":
                         widget.destroy()
@@ -3874,6 +3957,8 @@ class MainWindow(ctk.CTk):
                     pass
 
             # Bölüm bulunamadı mesajı
+            if not self.episodes_list or not self.episodes_list.winfo_exists():
+                return
             not_found_frame = ctk.CTkFrame(self.episodes_list, fg_color="transparent")
             not_found_frame.pack(fill="x", padx=10, pady=10)
 
@@ -3885,11 +3970,11 @@ class MainWindow(ctk.CTk):
             return
 
         # Sadece bölümler için kullanılacak kaynakları ayır (AniList hariç)
-        display_sources = {k: v for k, v in self.all_episodes.items() if k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle"]}
+        display_sources = {k: v for k, v in self.all_episodes.items() if k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime"]}
 
         # Kaynak durumlarını kontrol et ve kullanıcıya bildir
         loaded_sources = [k for k, v in display_sources.items() if v and len(v) > 0]
-        failed_sources = [k for k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle"] if k not in display_sources or not display_sources.get(k)]
+        failed_sources = [k for k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime"] if k not in display_sources or not display_sources.get(k)]
 
         if loaded_sources:
             status_msg = f"✅ {len(loaded_sources)} kaynak yüklendi: {', '.join(loaded_sources)}"
@@ -3900,7 +3985,7 @@ class MainWindow(ctk.CTk):
             self.message(f"❌ Tüm kaynaklar yüklenemedi: {', '.join(failed_sources)}", error=True)
 
         # İlk adım: Loading mesajı göster
-        if self.episodes_list:
+        if self.episodes_list and self.episodes_list.winfo_exists():
             loading_frame = ctk.CTkFrame(self.episodes_list, fg_color="transparent")
             loading_frame.pack(fill="x", padx=10, pady=10)
 
@@ -3915,8 +4000,14 @@ class MainWindow(ctk.CTk):
             try:
                 with open("debug.log", "a") as f:
                     f.write("DEBUG: create_accordion başladı\n")
+                # Widget hala mevcut mu kontrol et
+                if not self.episodes_list or not self.episodes_list.winfo_exists():
+                    with open("debug.log", "a") as f:
+                        f.write("WARN: episodes_list artık mevcut değil, accordion iptal\n")
+                    return
                 # Loading frame'i kaldır
-                loading_frame.destroy()
+                if loading_frame.winfo_exists():
+                    loading_frame.destroy()
                 
                 # AccordionSourceEpisodeList ile kaynakları göster (sadece bölümler için)
                 from turkanime_api.common.ui import AccordionSourceEpisodeList
@@ -5650,19 +5741,28 @@ class MainWindow(ctk.CTk):
 
             video_url = video_data.get('url')
             if video_url:
+                cmd_mpv = ["mpv", video_url]
+                referer = video_data.get('referer')
+                if referer:
+                    cmd_mpv.append(f"--http-header-fields=Referer: {referer}")
+                    cmd_mpv.append(f"--referrer={referer}")
+
                 if platform.system() == "Windows":
                     # Windows için mpv veya vlc kullan
                     try:
-                        subprocess.run(["mpv", video_url], check=True)
+                        subprocess.run(cmd_mpv, check=True)
                     except FileNotFoundError:
                         try:
-                            subprocess.run(["vlc", video_url], check=True)
+                            cmd_vlc = ["vlc", video_url]
+                            if referer:
+                                cmd_vlc.append(f"--http-referrer={referer}")
+                            subprocess.run(cmd_vlc, check=True)
                         except FileNotFoundError:
                             self.message("Video oynatıcı bulunamadı. mpv veya vlc yükleyin.")
                 else:
                     # Linux/Mac için
                     try:
-                        subprocess.run(["mpv", video_url], check=True)
+                        subprocess.run(cmd_mpv, check=True)
                     except FileNotFoundError:
                         self.message("mpv bulunamadı. Lütfen yükleyin.")
 

@@ -53,11 +53,13 @@ class AdapterVideo:
         url: Optional[str],
         label: Optional[str] = None,
         player: str = "ANIMECIX",
+        referer: Optional[str] = None,
     ):
         self.bolum = bolum
         self._url = url or ""
         self.label = label
         self.player = player or "ANIMECIX"
+        self.referer = referer
         self._info: Optional[Dict[str, Any]] = None
         self.is_supported = True
         self._is_working: Optional[bool] = None
@@ -71,6 +73,16 @@ class AdapterVideo:
     @property
     def info(self) -> Optional[Dict[str, Any]]:
         if self._info is None:
+            # OPENANI linkleri Cloudflare arkasında olduğu için yt-dlp 404 dönecektir.
+            # Bu linkler direkt mp4/m3u8 olduğu için info'yu sahte (mock) oluşturuyoruz.
+            if self.player == "OPENANI":
+                self._info = {
+                    "url": self.url,
+                    "ext": "mp4" if "mp4" in self.url else "m3u8",
+                    "title": self.bolum.title if self.bolum else "Video"
+                }
+                return self._info
+
             info = extract_video_info(self.url, self.ydl_opts)
             if not info:
                 self._info = {}
@@ -121,6 +133,8 @@ class AdapterVideo:
             return self.label
         elif key == 'player':
             return self.player
+        elif key == 'referer':
+            return self.referer
         return default
 
     def oynat(self, dakika_hatirla: bool = False):
@@ -279,7 +293,7 @@ class AdapterBolum:
             })
             return None
 
-        vid = AdapterVideo(self, video_url, picked.get("label"), player=player_label)
+        vid = AdapterVideo(self, video_url, picked.get("label"), player=player_label, referer=picked.get("referer"))
         if vid.is_working:
             callback({"current": 1, "total": 1, "player": player_label, "status": "çalışıyor"})
             return vid

@@ -64,6 +64,8 @@ SOURCE_TITLES = {
     "turkanime": "TürkAnime",
     "animecix": "AnimeciX (deneysel)",
     "anizle": "Anizle (deneysel)",
+    "tranimeizle": "TRAnimeİzle",
+    "openanime": "OpenAnime",
 }
 
 
@@ -73,6 +75,10 @@ def _norm_source(val: str) -> str:
         return "animecix"
     if "anizle" in s:
         return "anizle"
+    if "tran" in s or "tranime" in s:
+        return "tranimeizle"
+    if "open" in s or "openanime" in s:
+        return "openanime"
     return "turkanime"
 
 
@@ -99,6 +105,8 @@ def menu_loop():
                 anime = None
                 cix_anime = None
                 anizle_anime = None
+                tranime_episodes_data = None
+                openani_episodes_data = None
                 adapter_anime = None
                 seri_slug = ""
                 seri_ismi = ""
@@ -144,6 +152,48 @@ def menu_loop():
                     seri_slug, seri_ismi = pick
                     anizle_anime = AnizleAnime(slug=seri_slug, title=seri_ismi)
                     adapter_anime = AdapterAnime(slug=anizle_anime.slug, title=anizle_anime.title)
+                elif source == "tranimeizle":
+                    from ..sources.tranime import search_tranime, get_tranime_episodes
+                    q = qa.text("TRAnimeİzle: aramak için yazın", style=prompt_tema).ask(kbi_msg="")
+                    if not q:
+                        continue
+                    with CliStatus("TRAnimeİzle aranıyor.."):
+                        found = search_tranime(q) or []
+                    if not found:
+                        raise KeyError
+                    choices = [qa.Choice(name, (slug, name)) for (slug, name) in found]
+                    pick = qa.select(
+                        "Seri seç",
+                        choices=choices,
+                        style=prompt_tema,
+                        instruction="Yukarı/Aşağı • Enter"
+                    ).ask()
+                    if not pick:
+                        continue
+                    seri_slug, seri_ismi = pick
+                    adapter_anime = AdapterAnime(slug=seri_slug, title=seri_ismi)
+                    tranime_episodes_data = get_tranime_episodes(seri_slug)
+                elif source == "openanime":
+                    from ..sources.openani import search_openani, get_anime_episodes as get_openani_episodes
+                    q = qa.text("OpenAnime: aramak için yazın", style=prompt_tema).ask(kbi_msg="")
+                    if not q:
+                        continue
+                    with CliStatus("OpenAnime aranıyor.."):
+                        found = search_openani(q) or []
+                    if not found:
+                        raise KeyError
+                    choices = [qa.Choice(name, (slug, name)) for (slug, name) in found]
+                    pick = qa.select(
+                        "Seri seç",
+                        choices=choices,
+                        style=prompt_tema,
+                        instruction="Yukarı/Aşağı • Enter"
+                    ).ask()
+                    if not pick:
+                        continue
+                    seri_slug, seri_ismi = pick
+                    adapter_anime = AdapterAnime(slug=seri_slug, title=seri_ismi)
+                    openani_episodes_data = get_openani_episodes(seri_slug)
                 else:
                     with CliStatus("Anime listesi getiriliyor.."):
                         animeler = Anime.get_anime_listesi()
@@ -163,6 +213,32 @@ def menu_loop():
                 (lambda slug, _timeout=10: get_episode_streams(slug, timeout=_timeout))
                 if source == "anizle" else None
             )
+
+            tranime_stream_provider = None
+            if source == "tranimeizle":
+                from ..sources.tranime import get_tranime_episode_details
+                def _tranime_provider(ep_slug):
+                    def provider(url):
+                        try:
+                            ep_details = get_tranime_episode_details(ep_slug)
+                            if ep_details:
+                                sources = ep_details.get_sources()
+                                streams = []
+                                for s in sources:
+                                    iframe = s.get_iframe()
+                                    if iframe:
+                                        streams.append({"url": iframe, "label": s.name})
+                                return streams
+                        except Exception:
+                            pass
+                        return []
+                    return provider
+                tranime_stream_provider = _tranime_provider
+
+            openani_stream_provider = None
+            if source == "openanime":
+                from ..sources.openani import get_episode_streams as get_openani_streams
+                openani_stream_provider = (lambda slug, _timeout=10: get_openani_streams(slug, timeout=_timeout))
 
             while True:
                 dosya = Dosyalar()
@@ -185,6 +261,30 @@ def menu_loop():
                                     player_name="ANIZLE"
                                 )
                                 for e in anizle_anime.episodes
+                            ]
+                        elif source == "tranimeizle" and tranime_episodes_data is not None and tranime_stream_provider:
+                            adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                            bolumler = [
+                                AdapterBolum(
+                                    e.slug,
+                                    e.title,
+                                    adapter,
+                                    stream_provider=tranime_stream_provider(e.slug),
+                                    player_name="TRANIME"
+                                )
+                                for e in tranime_episodes_data
+                            ]
+                        elif source == "openanime" and openani_episodes_data is not None and openani_stream_provider:
+                            adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                            bolumler = [
+                                AdapterBolum(
+                                    f"https://openani.me/anime/{ep_slug}",
+                                    ep_title,
+                                    adapter,
+                                    stream_provider=lambda url, _es=ep_slug: openani_stream_provider(_es),
+                                    player_name="OPENANI"
+                                )
+                                for ep_slug, ep_title in openani_episodes_data
                             ]
                         elif anime is not None:
                             bolumler = anime.bolumler
@@ -250,6 +350,32 @@ def menu_loop():
                             for e in anizle_anime.episodes
                         ]
                         choices, recent = eps_to_choices(bolum_kayitlari, mark_type="indirildi")
+                    elif source == "tranimeizle" and tranime_episodes_data is not None and tranime_stream_provider:
+                        adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                        bolum_kayitlari = [
+                            AdapterBolum(
+                                e.slug,
+                                e.title,
+                                adapter,
+                                stream_provider=tranime_stream_provider(e.slug),
+                                player_name="TRANIME"
+                            )
+                            for e in tranime_episodes_data
+                        ]
+                        choices, recent = eps_to_choices(bolum_kayitlari, mark_type="indirildi")
+                    elif source == "openanime" and openani_episodes_data is not None and openani_stream_provider:
+                        adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                        bolum_kayitlari = [
+                            AdapterBolum(
+                                f"https://openani.me/anime/{ep_slug}",
+                                ep_title,
+                                adapter,
+                                stream_provider=lambda url, _es=ep_slug: openani_stream_provider(_es),
+                                player_name="OPENANI"
+                            )
+                            for ep_slug, ep_title in openani_episodes_data
+                        ]
+                        choices, recent = eps_to_choices(bolum_kayitlari, mark_type="indirildi")
                     elif anime is not None:
                         choices, recent = eps_to_choices(anime.bolumler, mark_type="indirildi")
                     else:
@@ -289,8 +415,8 @@ def menu_loop():
             kay = _norm_source(ds.ayarlar.get("kaynak", "turkanime"))
             # Questionary sürümleri arasında Choice(name,value) ile default eşleşmesi sorun çıkarabiliyor.
             # Bu yüzden düz string seçenekler kullanıp başlıktan koda map ediyoruz.
-            secenekler = ["TürkAnime", "AnimeciX (deneysel)", "Anizle (deneysel)"]
-            varsayilan = _source_title(kay)  # "TürkAnime" veya "AnimeciX (deneysel)" veya "Anizle (deneysel)"
+            secenekler = ["TürkAnime", "AnimeciX (deneysel)", "Anizle (deneysel)", "TRAnimeİzle", "OpenAnime"]
+            varsayilan = _source_title(kay)
             sec_title = qa.select(
                 "Kaynak seç",
                 choices=secenekler,

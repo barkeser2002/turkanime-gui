@@ -13,6 +13,11 @@ from .tranime import (  # noqa: F401
     get_episode_details as get_tranime_episode_details,
     set_session_cookie as set_tranime_cookie
 )
+from .openani import ( # noqa: F401
+    OpenAniAdapter, OpenAniAnime, search_openani, 
+    get_anime_episodes as get_openani_episodes, 
+    get_episode_streams as get_openani_streams
+)
 
 # Mevcut sağlayıcılar
 PROVIDERS = {
@@ -33,6 +38,12 @@ PROVIDERS = {
         "adapter": None,
         "enabled": True,
         "priority": 3
+    },
+    "openani": {
+        "name": "OpenAnime",
+        "adapter": OpenAniAdapter,
+        "enabled": True,
+        "priority": 4
     }
 }
 

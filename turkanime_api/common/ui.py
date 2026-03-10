@@ -505,6 +505,7 @@ class AccordionSourceEpisodeList:
                 "AnimeciX": ("#ff6b6b", "#e65c5c"),
                 "Anizle": ("#9b59b6", "#8e44ad"),
                 "TRAnimeİzle": ("#e84393", "#c0392b"),
+                "OpenAnime": ("#4ecdc4", "#45b7aa"),
             }
             
             # Kaynak kısaltmaları
@@ -513,6 +514,7 @@ class AccordionSourceEpisodeList:
                 "AnimeciX": "CX", 
                 "Anizle": "AZ",
                 "TRAnimeİzle": "TR",
+                "OpenAnime": "OA",
             }
             
             # Dinamik: mevcut tüm kaynaklar için buton oluştur
@@ -764,7 +766,8 @@ class AccordionSourceEpisodeList:
         source_colors = {
             "TürkAnime": ("#ffd93d", "#e6c235"),
             "AnimeciX": ("#ff6b6b", "#e65c5c"),
-            "Anizle": ("#9b59b6", "#8e44ad")
+            "Anizle": ("#9b59b6", "#8e44ad"),
+            "OpenAnime": ("#4ecdc4", "#45b7aa")
         }
         
         # Kaynak butonları
@@ -893,7 +896,7 @@ class AccordionSourceEpisodeList:
         combo_boxes = {}
 
         # Sadece eşleştirme için kullanılacak kaynaklar
-        matching_sources = {k: v for k, v in self.sources_data.items() if k in ["TürkAnime", "AnimeciX"]}
+        matching_sources = {k: v for k, v in self.sources_data.items() if k in ["TürkAnime", "AnimeciX", "OpenAnime"]}
 
         for source_name, episodes in matching_sources.items():
             if not episodes:

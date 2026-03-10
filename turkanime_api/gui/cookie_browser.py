@@ -71,6 +71,45 @@ _IS_MAC = platform.system() == "Darwin"
 
 _CHROMIUM_LINUX_NAMES = ("chromium-browser", "chromium", "google-chrome", "google-chrome-stable")
 
+# Windows'ta yaygın Chrome/Edge kurulum yolları
+_WINDOWS_CHROME_PATHS = [
+    os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+    os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+]
+
+
+def _find_windows_chrome() -> Optional[str]:
+    """Windows'ta Chrome binary yolunu bul."""
+    if not _IS_WINDOWS:
+        return None
+    # shutil.which önce dene
+    path = shutil.which("chrome") or shutil.which("chrome.exe")
+    if path:
+        return path
+    # Bilinen kurulum yollarını dene
+    for candidate in _WINDOWS_CHROME_PATHS:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    # Registry'den dene
+    try:
+        import winreg
+        for key_path in [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+        ]:
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                value, _ = winreg.QueryValueEx(key, "")
+                winreg.CloseKey(key)
+                if value and os.path.isfile(value):
+                    return value
+            except (FileNotFoundError, OSError):
+                continue
+    except ImportError:
+        pass
+    return None
+
 
 def _find_linux_chromium() -> Optional[str]:
     """Linux'ta Chromium/Chrome binary yolunu bul."""
@@ -226,6 +265,21 @@ def _try_chrome(status_fn, allow_download: Optional[Callable[[], bool]] = None) 
         return driver
     except Exception as exc:
         log.debug("Chrome ilk deneme başarısız: %s", exc)
+        # Windows'ta Chrome binary'sini manuel olarak bul ve tekrar dene
+        if _IS_WINDOWS:
+            try:
+                chrome_path = _find_windows_chrome()
+                if chrome_path:
+                    status_fn(f"🔍 Chrome bulundu: {chrome_path}")
+                    options = _common_chrome_options(ChromeOptions())
+                    options.binary_location = chrome_path
+                    driver = webdriver.Chrome(options=options)
+                    _apply_stealth(driver, True)
+                    log.info("Chrome driver (windows manual path) başarıyla oluşturuldu: %s", chrome_path)
+                    return driver
+            except Exception as win_exc:
+                log.debug("Chrome windows manual path başarısız: %s", win_exc)
+
         # Eğer sistemde Chrome yoksa, lokal Chromium indir ve tekrar dene (izin varsa)
         try:
             do_download = True
@@ -240,6 +294,7 @@ def _try_chrome(status_fn, allow_download: Optional[Callable[[], bool]] = None) 
                 local = None
 
             if local:
+                options = _common_chrome_options(ChromeOptions())
                 options.binary_location = local
                 # Eğer local Chromium kullanılıyorsa bazı Windows ortamlarında
                 # sandbox erişimi engellenebilir. İzin problemi görülürse
@@ -260,9 +315,6 @@ def _try_chrome(status_fn, allow_download: Optional[Callable[[], bool]] = None) 
                         return driver
                     except Exception:
                         raise
-                _apply_stealth(driver, True)
-                log.info("Chrome driver (local chromium) başarıyla oluşturuldu")
-                return driver
         except Exception as exc2:
             log.debug("Chrome local chromium denemesi başarısız: %s", exc2)
         return None

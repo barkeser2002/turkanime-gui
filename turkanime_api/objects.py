@@ -336,7 +336,7 @@ class Video:
         self.is_supported = self.player in SUPPORTED
 
         self.ydl_opts = get_ydl_opts(log_handler)
-        if self.player == "ALUCARD(BETA)":
+        if self.player == "ALUCARD(BETA)" and ImpersonateTarget:
             self.ydl_opts['impersonate'] = ImpersonateTarget("chrome")
 
     @property

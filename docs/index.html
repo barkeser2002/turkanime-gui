@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TürkAnime GUI - Dokümantasyon</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Marked.js for Markdown parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- GitHub Markdown CSS for default styled markdown inside the accordions -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.1/github-markdown-dark.min.css"/>
+
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --glass-bg: rgba(30, 41, 59, 0.7);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #e11d48;
+      --accent-hover: #be123c;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(225, 29, 72, 0.15), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(56, 189, 248, 0.1), transparent 25%);
+    }
+
+    header {
+      text-align: center;
+      padding: 4rem 2rem 2rem;
+      width: 100%;
+      max-width: 900px;
+    }
+
+    header h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #f8fafc 0%, #cbd5e1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    main {
+      width: 100%;
+      max-width: 900px;
+      padding: 0 1.5rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* Accordion / Details Styling (Glassmorphism) */
+    details {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      overflow: hidden;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    }
+
+    details[open] {
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    summary {
+      padding: 1.25rem 1.5rem;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      list-style: none; /* Hide default arrow */
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+      transition: background-color 0.2s ease;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    summary:hover {
+      background-color: rgba(255, 255, 255, 0.03);
+    }
+
+    summary::after {
+      content: '+';
+      font-size: 1.5rem;
+      font-weight: 400;
+      color: var(--accent);
+      transition: transform 0.3s ease;
+    }
+
+    details[open] summary::after {
+      content: '−';
+      transform: rotate(180deg);
+    }
+
+    .content-wrapper {
+      padding: 0 1.5rem 1.5rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      animation: fadeIn 0.4s ease forwards;
+    }
+
+    /* Markdown Container */
+    .markdown-body {
+      background: transparent !important;
+      font-family: inherit !important;
+      color: var(--text-muted) !important;
+    }
+
+    .markdown-body h1, 
+    .markdown-body h2, 
+    .markdown-body h3 {
+      color: var(--text-main) !important;
+      border-bottom-color: var(--glass-border) !important;
+    }
+    
+    .markdown-body a {
+      color: #38bdf8 !important;
+    }
+
+    .markdown-body pre {
+      background-color: rgba(0,0,0,0.3) !important;
+      border: 1px solid var(--glass-border) !important;
+    }
+
+    .markdown-body code {
+      background-color: rgba(255,255,255,0.1) !important;
+    }
+
+    .loading-spinner {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      header {
+        padding: 3rem 1rem 1.5rem;
+      }
+      header h1 {
+        font-size: 2rem;
+      }
+      main {
+        padding: 0 1rem 3rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>TürkAnime GUI</h1>
+    <p>Modern, responsive belgeler ve kılavuzlar.</p>
+  </header>
+
+  <main>
+    
+    <!-- README.md Accordion -->
+    <details id="details-readme">
+      <summary>README (Ana Rehber)</summary>
+      <div class="content-wrapper">
+        <div id="content-readme" class="markdown-body">
+          <div class="loading-spinner">Yükleniyor...</div>
+        </div>
+      </div>
+    </details>
+
+    <!-- ANIME_PROVIDER_GUIDE.md Accordion -->
+    <details id="details-provider">
+      <summary>Anime Sağlayıcı Rehberi</summary>
+      <div class="content-wrapper">
+        <div id="content-provider" class="markdown-body">
+          <div class="loading-spinner">Yükleniyor...</div>
+        </div>
+      </div>
+    </details>
+
+    <!-- DISCLAIMER.md Accordion -->
+    <details id="details-disclaimer">
+      <summary>Sorumluluk Reddi (Disclaimer)</summary>
+      <div class="content-wrapper">
+        <div id="content-disclaimer" class="markdown-body">
+          <div class="loading-spinner">Yükleniyor...</div>
+        </div>
+      </div>
+    </details>
+
+  </main>
+
+  <script>
+    // Configuration for local repositories and GitHub Pages (uses relative paths if deployed)
+    const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+      ? '../' // Local testing (index.html is in docs/, md flies are in root)
+      : '../'; // On GitHub pages, if deployed from /docs folder but md files are at root.
+               // Adjust if your GitHub pages serves from root directly. Usually `repo/README.md` can be fetched from `../README.md` if the page is at `repo/docs/index.html`.
+
+    // Define the files to load and their corresponding target element IDs
+    const docFiles = [
+      { id: 'content-readme', file: 'README.md' },
+      { id: 'content-provider', file: 'ANIME_PROVIDER_GUIDE.md' },
+      { id: 'content-disclaimer', file: 'DISCLAIMER.md' }
+    ];
+
+    // Function to load and render markdown
+    async function loadMarkdown(targetId, filename) {
+      const container = document.getElementById(targetId);
+      
+      try {
+        // Fetch the raw markdown file
+        const response = await fetch(baseUrl + filename);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const markdown = await response.text();
+        
+        // Parse markdown to HTML
+        // Note: For GitHub Pages production you might need to fetch from raw.githubusercontent 
+        // if relative paths fail, but typically relative works if both are in the same branch.
+        const html = marked.parse(markdown);
+        
+        // Inject into container
+        container.innerHTML = html;
+        
+      } catch (error) {
+        console.error('Error loading markdown:', error);
+        container.innerHTML = `<p style="color: var(--accent);">Hata: <strong>${filename}</strong> dosyası yüklenemedi. <br><small>(${error.message})</small></p><p>Eğer GitHub Pages üzerindeyseniz, dosya yollarının (paths) doğru yapılandırıldığından emin olun.</p>`;
+      }
+    }
+
+    // Lazy load: fetch markdown only when the accordion is opened to save bandwidth
+    const detailsElements = document.querySelectorAll('details');
+    
+    detailsElements.forEach(details => {
+      details.addEventListener('toggle', (e) => {
+        if (details.open) {
+          // Identify which file to load based on the details ID
+          let targetConf = null;
+          if(details.id === 'details-readme') targetConf = docFiles[0];
+          else if(details.id === 'details-provider') targetConf = docFiles[1];
+          else if(details.id === 'details-disclaimer') targetConf = docFiles[2];
+
+          if (targetConf) {
+            const container = document.getElementById(targetConf.id);
+            // Check if it's already loaded (if innerHTML no longer contains the spinner class)
+            if (container.innerHTML.includes('loading-spinner')) {
+              loadMarkdown(targetConf.id, targetConf.file);
+            }
+          }
+          
+          // Optional: Close other accordions
+          detailsElements.forEach(otherDetails => {
+            if (otherDetails !== details && otherDetails.open) {
+              otherDetails.removeAttribute('open');
+            }
+          });
+        }
+      });
+    });
+
+    // Automatically open the first accordion (README) and load its content
+    document.getElementById('details-readme').setAttribute('open', '');
+    // The toggle event listener above will fire and load the content
+
+  </script>
+</body>
+</html>
