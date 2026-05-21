@@ -4,6 +4,8 @@ from time import sleep
 import sys
 import atexit
 import concurrent.futures as cf
+import traceback
+from datetime import datetime
 import easygui
 
 from rich.live import Live
@@ -25,6 +27,16 @@ from .version import guncel_surum, update_type
 # Uygulama dizinini sistem PATH'ına ekle
 SEP = ";" if name == "nt" else ":"
 environ["PATH"] += SEP + Dosyalar().ta_path + SEP
+
+
+def log_error(e):
+    """ Hata logunu error.log dosyasına yazar. """
+    try:
+        error_path = path.join(Dosyalar().ta_path, "error.log")
+        with open(error_path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now()}: {str(e)}\n{traceback.format_exc()}\n\n")
+    except Exception:
+        pass
 
 
 def select_download_folder(current_path):
@@ -195,10 +207,29 @@ def menu_loop():
                     adapter_anime = AdapterAnime(slug=seri_slug, title=seri_ismi)
                     openani_episodes_data = get_openani_episodes(seri_slug)
                 else:
-                    with CliStatus("Anime listesi getiriliyor.."):
-                        animeler = Anime.get_anime_listesi()
-                    seri_ismi = qa.autocomplete(
-                        'Animeyi yazın', choices=[n for s, n in animeler], style=prompt_tema
+                    arama_metni = qa.text(
+                        'Animeyi yazın',
+                        style=prompt_tema
+                    ).ask()
+                    if not arama_metni:
+                        continue
+                    try:
+                        with CliStatus(f"'{arama_metni}' için sitede aranıyor.."):
+                            animeler = Anime.arama_yap(arama_metni)
+                    except Exception as e:
+                        log_error(e)
+                        rprint("[red][strong]Arama yapılırken bir hata oluştu.[/strong][/red]")
+                        sleep(1.5)
+                        continue
+                    if not animeler:
+                        rprint("[red][strong]Aradığınız anime bulunamadı.[/strong][/red]")
+                        sleep(1.5)
+                        continue
+                    seri_ismi = qa.select(
+                        'Bulunan sonuçlardan birini seçin:',
+                        choices=[n for s, n in animeler],
+                        style=prompt_tema,
+                        instruction="Yukarı/Aşağı • Enter"
                     ).ask()
                     if seri_ismi is None:
                         continue
@@ -318,6 +349,7 @@ def menu_loop():
                                 callback=vid_cli.callback
                             )
                         if not best_video:
+                            print("  (!) Hiçbir çalışan video bulunamadı.")
                             break
                         print("  Video başlatılacak..")
                         proc = best_video.oynat(dakika_hatirla=dosya.ayarlar["dakika hatirla"])
@@ -491,7 +523,8 @@ def main():
             rprint(f"[yellow]{tip} Güncellemesi mevcut!! v{surum}[/yellow]")
             rprint("[yellow]Yeni özellikler için uygulamayı güncelleyebilirsiniz! [/yellow]")
             sleep(5)
-    except Exception:
+    except Exception as e:
+        log_error(e)
         rprint("[red][strong]Güncelleme kontrol edilemedi.[/strong][red]")
         sleep(3)
 
@@ -508,7 +541,8 @@ def main():
     try:
         with CliStatus("Türkanime'ye bağlanılıyor.."):
             _ = fetch("/")  # Create Session
-    except (ConnectionError, AssertionError):
+    except (ConnectionError, AssertionError) as e:
+        log_error(e)
         rprint("[red][strong]TürkAnime'ye ulaşılamıyor.[/strong][red]")
         sys.exit(1)
 
@@ -520,4 +554,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        log_error(e)
+        rprint("[red][strong]Beklenmeyen bir hata oluştu. Detaylar error.log dosyasında.[/strong][/red]")
+        sys.exit(1)

@@ -13,3 +13,4 @@ turkanime_api/sources/__pycache__/*
 turkanime_api/common/__pycache__/*
 turkanime_server/
 debug.log
+.claude

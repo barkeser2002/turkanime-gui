@@ -2,7 +2,7 @@
 BYPASS Modülü, TürkAnime'deki şifreyle saklanan elementlerini çözmek
 ve firewall'i kandirmak için gerekli fonksiyonlari / rutinleri içerir.
 
-- Fetch(url)->str                   Firefox TLS & HTTP/3 taklitli GET Request fonksiyonu
+- Fetch(url)->str                   Firefox TLS & HTTP/3 taklitli GET/POST Request fonksiyonu
 
 - obtain_key()->bytes               TürkAnime'nin iframe şifrelerken kullandigi AES anahtari bulur
 - decrypt_cipher(key, data)->str    CryptoJS.AES.decrypt python implementasyonu
@@ -44,9 +44,9 @@ def _get_cf_session():
 session = None
 BASE_URL = "https://turkanime.tv/"
 
-def fetch(path, headers={}):
+def fetch(path, headers={}, data=None):
     """Curl-cffi kullanarak HTTP/3 ve Firefox TLS Fingerprint Impersonation
-       eyleyerek GET request atmak IUAM aktif olmadigi sürece CF'yi bypassliyor. """
+       eyleyerek GET veya POST request atmak IUAM aktif olmadigi sürece CF'yi bypassliyor. """
     global session, BASE_URL
     # Init: Çerezleri cart curt oluştur, yeni domain geldiyse yönlendir.
     if session is None:
@@ -55,6 +55,7 @@ def fetch(path, headers={}):
             res = session.get(BASE_URL + "/")
             if res.status_code != 200:
                 raise ConnectionError(f"Status: {res.status_code}")
+            session.headers["X-Requested-With"] = "XMLHttpRequest"
             BASE_URL = res.url
             BASE_URL = BASE_URL[:-1] if BASE_URL.endswith('/') else BASE_URL
         except Exception as e:
@@ -67,6 +68,7 @@ def fetch(path, headers={}):
                     if res.status_code == 200:
                         BASE_URL = res.url if hasattr(res, 'url') else BASE_URL
                         BASE_URL = BASE_URL[:-1] if BASE_URL.endswith('/') else BASE_URL
+                        session.headers["X-Requested-With"] = "XMLHttpRequest"
                         # Session çerezlerini aktar
                         for name, value in cf_session.cookies.items():
                             session.cookies.set(name, value)
@@ -75,30 +77,42 @@ def fetch(path, headers={}):
                     raise ConnectionError("Tüm CF bypass yöntemleri başarısız")
             else:
                 raise ConnectionError("CF bypass modülü mevcut değil")
-    
+
     if path is None:
         return ""
-    # Get request'i yolla
-    path = path if path.startswith("/") else "/" + path
-    headers["X-Requested-With"] = "XMLHttpRequest"
-    
+
+    headers = {**session.headers, **headers}
+    if not path.startswith("http"):
+        path = path if path.startswith("/") else "/" + path
+        path = BASE_URL + path
+
     try:
-        resp = session.get(BASE_URL + path, headers=headers)
+        if data:
+            resp = session.post(path, headers=headers, data=data)
+        else:
+            resp = session.get(path, headers=headers)
         if resp.status_code == 403:
             # CF engeli - fallback dene
             cf_session = _get_cf_session()
             if cf_session is not None:
-                resp = cf_session.get(BASE_URL + path, headers=headers)
+                if data:
+                    resp = cf_session.post(path, headers=headers, data=data) \
+                        if hasattr(cf_session, "post") else cf_session.get(path, headers=headers)
+                else:
+                    resp = cf_session.get(path, headers=headers)
                 if resp.status_code == 200:
                     return resp.text
             raise ConnectionError("Cloudflare engeli aşılamadı")
         return resp.text
-    except Exception as e:
+    except Exception:
         # Hata durumunda CF bypass ile tekrar dene
         cf_session = _get_cf_session()
         if cf_session is not None:
             try:
-                resp = cf_session.get(BASE_URL + path, headers=headers)
+                if data and hasattr(cf_session, "post"):
+                    resp = cf_session.post(path, headers=headers, data=data)
+                else:
+                    resp = cf_session.get(path, headers=headers)
                 return resp.text
             except CFBypassError:
                 pass
@@ -212,7 +226,7 @@ def get_real_url(url_cipher: str, cache=True) -> str:
 
 """
 TürkAnime'nin kendi player'larından url çıkartan fonksiyonlar (Alucard, Bankai, Amaterasu vs.)
-örn: http://turkanime.co/sources/UW1EN2VPcExLUXpiaDRqcnV0d -> https://alucard.stream/cdn/playlist/3S3CtAJxAZ
+örn: http://turkanime.tv/sources/UW1EN2VPcExLUXpiaDRqcnV0d -> https://alucard.stream/cdn/playlist/3S3CtAJxAZ
 """
 
 PLAYERJS_URL = "/js/player.js"
@@ -270,7 +284,7 @@ def obtain_csrf():
     return next((i for i in decrypted_list if re.search(r"^[a-zA-Z/\+]+$",i)), None)
 
 
-def unmask_real_url(url_mask):
+def unmask_real_url(url_mask, video=None):
     """ TürkAnime'nin kendi playerlarının url maskesini çözer. """
     global PLAYERJS_CSRF
     assert "turkanime" in url_mask
@@ -283,21 +297,43 @@ def unmask_real_url(url_mask):
             print("ERROR: CSRF bulunamadı.")
             return url_mask
 
-    MASK = url_mask.split("/player/")[1]
-    headers = {"Csrf-Token": PLAYERJS_CSRF, "cf_clearance": "dull"}
-    res = fetch(f"/sources/{MASK}/false",headers)
-
+    # PHPSESSID edin
     try:
-        url = json.loads(res)["response"]["sources"][-1]["file"]
-        if url.startswith("//"):
-            url = "https:" + url
-    except:
+        if session is not None and "PHPSESSID" not in session.cookies:
+            fetch(url_mask)
+    except Exception:
+        pass
+
+    MASK = url_mask.split("/player/")[1]
+    headers = {"Csrf-Token": PLAYERJS_CSRF}
+    src = fetch(f"/sources/{MASK}/false", headers)
+    url, res = None, None
+    try:
+        sources = json.loads(src)["response"]["sources"]
+    except (KeyError, json.JSONDecodeError):
         return url_mask
-    return url
+
+    for target in ["1080p", "720p", "480p", "360p"]:
+        for s in sources:
+            if s.get("label") == target:
+                url = s["file"]
+                res = int(target.replace("p", ""))
+                break
+        if url:
+            break
+    if not url:
+        url = sources[-1]["file"]
+
+    if video is not None and res:
+        try:
+            video.resolution = res
+        except AttributeError:
+            pass
+    return "https:" + url if url.startswith("//") else url
 
 
-def get_alucard_m3u8(url):
-    """ MPV'nin video'yu oynatabilmesi için en yüksek çözünürlüklü alucard m3u8 stream'i indir"""
+def get_m3u8_stream(url):
+    """ MPV'nin video'yu oynatabilmesi için en yüksek çözünürlüklü m3u8 stream'i indir"""
     global session, BASE_URL
     if session is None:
         session = requests.Session(impersonate="firefox", allow_redirects=True)
@@ -312,3 +348,7 @@ def get_alucard_m3u8(url):
     with NamedTemporaryFile(suffix=".m3u8", delete=False) as m3u8:
         m3u8.write(res.text.encode())
     return m3u8.name
+
+
+# Geriye dönük uyumluluk: eski isimle de erişilebilsin.
+get_alucard_m3u8 = get_m3u8_stream

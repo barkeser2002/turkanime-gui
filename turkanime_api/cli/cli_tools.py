@@ -123,7 +123,7 @@ def indirme_task_cli(bolum,table,dosya):
         by_res=dosya.ayarlar["max resolution"],
         callback=vid_cli.callback)
     if not best_video:
-        # TODO: hata mesajı gösterilmeli
+        print("  (!) Hiçbir çalışan video bulunamadı.")
         return
     down_dir = dosya.ayarlar["indirilenler"]
     success = False

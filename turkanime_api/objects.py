@@ -7,9 +7,11 @@
 from os import remove
 from os.path import join
 from tempfile import NamedTemporaryFile
+from html import unescape
 import subprocess as sp
 import re
 import json
+import warnings
 from yt_dlp import YoutubeDL
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
@@ -17,7 +19,7 @@ except ImportError:
     ImpersonateTarget = None
 from .common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
-from .bypass import get_real_url, unmask_real_url, fetch, get_alucard_m3u8
+from .bypass import get_real_url, unmask_real_url, fetch, get_m3u8_stream
 from .common.utils import get_platform, get_arch
 
 # Çalıştığı bilinen playerlar ve öncelikleri
@@ -70,7 +72,7 @@ class Anime:
     """
     def __init__(self,slug,parse_fansubs=True):
         self.slug = slug
-        self.title = None
+        self._title = None
         self.anime_id = 0
         self.info = {
             "Kategori":None,
@@ -94,8 +96,9 @@ class Anime:
         src = fetch(f'/anime/{self.slug}')
         twitmeta = re.findall(r'twitter.image" content="(.*?serilerb/(.*?)\.jpg)"',src)[0]
         self.info["Resim"], self.anime_id = twitmeta
-        if not self.title:
-            self.title = re.findall(r'<title>(.*?)<\/title>',src).pop()
+        if not self._title:
+            self._title = re.findall(r'<title>(.*?)<\/title>',src).pop()
+            self._title = self._title.split(" izle")[0].strip()
 
         # Anime sayfasındaki bilgi tablosunu parse'la
         info_table=re.findall(r'<div id="animedetay">(<table.*?</table>)',src)[0]
@@ -118,11 +121,42 @@ class Anime:
         src = fetch(f'/ajax/bolumler&animeId={anime_id}')
         return re.findall(r'\/video\/(.*?)\\?".*?title=.*?"(.*?)\\?"',src)
 
+    # Eski get_anime_listesi methodu, geriye dönük uyumluluk için bırakıldı.
     @staticmethod
     def get_anime_listesi():
         """ Anime serilerinin [(slug,isim),] formatında listesi. """
+        warnings.warn(
+            ".get_anime_listesi() methodu sitedeki değişikten düzgün çalışmıyor; arama_yap() kullanın.",
+            FutureWarning,
+            stacklevel=2,
+        )
         src = fetch("/ajax/tamliste")
         return re.findall(r'\/anime\/(.*?)".*?animeAdi">(.*?)<',src)
+
+    @staticmethod
+    def arama_yap(query):
+        """ Kullanıcının girdiği kelimeye göre arama yapar ve (slug, isim) döndürür. """
+        src = fetch("/arama", data={"arama": query})
+        res = re.findall(r'/anime/([^"\'>]+)["\'] [^>]*?title=["\']([^"]+?) izle', src)
+        results = [(slug, unescape(isim_)) for slug, isim_ in res]
+        if not results and re.search("window.location ?= ?", src):
+            # Tek bir sonuç gelmiş ve direkt anime sayfasına yönlendirilmişse
+            slug = re.findall('window.location ?= ?"anime/(.*?)"', src)
+            if not slug:
+                return []
+            ani = Anime(slug[0])
+            return [(ani.slug, ani.title)]
+        return results
+
+    @property
+    def title(self):
+        if self._title is None:
+            self.fetch_info()
+        return self._title
+
+    @title.setter
+    def title(self, value):
+        self._title = value
 
     @property
     def bolumler(self):
@@ -176,7 +210,10 @@ class Bolum:
     @property
     def videos(self):
         if not self._videos:
-            self.get_videos()
+            try:
+                self.get_videos()
+            except IndexError:
+                self._videos = []
         return self._videos
 
     @property
@@ -342,17 +379,28 @@ class Video:
     @property
     def url(self):
         if self._url is None:
+            cipher = None
             if "/" in self.path:
                 src = fetch(self.path)
-                cipher = re.findall(r"\/embed\/#\/url\/(.*?)\?status",src)[0]
-            else: # Zaten seçili video ise
+                cipher_match = re.findall(r"\/embed\/#\/url\/(.*?)\?status", src)
+                cipher = cipher_match[0] if cipher_match else None
+                if not cipher:  # Bazı videolar eskisi gibi şifreli gelmiyor
+                    tmp = re.findall('<iframe src="(.*?)"', src)
+                    self._url = tmp[0] if tmp else None
+                    self.is_working = True if self._url else False
+            else:  # Zaten seçili video ise
                 cipher = self.path
-            plaintext = get_real_url(cipher)
-            # "\\/\\/fembed.com\\/v\\/0d1e8ilg"  -->  "https://fembed.com/v/0d1e8ilg"
-            self._url = "https:"+json.loads(plaintext)
+            if cipher:
+                plaintext = get_real_url(cipher)
+                # "\\/\\/fembed.com\\/v\\/0d1e8ilg"  -->  "https://fembed.com/v/0d1e8ilg"
+                self._url = json.loads(plaintext)
+            if self._url is None:
+                self.is_working = False
+                return None
+            self._url = "https:" + self._url if self._url.startswith("//") else self._url
             self._url = self._url.replace("uqload.io","uqload.com") # .com mirror'unu kullan
             if "turkanime" in self._url: # Alucard, Amaterasu, Bankai, HDVID
-                self._url = unmask_real_url(self._url)
+                self._url = unmask_real_url(self._url, video=self)
                 self.is_working = False if "turkanime" in self._url else True
         return self._url
 
@@ -360,6 +408,9 @@ class Video:
     def info(self):
         if self._info is None:
             assert self.is_supported, "Bu player desteklenmiyor."
+            if self.url is None:
+                self._info = {}
+                return self._info
             info = extract_video_info(self.url, self.ydl_opts)
             if not info:
                 self._info = {}
@@ -419,13 +470,18 @@ class Video:
                 self._resolution = get_video_resolution_mpv(self.url) or 0
         return self._resolution
 
+    @resolution.setter
+    def resolution(self, value):
+        self._resolution = value
+
     @property
     def is_working(self):
         """ Video çalışıyor mu? """
         assert self.is_supported, "Bu player desteklenmiyor."
         if self._is_working is None:
             try:
-                if "turkanime" in self.url:
+                url = self.url
+                if url is None or "turkanime" in url:
                     raise LookupError
                 self._is_working = self.info not in (None, {})
             except:
@@ -483,12 +539,12 @@ class Video:
             "ytdl://" + self.bolum.slug # Kaldığın yerden devam etmenin çalışması için.
         ]
 
-        if self.player == "ALUCARD(BETA)":
+        if self.url and self.url.endswith(".m3u8"):
             cmd += [
                 "--demuxer-lavf-o=protocol_whitelist=[file,tcp,tls,https],"
                 "http_keep_alive=0,http_persistent=0"
             ]
-            cmd += ["--cache=yes", get_alucard_m3u8(self.url) ]
+            cmd += ["--cache=yes", get_m3u8_stream(self.url) ]
             del cmd[4]
 
         if dakika_hatirla:
