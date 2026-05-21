@@ -238,8 +238,12 @@ class CFSession:
                 payload["postData"] = post_data
 
             resp = requests.post(api_url, json=payload, timeout=65)
-            resp.raise_for_status()
-            data = resp.json()
+            # Eğer sunucu HTTP 500 dönse bile JSON çıktısı verebiliyor (örn: Cloudflare engeli)
+            try:
+                data = resp.json()
+            except ValueError:
+                resp.raise_for_status()
+                return None
 
             if data.get("status") != "ok":
                 print(f"[CF Bypass] FlareSolverr durum hatası: {data.get('message', 'bilinmeyen')}")

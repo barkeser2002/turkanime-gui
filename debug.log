@@ -1409,3 +1409,93 @@ DEBUG: create_accordion baþladý
 DEBUG: create_accordion tamamlandý
 INFO: TRAnimeÝzle cookie yüklendi
 INFO: TRAnimeÝzle cookie yüklendi
+INFO: TRAnimeÝzle cookie yüklendi
+DEBUG: show_anime_details çaðrýldý: Jujutsu Kaisen: Shimetsu Kaiyuu - Zenpen (rid=cef8a333)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: OpenAnime aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.53s
+DEBUG: TRAnimeÝzle tamamlandý - 0 bölüm
+DEBUG: TRAnimeÝzle tamamlandý: 0.81s
+DEBUG: AnimeciX tamamlandý - 57 bölüm
+DEBUG: AnimeciX tamamlandý: 2.01s
+DEBUG: TürkAnime tamamlandý - 9 bölüm
+DEBUG: TürkAnime tamamlandý: 2.19s
+DEBUG: Anizle tamamlandý - 9 bölüm
+DEBUG: Anizle tamamlandý: 2.37s
+DEBUG: OpenAnime tamamlandý: 4.22s
+INFO: Baþarýyla yüklenen kaynaklar: TürkAnime, AnimeciX, AniList, Anizle, TRAnimeÝzle, OpenAnime
+DEBUG: all_episodes set to: ['AniList', 'TRAnimeÝzle', 'AnimeciX', 'TürkAnime', 'Anizle', 'OpenAnime']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'TRAnimeÝzle', 'AnimeciX', 'TürkAnime', 'Anizle', 'OpenAnime']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+WARN: episodes_list artýk mevcut deðil, accordion iptal
+DEBUG: show_anime_details çaðrýldý: Kaguya-sama wa Kokurasetai? Tensai-tachi no Renai Zunousen (rid=a1f0877d)
+DEBUG: Thread baþlatýlýyor
+DEBUG: Thread baþlatýldý
+DEBUG: load_sources_worker baþladý
+DEBUG: show_anime_details tamamlandý
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: OpenAnime aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.97s
+DEBUG: TürkAnime - sonuç bulunamadý
+DEBUG: TürkAnime tamamlandý: 1.23s
+DEBUG: Anizle tamamlandý - 2 bölüm
+DEBUG: Anizle tamamlandý: 1.34s
+DEBUG: OpenAnime tamamlandý: 1.39s
+DEBUG: TRAnimeÝzle tamamlandý - 12 bölüm
+DEBUG: TRAnimeÝzle tamamlandý: 1.47s
+DEBUG: AnimeciX tamamlandý - 0 bölüm
+DEBUG: AnimeciX tamamlandý: 1.64s
+INFO: Baþarýyla yüklenen kaynaklar: AnimeciX, AniList, Anizle, TRAnimeÝzle, OpenAnime
+INFO: Sonuç bulunmayan kaynaklar: TürkAnime
+DEBUG: all_episodes set to: ['AniList', 'Anizle', 'OpenAnime', 'TRAnimeÝzle', 'AnimeciX']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'Anizle', 'OpenAnime', 'TRAnimeÝzle', 'AnimeciX']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+DEBUG: show_anime_details çaðrýldý: Isekai no Sata wa Shachiku Shidai (rid=47eb4ee1)
+DEBUG: Thread baþlatýlýyor
+DEBUG: load_sources_worker baþladý
+DEBUG: Thread baþlatýldý
+DEBUG: show_anime_details tamamlandý
+DEBUG: AnimeciX aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TürkAnime aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: AniList aramasý baþlatýlýyor (timeout: 5s)
+DEBUG: Anizle aramasý baþlatýlýyor (timeout: 8s)
+DEBUG: TRAnimeÝzle aramasý baþlatýlýyor (timeout: 12s)
+DEBUG: OpenAnime aramasý baþlatýlýyor (timeout: 10s)
+DEBUG: AniList tamamlandý - 1 sonuç
+DEBUG: AniList tamamlandý: 0.65s
+DEBUG: TRAnimeÝzle tamamlandý - 10 bölüm
+DEBUG: TRAnimeÝzle tamamlandý: 0.98s
+DEBUG: Anizle tamamlandý - 8 bölüm
+DEBUG: Anizle tamamlandý: 1.10s
+DEBUG: TürkAnime tamamlandý - 0 bölüm
+DEBUG: TürkAnime tamamlandý: 1.46s
+DEBUG: OpenAnime tamamlandý: 1.45s
+DEBUG: AnimeciX tamamlandý - 8 bölüm
+DEBUG: AnimeciX tamamlandý: 1.69s
+INFO: Baþarýyla yüklenen kaynaklar: AnimeciX, TürkAnime, AniList, Anizle, TRAnimeÝzle, OpenAnime
+DEBUG: all_episodes set to: ['AniList', 'TRAnimeÝzle', 'Anizle', 'TürkAnime', 'OpenAnime', 'AnimeciX']
+DEBUG: render_sources_page scheduled
+DEBUG: render_sources_page çaðrýldý, all_episodes: ['AniList', 'TRAnimeÝzle', 'Anizle', 'TürkAnime', 'OpenAnime', 'AnimeciX']
+DEBUG: render_sources_page tamamlandý
+DEBUG: create_accordion baþladý
+DEBUG: create_accordion tamamlandý
+INFO: TRAnimeÝzle cookie yüklendi
