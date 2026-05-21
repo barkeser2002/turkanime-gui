@@ -157,7 +157,8 @@ class OpenAniAdapter:
             data_match = re.search(r'const data = (\[.*?\]);', html, re.DOTALL)
             if data_match:
                 data_text = data_match.group(1)
-                matches = re.finditer(r'(?:english|romaji|turkish):"([^"]+)",.*?(?:slug):"([^"]+)"', data_text)
+                # Daha güvenli regex: beraber bulunan english/romaji/turkish ve slug
+                matches = re.finditer(r'\{[^}]*?(?:english|romaji|turkish):"([^"]+)"[^}]*?slug:"([^"]+)"[^}]*?\}', data_text)
                 for match in matches:
                     title = match.group(1)
                     slug = match.group(2)
@@ -300,6 +301,8 @@ class OpenAniAdapter:
         else:
             # Eğer sezon bilgisi yoksa toplam bölüm kadar feyk link oluştur (1. sezon varsayılarak)
             episode_count = anime_data.get("episodes", 0)
+            if episode_count == 0:
+                print(f"[OpenAni] {anime_url}: Bölüm sayısı bulunamadı")
             for ep_num in range(1, episode_count + 1):
                 ep_slug = f"{slug}/1/{ep_num}"
                 ep_title = f"1. Sezon - Bölüm {ep_num}"
@@ -330,7 +333,11 @@ class OpenAniAdapter:
             return []
 
         # Referer olarak serinin ana url'sini ver
-        anime_url = episode_data.get('provider_data', {}).get('anime_url', BASE_URL)
+        provider_data = episode_data.get('provider_data', {})
+        anime_url = provider_data.get('anime_url') if provider_data else None
+        if not anime_url:
+            anime_url = BASE_URL
+
         headers = {
             "User-Agent": self.PROVIDER_CONFIG["user_agent"],
             "Referer": anime_url

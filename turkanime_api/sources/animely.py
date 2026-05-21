@@ -255,10 +255,10 @@ def search_animely(query: str, limit: int = 10) -> List[tuple]:
 def get_anime_episodes(anime_slug: str) -> List[AnimelyEpisode]:
     """
     Anime bölümlerini çek.
-    
+
     Args:
         anime_slug: Anime slug'ı
-        
+
     Returns:
         list[AnimelyEpisode]: Bölüm listesi
     """
@@ -270,18 +270,29 @@ def get_anime_episodes(anime_slug: str) -> List[AnimelyEpisode]:
         )
         resp.raise_for_status()
         data = resp.json()
-        
+
+        if not isinstance(data, dict):
+            print(f"[Animely] API cevabı beklenen format değil: {type(data)}")
+            return []
+
         episodes_data = data.get("episodes", [])
+        if not isinstance(episodes_data, list):
+            print(f"[Animely] Episodes alan liste değil: {type(episodes_data)}")
+            return []
+
         episodes = []
-        
+
         for ep in episodes_data:
+            if not isinstance(ep, dict):
+                continue
+
             links = [
                 ep.get("backblaze_link"),
                 ep.get("watch_link_1"),
                 ep.get("watch_link_2"),
                 ep.get("watch_link_3")
             ]
-            
+
             episodes.append(AnimelyEpisode(
                 id=ep.get("id", 0),
                 episode_number=ep.get("episode_number", 0),
@@ -290,12 +301,12 @@ def get_anime_episodes(anime_slug: str) -> List[AnimelyEpisode]:
                 fansub=ep.get("fansub", "Animely"),
                 _links=links
             ))
-        
+
         # Bölüm numarasına göre sırala
         episodes.sort(key=lambda x: x.episode_number)
-        
+
         return episodes
-    
+
     except Exception as e:
         print(f"[Animely] Bölümler alınamadı ({anime_slug}): {e}")
         return []

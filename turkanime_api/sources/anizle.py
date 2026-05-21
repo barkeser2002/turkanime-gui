@@ -495,9 +495,17 @@ def _get_video_stream_from_player(player_id: str, video_name: str) -> Optional[D
         
         if response is None or response.status_code != 200:
             return None
-        
-        data = response.json()
-        
+
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            print(f"[Anizle] FirePlayer JSON parse hatası: {e}")
+            return None
+
+        if not isinstance(data, dict):
+            print(f"[Anizle] FirePlayer cevabı dict değil: {type(data)}")
+            return None
+
         # HLS stream
         if data.get("hls") and data.get("securedLink"):
             return {
@@ -505,7 +513,7 @@ def _get_video_stream_from_player(player_id: str, video_name: str) -> Optional[D
                 "label": f"{video_name} (HLS)",
                 "type": "hls"
             }
-        
+
         # Video source
         if data.get("videoSource"):
             return {
@@ -513,9 +521,9 @@ def _get_video_stream_from_player(player_id: str, video_name: str) -> Optional[D
                 "label": video_name,
                 "type": "direct"
             }
-        
+
         return None
-        
+
     except Exception as e:
         print(f"[Anizle] FirePlayer video çekme hatası: {e}")
         return None
@@ -780,8 +788,9 @@ def get_episode_streams(episode_slug: str, timeout: int = HTTP_TIMEOUT) -> List[
                 pass
     
     if not streams:
+        print(f"[Anizle] Yerel işlemde stream bulunamadı, uzak sunucu deniyor...")
         return _get_streams_remote(episode_slug, timeout)
-    
+
     print(f"[Anizle] {len(streams)} stream bulundu")
     return streams
 
@@ -795,8 +804,14 @@ def _get_streams_remote(episode_slug: str, timeout: int = HTTP_TIMEOUT) -> List[
         )
         response.raise_for_status()
         results = response.json()
-        return results if isinstance(results, list) else []
-    except Exception:
+        if isinstance(results, list):
+            print(f"[Anizle] Uzak sunucudan {len(results)} stream alındı")
+            return results
+        else:
+            print(f"[Anizle] Uzak sunucu cevabı liste değil: {type(results)}")
+            return []
+    except Exception as e:
+        print(f"[Anizle] Uzak sunucu hatası: {e}")
         return []
 
 
