@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlparse
 
 # CF Bypass modülünü içe aktar
 try:
@@ -374,7 +375,6 @@ def _fetch_all_episodes_from_page(slug: str, timeout: int = 60) -> List[Tuple[st
                 ep_slug_clean = ep_slug.strip('/')
                 # Absolute URL temizleme
                 if ep_slug_clean.startswith(('http://', 'https://')):
-                    from urllib.parse import urlparse
                     ep_slug_clean = urlparse(ep_slug_clean).path.strip('/')
                 try:
                     order_num = int(ep_num)

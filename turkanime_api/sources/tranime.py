@@ -13,6 +13,7 @@ API Endpoints:
 import json
 import time
 import re
+import threading
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Tuple
@@ -34,11 +35,18 @@ CACHE_DIR = Path.home() / ".turkanime" / "tranime_cache"
 CACHE_DURATION = 30 * 60  # 30 dakika
 HTTP_TIMEOUT = 15
 
+
+class TRAnimeAuthError(Exception):
+    """TRAnimeİzle authentication/bot control hatası."""
+    pass
+
 # Cookie - bot korumasını aşmak için gerekli
 # Bu cookie kullanıcının tarayıcısından alınmalı
 SESSION_COOKIE = None
 # Ek cookie'ler (age_verified, Verification vb.)
 _EXTRA_COOKIES: Dict[str, str] = {}
+# Thread-safe access için lock
+_COOKIE_LOCK = threading.Lock()
 
 
 def set_session_cookie(cookie_value: str):
@@ -50,43 +58,44 @@ def set_session_cookie(cookie_value: str):
     Tek satır verilirse sadece .AitrWeb.Session olarak kullanılır.
     """
     global SESSION_COOKIE, _EXTRA_COOKIES
-    value = cookie_value.strip()
-    if not value:
-        SESSION_COOKIE = None
-        _EXTRA_COOKIES = {}
-        return
+    with _COOKIE_LOCK:
+        value = cookie_value.strip()
+        if not value:
+            SESSION_COOKIE = None
+            _EXTRA_COOKIES = {}
+            return
 
-    # Netscape cookie file formatı kontrolü (birden fazla satır + tab ayrımı)
-    lines = value.splitlines()
-    parsed_cookies: Dict[str, str] = {}
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith('#'):
-            continue
-        parts = line.split('\t')
-        if len(parts) >= 7:
-            # Netscape: domain  flag  path  secure  expiry  name  value
-            name = parts[5].strip()
-            val = parts[6].strip()
-            if name and val:
-                parsed_cookies[name] = val
+        # Netscape cookie file formatı kontrolü (birden fazla satır + tab ayrımı)
+        lines = value.splitlines()
+        parsed_cookies: Dict[str, str] = {}
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 7:
+                # Netscape: domain  flag  path  secure  expiry  name  value
+                name = parts[5].strip()
+                val = parts[6].strip()
+                if name and val:
+                    parsed_cookies[name] = val
 
-    if parsed_cookies:
-        # Netscape formatı başarıyla parse edildi
-        session_val = parsed_cookies.pop('.AitrWeb.Session', '')
-        if session_val:
-            SESSION_COOKIE = unquote(session_val) if '%' in session_val else session_val
+        if parsed_cookies:
+            # Netscape formatı başarıyla parse edildi
+            session_val = parsed_cookies.pop('.AitrWeb.Session', '')
+            if session_val:
+                SESSION_COOKIE = unquote(session_val) if '%' in session_val else session_val
+            else:
+                # .AitrWeb.Session yoksa en uzun cookie'yi session olarak kullan
+                longest = max(parsed_cookies.items(), key=lambda x: len(x[1]), default=('', ''))
+                if longest[1]:
+                    SESSION_COOKIE = unquote(longest[1]) if '%' in longest[1] else longest[1]
+                    parsed_cookies.pop(longest[0], None)
+            _EXTRA_COOKIES = parsed_cookies
         else:
-            # .AitrWeb.Session yoksa en uzun cookie'yi session olarak kullan
-            longest = max(parsed_cookies.items(), key=lambda x: len(x[1]), default=('', ''))
-            if longest[1]:
-                SESSION_COOKIE = unquote(longest[1]) if '%' in longest[1] else longest[1]
-                parsed_cookies.pop(longest[0], None)
-        _EXTRA_COOKIES = parsed_cookies
-    else:
-        # Tek satır — doğrudan .AitrWeb.Session değeri
-        SESSION_COOKIE = unquote(value) if '%' in value else value
-        _EXTRA_COOKIES = {}
+            # Tek satır — doğrudan .AitrWeb.Session değeri
+            SESSION_COOKIE = unquote(value) if '%' in value else value
+            _EXTRA_COOKIES = {}
 
 
 def _get_session():
@@ -103,14 +112,15 @@ def _get_session():
 
 def _get_cookies() -> dict:
     """Cookie'leri döndür (Session + ek cookie'ler)."""
-    cookies: dict = {}
-    if _EXTRA_COOKIES:
-        cookies.update(_EXTRA_COOKIES)
-    if SESSION_COOKIE:
-        cookies['.AitrWeb.Session'] = SESSION_COOKIE
-    # age_verified her zaman gönder
-    cookies.setdefault('age_verified', 'true')
-    return cookies if SESSION_COOKIE else {}
+    with _COOKIE_LOCK:
+        cookies: dict = {}
+        if _EXTRA_COOKIES:
+            cookies.update(_EXTRA_COOKIES)
+        if SESSION_COOKIE:
+            cookies['.AitrWeb.Session'] = SESSION_COOKIE
+        # age_verified her zaman gönder
+        cookies.setdefault('age_verified', 'true')
+        return cookies
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,12 +305,15 @@ def get_anime_by_slug(slug: str) -> Optional[TRAnimeAnime]:
         resp.raise_for_status()
         
         # Bot kontrolü varsa
-        if 'Bot Kontrol' in resp.text:
+        if 'Bot Kontrol' in resp.text or 'İnsanlık' in resp.text:
             if not SESSION_COOKIE:
-                print("[TRAnime] Bot kontrolü - cookie ayarlanmamış. Ayarlar'dan TRAnimeİzle cookie'si girin.")
+                error_msg = "Bot kontrolü - cookie ayarlanmamış. Ayarlar'dan TRAnimeİzle cookie'si girin."
+                print(f"[TRAnime] {error_msg}")
+                raise TRAnimeAuthError(error_msg)
             else:
-                print("[TRAnime] Bot kontrolü - cookie geçersiz veya süresi dolmuş. Yeni cookie alın.")
-            return None
+                error_msg = "Bot kontrolü - cookie geçersiz veya süresi dolmuş. Yeni cookie alın."
+                print(f"[TRAnime] {error_msg}")
+                raise TRAnimeAuthError(error_msg)
         
         # Başlık - birden fazla yöntem dene
         title = None
@@ -605,8 +618,9 @@ def search_anime(query: str, limit: int = 10) -> List[Tuple[str, str]]:
     if not first_letter.isalpha():
         first_letter = '#'
     
-    # Cache kontrol
-    cache_key = f"search_{first_letter}"
+    # Cache kontrol (aynı harfle başlayan farklı sorgular için unique key)
+    query_hash = str(hash(query_lower))[-8:]  # Hash'in son 8 karakteri
+    cache_key = f"search_{first_letter}_{query_hash}"
     cached = _get_cache(cache_key)
     
     if cached is None:

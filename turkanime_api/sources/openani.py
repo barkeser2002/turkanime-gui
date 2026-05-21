@@ -25,25 +25,35 @@ except ImportError:
 
 # Konfigürasyon
 BASE_URL = "https://openani.me"
-CDN_HOST = "https://de2---vn-t9g4tsan-5qcl.yeshi.eu.org" # Örnek CDN Host
+CDN_HOST = "https://de2---vn-t9g4tsan-5qcl.yeshi.eu.org"
 
-# Kullanıcının sağladığı Authentication cookielerini ayarlıyoruz
-OPENANI_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjcyOTQ2NTAxMzE1MjQwOTY1NTMiLCJ2ZXJpZmllZCI6dHJ1ZSwiaWF0IjoxNzcyMjY4OTE2LCJleHAiOjE3NzIyNzA3MTZ9.S3ft-Pep7vLNOzw8f3kJ-LxJVXV6vxAgVc4nA34sv_U"
-OPENANI_REFRESH_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjcyOTQ2NTAxMzE1MjQwOTY1NTMiLCJpYXQiOjE3NzIyNjg5MTYsImV4cCI6MTc4MDA0NDkxNn0.RRt-iUJ3kizjk6LSBc3gjPovy0CO-QDABAopXRNzVIY"
+# OpenAni tokens - kullanıcı tarafından sağlanmalı
+OPENANI_TOKEN = None
+OPENANI_REFRESH_TOKEN = None
+
+def set_openani_tokens(token: str, refresh_token: str):
+    """OpenAni API tokens'ı ayarla."""
+    global OPENANI_TOKEN, OPENANI_REFRESH_TOKEN
+    OPENANI_TOKEN = token
+    OPENANI_REFRESH_TOKEN = refresh_token
 
 def _get_cf_session() -> Any:
     """CF session'ı döndür (singleton)."""
     if HAS_CF_BYPASS:
         session = CFSession(timeout=30)
-        # Authentication cookielerini manuel olarak ekle
-        session._cookies["token"] = OPENANI_TOKEN
-        session._cookies["refreshToken"] = OPENANI_REFRESH_TOKEN
+        # Authentication cookielerini doğru şekilde ekle
+        if OPENANI_TOKEN:
+            session.cookies.set("token", OPENANI_TOKEN, domain=".openani.me")
+        if OPENANI_REFRESH_TOKEN:
+            session.cookies.set("refreshToken", OPENANI_REFRESH_TOKEN, domain=".openani.me")
         return session
     else:
         # Fallback: normal session oluştur ve cookieleri ekle
         session = requests.Session()
-        session.cookies.set("token", OPENANI_TOKEN, domain=".openani.me")
-        session.cookies.set("refreshToken", OPENANI_REFRESH_TOKEN, domain=".openani.me")
+        if OPENANI_TOKEN:
+            session.cookies.set("token", OPENANI_TOKEN, domain=".openani.me")
+        if OPENANI_REFRESH_TOKEN:
+            session.cookies.set("refreshToken", OPENANI_REFRESH_TOKEN, domain=".openani.me")
         return session
 
 def _extract_svelte_json(html: str) -> Optional[Dict]:
@@ -64,8 +74,16 @@ def _extract_svelte_json(html: str) -> Optional[Dict]:
     # Alternatif SvelteKit object serialization
     match = re.search(r'const data = (\[.*?\]);\s*Promise\.all', html, re.DOTALL)
     if match:
-        pass
-    
+        try:
+            array_str = match.group(1)
+            data_array = json.loads(array_str)
+            if isinstance(data_array, list) and len(data_array) > 0:
+                first_item = data_array[0]
+                if isinstance(first_item, dict):
+                    return first_item
+        except (json.JSONDecodeError, IndexError, AttributeError):
+            pass
+
     return None
 
 class OpenAniAdapter:
@@ -163,8 +181,8 @@ class OpenAniAdapter:
                             
                 # Fallback
                 if not results:
-                     matches = re.finditer(r'slug:"([^"]+)"', data_text)
-                     for match in matches:
+                    matches = re.finditer(r'slug:"([^"]+)"', data_text)
+                    for match in matches:
                         slug = match.group(1)
                         if slug not in slugs_found and len(slug) > 2:
                             slugs_found.add(slug)
@@ -280,9 +298,9 @@ class OpenAniAdapter:
                     episodes.append(episode_data)
                     episode_number += 1
         else:
-             # Eğer sezon bilgisi yoksa toplam bölüm kadar feyk link oluştur (1. sezon varsayılarak)
-             episode_count = anime_data.get("episodes", 0)
-             for ep_num in range(1, episode_count + 1):
+            # Eğer sezon bilgisi yoksa toplam bölüm kadar feyk link oluştur (1. sezon varsayılarak)
+            episode_count = anime_data.get("episodes", 0)
+            for ep_num in range(1, episode_count + 1):
                 ep_slug = f"{slug}/1/{ep_num}"
                 ep_title = f"1. Sezon - Bölüm {ep_num}"
                 ep_url = f"{BASE_URL}/anime/{ep_slug}"
@@ -506,7 +524,7 @@ def get_episode_streams(episode_slug: str, timeout: int = 30) -> List[Dict[str, 
     episode_data = {
         "url": episode_url,
         "provider_data": {
-             "anime_url": anime_url
+            "anime_url": anime_url
         }
     }
     
