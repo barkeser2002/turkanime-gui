@@ -102,10 +102,12 @@ class AnimelyEpisode:
     
     @property
     def url(self) -> str:
-        """İlk geçerli linki döndür."""
+        """İlk geçerli linki döndür. Bulunamazsa uyarı yazdırır."""
         for link in self._links:
             if link and isinstance(link, str) and link.strip():
                 return link.strip()
+        # Hiç geçerli link yoksa uyar
+        print(f"[Animely] Episode {self.episode_number}: Hiç video linki bulunamadı")
         return ""
     
     def get_streams(self) -> List[AnimelyVideo]:

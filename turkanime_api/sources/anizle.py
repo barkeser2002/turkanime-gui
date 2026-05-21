@@ -301,12 +301,9 @@ def get_anime_episodes(slug: str, timeout: int = 60) -> List[Tuple[str, str]]:
                     if ep_slug and ep_title:
                         result.append((ep_slug, ep_title))
                 
-                # Veritabanında sadece son birkaç bölüm var
-                # Tam liste için anime sayfasını çek
-                if len(result) > 0:
-                    full_episodes = _fetch_all_episodes_from_page(slug, timeout)
-                    if full_episodes:
-                        return full_episodes
+                # Veritabanında bulunan bölümleri döndür
+                # Eksikse daha sonra veritabanı güncellenebilir
+                if result:
                     return result
     
     # Veritabanında bulunamadı, sayfadan çek
