@@ -1823,18 +1823,30 @@ class MainWindow(ctk.CTk):
         """Arama girişi değiştiğinde çağrılır."""
         # Önceki timer'ı iptal et
         if hasattr(self, 'search_timer') and self.search_timer:
-            self.after_cancel(self.search_timer)
+            try:
+                self.after_cancel(self.search_timer)
+            except:
+                pass  # Timer ID geçersiz olabilir
+            self.search_timer = None
 
         # Yeni timer başlat (300ms gecikme)
         self.search_timer = self.after(300, lambda: self._perform_search(dialog))
 
     def _perform_search(self, dialog):
         """Anime arama işlemini gerçekleştir - tüm kaynaklarda paralel arama."""
+        # Dialog hala geçerli mi kontrol et
+        try:
+            if not dialog.winfo_exists():
+                return
+        except:
+            return
+
         query = self.search_entry.get().strip()
         if not query or len(query) < 2:
             self._clear_results()
-            self.loading_label.configure(text="En az 2 karakter yazın...")
-            self.loading_label.pack(pady=20)
+            if hasattr(self, 'loading_label') and self.loading_label.winfo_exists():
+                self.loading_label.configure(text="En az 2 karakter yazın...")
+                self.loading_label.pack(pady=20)
             return
 
         # Arama iptal mekanizması: mevcut aramanın sürümünü takip et
@@ -1877,9 +1889,16 @@ class MainWindow(ctk.CTk):
 
     def _clear_results(self):
         """Sonuçları temizle."""
+        # results_scrollable widget'ı mevcut mu kontrol et
+        if not hasattr(self, 'results_scrollable') or not self.results_scrollable.winfo_exists():
+            return
+
         # Mevcut sonuç widget'larını temizle
         for widget in self.results_scrollable.winfo_children():
-            if widget != self.loading_label:
+            # loading_label mevcut ve geçerli mi kontrol et
+            if hasattr(self, 'loading_label') and widget == self.loading_label:
+                continue
+            if widget.winfo_exists():
                 widget.destroy()
 
     @staticmethod
@@ -1943,6 +1962,13 @@ class MainWindow(ctk.CTk):
 
     def _display_combined_search_results(self, results, dialog):
         """Birleştirilmiş arama sonuçlarını göster - kaynak bilgisi ile."""
+        # Dialog hala geçerli mi kontrol et
+        try:
+            if not dialog.winfo_exists():
+                return
+        except:
+            return
+
         self._clear_results()
         self.current_results = results
 
@@ -2826,12 +2852,11 @@ class MainWindow(ctk.CTk):
         # Dispatcher to schedule callbacks on the Tk main thread
         def _tk_dispatch(fn, args_tuple, kwargs_dict):
             try:
-                self.after(0, lambda: fn(*args_tuple, **(kwargs_dict or {})))
+                # Check if main window still exists before scheduling
+                if self.winfo_exists():
+                    self.after(0, lambda: fn(*args_tuple, **(kwargs_dict or {})))
             except Exception:
-                try:
-                    fn(*args_tuple, **(kwargs_dict or {}))
-                except Exception:
-                    pass
+                pass  # Window destroyed or callback failed
 
         self._cookie_worker = CookieBrowserWorker(
             on_status=on_status,

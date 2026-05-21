@@ -275,15 +275,16 @@ class UpdateManager:
 
         def open_download_location():
             """İndirme konumunu aç."""
-            if self.platform == "windows":
+            try:
                 download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                os.startfile(download_dir)
-            elif self.platform == "linux":
-                download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                subprocess.run(["xdg-open", download_dir])
-            elif self.platform == "macos":
-                download_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                subprocess.run(["open", download_dir])
+                if self.platform == "windows":
+                    os.startfile(download_dir)
+                elif self.platform == "linux":
+                    subprocess.run(["xdg-open", download_dir], timeout=5, stderr=subprocess.DEVNULL)
+                elif self.platform == "macos":
+                    subprocess.run(["open", download_dir], timeout=5, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                messagebox.showinfo("Bilgi", f"İndirme konumu açılamadı. Lütfen klasörü manuel olarak açınız:\n{download_dir}")
 
         open_btn = ctk.CTkButton(instructions, text="📂 İndirme Konumunu Aç",
                                command=open_download_location)

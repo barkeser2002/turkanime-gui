@@ -38,6 +38,8 @@ questionary = "*"
 py7zr = "*"
 rich = ">=13.0.0"
 easygui = ">=0.98.2"
+beautifulsoup4 = "*"
+requests = "*"
 # PyQt6 bazı Linux/musl ve yeni Python kombinasyonlarında tekerlek yayınlamayabilir.
 # Bu nedenle opsiyonel yapıyoruz; GUI isteyenler extras ile kurabilir.
 # PyQt6 = { version = ">=6.5", optional = true }
