@@ -6,10 +6,8 @@ Anime eşleştirme kayıtları ve kullanıcı verileri için REST API'yi yöneti
 import requests
 from requests.adapters import HTTPAdapter
 import json
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Optional, Dict, List
 import threading
-import time
-from datetime import datetime
 import uuid
 
 

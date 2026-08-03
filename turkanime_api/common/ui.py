@@ -5,7 +5,6 @@ Optimize edilmiş bölüm listesi - tek liste, kaynak butonları ile.
 
 import customtkinter as ctk
 from typing import List, Dict, Any, Callable, Optional
-import threading
 import re
 from .adapters import AniListAdapter, TurkAnimeAdapter, AnimeciXAdapter, AnizleAdapter
 

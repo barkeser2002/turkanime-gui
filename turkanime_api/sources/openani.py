@@ -111,48 +111,130 @@ class OpenAniAdapter:
             time.sleep(self.PROVIDER_CONFIG['rate_limit'] - elapsed)
         self.last_request = time.time()
 
+    def _slugify(self, query: str) -> List[str]:
+        """Olası slug varyantlarını üret. openani slugları küçük harf + tire."""
+        import unicodedata
+        q = unicodedata.normalize("NFKD", query).encode("ascii", "ignore").decode("ascii")
+        q = q.lower().strip()
+        base = re.sub(r"[^a-z0-9]+", "-", q).strip("-")
+        if not base:
+            return []
+        variants = [base]
+        # bilinen yaygın eklentileri dene
+        for suffix in ("-shippuden", "-season-1", "-1", "-2", "-tv", "-the-movie"):
+            variants.append(base + suffix)
+        return variants
+
+    def _light_get(self, url: str, headers: dict):
+        """Hafif istek — CF bypass'a takılmadan direkt curl_cffi kullan.
+
+        OpenAnime'ın /anime ve /explore HTML sayfaları CF challenge fırlatmıyor,
+        ama mevcut CFSession her isteği selenium/flaresolverr ile çözmeye
+        çalışıyor — bu hem yavaş hem ortama bağımlı. Burada plain curl_cffi
+        kullanarak hızlı doğrudan istek atıyoruz.
+        """
+        try:
+            from curl_cffi import requests as _curl
+            sess = getattr(self, "_light_session", None)
+            if sess is None:
+                sess = _curl.Session(impersonate="chrome110")
+                self._light_session = sess
+            return sess.get(url, headers=headers, timeout=15, allow_redirects=False)
+        except Exception:
+            return self.session.get(url, headers=headers, allow_redirects=False)
+
+    def _probe_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        """Doğrudan /anime/<slug> URL'ini deneyip varsa anime kartını döndür."""
+        url = self.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
+        headers = {"User-Agent": self.PROVIDER_CONFIG["user_agent"]}
+        try:
+            r = self._light_get(url, headers=headers)
+            if r.status_code != 200:
+                return None
+            html = r.text if hasattr(r, "text") else r.content.decode("utf-8", "ignore")
+            # Sayfanın gerçekten o anime'ye ait olduğunu doğrula:
+            # const data içinde aynı slug geçmeli
+            m = re.search(r'const data = (\[.*?\]);', html, re.DOTALL)
+            if not m:
+                return None
+            data_text = m.group(1)
+            if f'slug:"{slug}"' not in data_text and f'"slug":"{slug}"' not in data_text:
+                return None
+            # Başlık çıkar — slug'a en yakın english/turkish/romaji alanını bul.
+            # const data içinde her anime objesi { ... english:"X" ... slug:"Y" ... } formundadır.
+            title = slug.replace("-", " ").title()
+            slug_idx = data_text.find(f'slug:"{slug}"')
+            if slug_idx >= 0:
+                # Slug etrafındaki ±2000 karakteri tara
+                window = data_text[max(0, slug_idx - 2000):slug_idx + 200]
+                # En son geçen english > turkish > romaji başlığını al (en yakın)
+                best = None
+                for key in ("english", "turkish", "romaji"):
+                    for tm in re.finditer(rf'{key}:"([^"]+)"', window):
+                        best = (key, tm.group(1))
+                if best:
+                    t = best[1]
+                    try:
+                        t = t.encode("ascii", "ignore").decode("unicode_escape")
+                    except Exception:
+                        pass
+                    if t:
+                        title = t
+            return {
+                "title": title,
+                "url": url,
+                "image": "",
+                "provider_data": {"item_id": slug, "search_query": slug}
+            }
+        except Exception:
+            return None
+
     def search_anime(self, query: str) -> List[Dict[str, Any]]:
-        """Anime arama işlemi."""
+        """Anime arama işlemi.
+
+        openani.me'nin gerçek arama API'si Vanguard auth gerektirir ve dışarıdan
+        erişilemez. İki kademeli yedek strateji kullanıyoruz:
+        1) Sorguyu slug'a çevirip /anime/<slug> URL'lerini doğrudan probe et.
+        2) /explore sayfasının SSR ettiği popüler katalog içinden filtrele.
+        """
         self._rate_limit_wait()
+        results: List[Dict[str, Any]] = []
+        slugs_found: set = set()
+
+        # 1) Doğrudan slug probe — en güvenilir yöntem
+        for variant in self._slugify(query):
+            if variant in slugs_found:
+                continue
+            hit = self._probe_slug(variant)
+            if hit:
+                slugs_found.add(variant)
+                results.append(hit)
+                if len(results) >= 5:
+                    break
+
+        # 2) Explore sayfası fallback — popüler liste içinden filtre
         search_url = self.PROVIDER_CONFIG['search_url'].format(query=query)
         headers = {"User-Agent": self.PROVIDER_CONFIG["user_agent"]}
-        
+
         try:
-            response = self.session.get(search_url, headers=headers)
+            response = self._light_get(search_url, headers=headers)
             if response.status_code != 200:
-                print(f"[OpenAni] Arama hatası: HTTP {response.status_code}")
-                return []
-                
+                return results
+
             html = response.text if hasattr(response, 'text') else response.content.decode('utf-8')
             
-            # openani.me tam eşleşme bulursa /anime/<slug> adresine direkt redirect eder
-            actual_url = response.url if hasattr(response, 'url') else search_url
-            if "/anime/" in actual_url and "/explore" not in actual_url:
-                slug = actual_url.split("/anime/")[-1].split("?")[0].strip("/")
-                
-                # Başlığı sayfadan al
-                body_data = _extract_svelte_json(html)
-                title = slug.replace("-", " ").title()
-                if body_data and "english" in body_data and body_data["english"]:
-                    title = body_data["english"]
-                elif body_data and "turkish" in body_data and body_data["turkish"]:
-                    title = body_data["turkish"]
-                    
-                image = ""
-                if body_data and "pictures" in body_data and "avatar" in body_data["pictures"]:
-                    image = body_data["pictures"]["avatar"]
-                    
-                return [{
-                    "title": title,
-                    "url": actual_url,
-                    "image": image,
-                    "provider_data": {"item_id": slug, "search_query": query}
-                }]
-                
-            # Eğer redirect yapmadıysa (liste sayfası)
-            results = []
-            slugs_found = set()
-            
+            # explore sayfası SSR ile popüler animeleri gömüyor — query bazlı
+            # server-side filtreleme YOK. O yüzden parse edip client-side filtrele.
+            query_norm = query.lower().strip()
+            query_slug = query_norm.replace(" ", "-")
+
+            def _matches(title: str, slug: str) -> bool:
+                if not query_norm:
+                    return True
+                t = title.lower()
+                s = slug.lower()
+                return query_norm in t or query_slug in s
+
             # Svelte objesi içinden `english` ve `slug` değerlerini RegExp ile parse ediyoruz
             data_match = re.search(r'const data = (\[.*?\]);', html, re.DOTALL)
             if data_match:
@@ -162,46 +244,51 @@ class OpenAniAdapter:
                 for match in matches:
                     title = match.group(1)
                     slug = match.group(2)
-                    
+
                     try:
                         title = title.encode('ascii', 'ignore').decode('unicode_escape')
-                    except:
+                    except Exception:
                         pass
-                        
-                    if slug not in slugs_found:
+
+                    if slug in slugs_found:
+                        continue
+                    if not _matches(title, slug):
+                        continue
+                    slugs_found.add(slug)
+                    anime_url = self.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
+                    results.append({
+                        "title": title,
+                        "url": anime_url,
+                        "image": "",
+                        "provider_data": {"item_id": slug, "search_query": query}
+                    })
+                    if len(results) >= 20:
+                        break
+
+                # Fallback: başlık eşleşmesi yoksa sadece slug üzerinden dene
+                if not results:
+                    for match in re.finditer(r'slug:"([^"]+)"', data_text):
+                        slug = match.group(1)
+                        if slug in slugs_found or len(slug) <= 2:
+                            continue
+                        if not _matches(slug.replace("-", " "), slug):
+                            continue
                         slugs_found.add(slug)
                         anime_url = self.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
                         results.append({
-                            "title": title,
+                            "title": slug.replace("-", " ").title(),
                             "url": anime_url,
                             "image": "",
                             "provider_data": {"item_id": slug, "search_query": query}
                         })
                         if len(results) >= 20:
                             break
-                            
-                # Fallback
-                if not results:
-                    matches = re.finditer(r'slug:"([^"]+)"', data_text)
-                    for match in matches:
-                        slug = match.group(1)
-                        if slug not in slugs_found and len(slug) > 2:
-                            slugs_found.add(slug)
-                            anime_url = self.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
-                            results.append({
-                                "title": slug.replace("-", " ").title(),
-                                "url": anime_url,
-                                "image": "",
-                                "provider_data": {"item_id": slug, "search_query": query}
-                            })
-                            if len(results) >= 20:
-                                break
-                                
+
             return results
 
         except Exception as e:
             print(f"[OpenAni] Arama parse hatası: {e}")
-            return []
+            return results
 
     def get_anime_details(self, anime_url: str) -> Optional[Dict[str, Any]]:
         """Anime detaylarını getir."""

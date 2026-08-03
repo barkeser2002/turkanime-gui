@@ -121,7 +121,7 @@ class TitleMatchingClient:
         - anime_title (main title in source)
         - Can match partial Japanese, Romaji, or English titles
         """
-        result = self._make_request('GET', f'/anime-matches/search', params={'q': query})
+        result = self._make_request('GET', '/anime-matches/search', params={'q': query})
         
         if result:
             return [AnimeMatch(**item) for item in result]

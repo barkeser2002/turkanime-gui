@@ -5,11 +5,9 @@ Provides authentication, trending anime, and user tracking features.
 
 import requests
 import json
-import webbrowser
 import http.server
 import socketserver
 import threading
-import time
 import os
 from typing import List, Dict, Optional, Any, Callable
 from urllib.parse import parse_qs, urlparse

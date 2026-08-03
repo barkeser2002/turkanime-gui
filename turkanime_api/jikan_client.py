@@ -6,7 +6,7 @@ Provides seasonal and trending anime data from MyAnimeList via Jikan API.
 import requests
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 import os
 import time

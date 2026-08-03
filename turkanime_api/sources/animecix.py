@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
 import json
-import re
 from urllib.parse import urlparse, parse_qs, quote, urlsplit, urlunsplit
 
 import urllib.request
@@ -169,8 +168,6 @@ def _episodes_for_title(title_id: int) -> List[Dict[str, Any]]:
 
 def _video_streams(embed_path: str) -> List[Dict[str, str]]:
     # BASE_URL + embed path'e gidip yönlendirilmiş URL'den player id/vid al
-    import http.client
-    import ssl
     # Embed path non-ASCII içerebilir; güvenle encode et
     full = f"{BASE_URL}{quote(embed_path, safe='/:?=&')}"
     # Basit urllib ile final URL

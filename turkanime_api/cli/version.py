@@ -10,7 +10,7 @@ build çeşiti ve versiyon numarası bu script'e embedlandı.
 import re
 import requests
 __author__ = "https://github.com/barkeser2002/turkanime-gui"
-__version__ = "9.4.9.3"
+__version__ = "9.4.12.2"
 __build__ = "source" # source,exe,pip
 
 def guncel_surum():

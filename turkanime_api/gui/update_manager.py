@@ -1,8 +1,6 @@
 import requests
-import json
 import os
 import subprocess
-import tempfile
 from tkinter import messagebox
 import customtkinter as ctk
 import toml
@@ -283,7 +281,7 @@ class UpdateManager:
                     subprocess.run(["xdg-open", download_dir], timeout=5, stderr=subprocess.DEVNULL)
                 elif self.platform == "macos":
                     subprocess.run(["open", download_dir], timeout=5, stderr=subprocess.DEVNULL)
-            except Exception as e:
+            except Exception:
                 messagebox.showinfo("Bilgi", f"İndirme konumu açılamadı. Lütfen klasörü manuel olarak açınız:\n{download_dir}")
 
         open_btn = ctk.CTkButton(instructions, text="📂 İndirme Konumunu Aç",

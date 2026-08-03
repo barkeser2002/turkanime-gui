@@ -9,7 +9,6 @@ from tempfile import NamedTemporaryFile
 from shutil import move
 import json
 import uuid
-import platform
 
 # yt-dlp, mpv gibi gereksinimlerin indirme linklerinin bulunduğu dosya.
 DL_URL="https://raw.githubusercontent.com/KebabLord/turkanime-indirici/master/gereksinimler.json"
@@ -57,7 +56,7 @@ class Dosyalar:
         if path.isfile(self.ayar_path):
             ayarlar = self.ayarlar
             for ayar,value in default_ayarlar.items():
-                if not ayar in ayarlar:
+                if ayar not in ayarlar:
                     self.set_ayar(ayar,value)
             # User ID kontrolü - eğer yoksa oluştur
             if 'user_id' not in ayarlar or not ayarlar.get('user_id'):
@@ -79,7 +78,7 @@ class Dosyalar:
     def set_gecmis(self, seri,bolum,islem):
         with open(self.gecmis_path,"r",encoding="utf-8") as fp:
             gecmis = json.load(fp)
-        if not seri in gecmis[islem]:
+        if seri not in gecmis[islem]:
             gecmis[islem][seri] = []
         if bolum in gecmis[islem][seri]:
             return

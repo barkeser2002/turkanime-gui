@@ -1,4 +1,4 @@
-from os import path,system,name,listdir
+from os import path,system,name
 from shutil import move
 import sys
 import tempfile
