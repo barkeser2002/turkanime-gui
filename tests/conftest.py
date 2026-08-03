@@ -129,17 +129,10 @@ def local_server():
         srv.shutdown()
 
 
-@pytest.fixture
-def preserved_settings():
-    """`ayarlar.json`'ı yedekler ve test sonrası geri yükler.
-
-    Ayar sayfası testleri kullanıcının gerçek yapılandırmasına yazıyor;
-    bu fixture olmadan test çalıştırmak ayarları bozar.
-    """
+def _yedekli_dosya(path: str):
+    """`path`'i yedekle, test bitince geri yükle."""
     import shutil
-    from turkanime_api.cli.dosyalar import Dosyalar
 
-    path = Dosyalar().ayar_path
     backup = path + ".pytest-backup"
     shutil.copy2(path, backup)
     try:
@@ -147,3 +140,40 @@ def preserved_settings():
     finally:
         shutil.copy2(backup, path)
         os.remove(backup)
+
+
+@pytest.fixture
+def preserved_settings():
+    """`ayarlar.json`'ı yedekler ve test sonrası geri yükler.
+
+    Ayar sayfası testleri kullanıcının gerçek yapılandırmasına yazıyor;
+    bu fixture olmadan test çalıştırmak ayarları bozar.
+    """
+    from turkanime_api.cli.dosyalar import Dosyalar
+    yield from _yedekli_dosya(Dosyalar().ayar_path)
+
+
+@pytest.fixture
+def preserved_gecmis():
+    """`gecmis.json`'ı yedekler ve test sonrası geri yükler.
+
+    İzlendi/indirildi kayıtları ve izleme ilerlemesi gerçek dosyaya yazılıyor;
+    kullanıcının geçmişini test verisiyle kirletmemek için.
+    """
+    from turkanime_api.cli.dosyalar import Dosyalar
+    yield from _yedekli_dosya(Dosyalar().gecmis_path)
+
+
+@pytest.fixture
+def ayarla(preserved_settings):
+    """Gerçek `ayarlar.json`'a yazan yardımcı (fixture testten sonra geri alır).
+
+    Amaç ayarın GERÇEKTEN okunduğunu doğrulamak: `prefs.oku`'yu sahtelemek
+    "ayar okunuyor mu?" sorusunu yanıtlamaz, yalnızca sahteyi test ederdi.
+    """
+    from turkanime_api.cli.dosyalar import Dosyalar
+
+    def _ayarla(**degerler):
+        Dosyalar().set_ayar(ayar_list=degerler)
+
+    return _ayarla

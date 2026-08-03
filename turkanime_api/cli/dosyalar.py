@@ -75,19 +75,37 @@ class Dosyalar:
             with open(self.gecmis_path,"w",encoding="utf-8") as fp:
                 fp.write('{"izlendi":{},"indirildi":{}}\n')
 
-    def set_gecmis(self, seri,bolum,islem):
-        with open(self.gecmis_path,"r",encoding="utf-8") as fp:
-            gecmis = json.load(fp)
-        if seri not in gecmis[islem]:
-            gecmis[islem][seri] = []
-        if bolum in gecmis[islem][seri]:
-            return
-        gecmis[islem][seri].append(bolum)
-        # Geçmiş dosyasını /tmp'de güncelle, sonra taşı.
+    def _gecmis_yaz(self, gecmis):
+        """Geçmiş dosyasını /tmp'de güncelle, sonra taşı."""
         with NamedTemporaryFile("w",encoding="utf-8",delete=False) as tmp:
             with tmp.file as fp:
                 json.dump(gecmis,fp,indent=2)
         move(tmp.name,self.gecmis_path)
+
+    def set_gecmis(self, seri,bolum,islem):
+        with open(self.gecmis_path,"r",encoding="utf-8") as fp:
+            gecmis = json.load(fp)
+        # setdefault: eski sürümlerden kalma gecmis.json'da bölüm anahtarı
+        # eksik olabiliyor; KeyError yerine sessizce tamamla.
+        bolumler = gecmis.setdefault(islem,{})
+        if seri not in bolumler:
+            bolumler[seri] = []
+        if bolum in bolumler[seri]:
+            return
+        bolumler[seri].append(bolum)
+        self._gecmis_yaz(gecmis)
+
+    def set_ilerleme(self, seri, bolum_no):
+        """Serinin yerel izleme ilerlemesi: son tamamlanan bölüm numarası.
+
+        İzlendi listesi bölüm slug'ı tutuyor; kullanıcının "kaçıncı bölümdeyim"
+        beyanı ise bir sayı ve slug'lardan türetilemez (kaynaklar bölümü farklı
+        adlandırıyor). Bu yüzden ayrı bir alanda duruyor.
+        """
+        with open(self.gecmis_path,"r",encoding="utf-8") as fp:
+            gecmis = json.load(fp)
+        gecmis.setdefault("ilerleme",{})[seri] = int(bolum_no)
+        self._gecmis_yaz(gecmis)
 
     def set_ayar(self, ayar = None, deger = None, ayar_list = None):
         assert (ayar != None and deger != None) or ayar_list != None

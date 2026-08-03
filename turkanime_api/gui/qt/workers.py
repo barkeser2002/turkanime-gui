@@ -110,7 +110,11 @@ class _Task(QRunnable):
 # kuyrukta bekler, `_busy` bayrakları hiç sıfırlanmaz ve arayüz kalıcı olarak
 # "aranıyor…" durumunda kilitlenir.
 _long_pool: QThreadPool | None = None
-MAX_CONCURRENT_LONG_TASKS = 3
+
+# Yalnızca YEDEK değer: gerçek sınır "paralel indirme sayisi" ayarından gelir
+# (bkz. `set_long_task_limit`). Sabit tutulduğu sürece kullanıcının ayarı
+# hiçbir işe yaramıyordu.
+VARSAYILAN_UZUN_IS = 3
 
 
 def long_task_pool() -> QThreadPool:
@@ -118,8 +122,26 @@ def long_task_pool() -> QThreadPool:
     global _long_pool
     if _long_pool is None:
         _long_pool = QThreadPool()
-        _long_pool.setMaxThreadCount(MAX_CONCURRENT_LONG_TASKS)
+        _long_pool.setMaxThreadCount(VARSAYILAN_UZUN_IS)
     return _long_pool
+
+
+def set_long_task_limit(sayi: int | None) -> int:
+    """Uzun iş havuzunun eşzamanlılığını çalışma anında ayarla.
+
+    Kullanıcı ayarı iş kuyruğa girerken uygulanır; QThreadPool küçültmeyi
+    çalışan işleri kesmeden yapar, yani indirme ortasında ayar değiştirmek
+    güvenlidir.
+    """
+    pool = long_task_pool()
+    try:
+        limit = int(sayi)
+    except (TypeError, ValueError):
+        limit = VARSAYILAN_UZUN_IS
+    limit = max(1, limit)
+    if pool.maxThreadCount() != limit:
+        pool.setMaxThreadCount(limit)
+    return limit
 
 
 def run_bg(fn: Callable[..., Any], *args, signals: WorkerSignals | None = None,
@@ -170,4 +192,5 @@ class UiBridge(QObject):
         self.call.emit(fn)
 
 
-__all__ = ["WorkerSignals", "run_bg", "UiBridge", "long_task_pool", "shutdown_pools"]
+__all__ = ["WorkerSignals", "run_bg", "UiBridge", "long_task_pool",
+           "set_long_task_limit", "shutdown_pools", "VARSAYILAN_UZUN_IS"]

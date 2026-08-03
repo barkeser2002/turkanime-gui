@@ -515,9 +515,13 @@ class Video:
             ydl.download_with_info_file(tmp.name)
         remove(tmp.name)
 
-    def oynat(self, dakika_hatirla=False ,izlerken_kaydet=False, mpv_opts=[]):
+    def oynat(self, dakika_hatirla=False ,izlerken_kaydet=False, mpv_opts=None):
         """ Oynatmak için yt-dlp + mpv kullanıyoruz. """
         assert self.is_working, "Video çalışmıyor."
+        # Varsayılan liste paylaşılmamalı: eskiden `mpv_opts=[]` idi ve
+        # aşağıdaki append'ler bu TEK listeye yazıyordu; "dakika hatirla" açıkken
+        # ikinci oynatmada mpv aynı bayrağı iki kez alıyordu.
+        mpv_opts = list(mpv_opts or [])
         
         # Platform ve mimari bilgisini al
         platform_info = get_platform()

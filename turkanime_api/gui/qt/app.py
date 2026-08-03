@@ -20,12 +20,14 @@ from PySide6.QtWidgets import (
     QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from . import prefs
 from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
 from .pages.downloads import DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
 from .pages.search import SearchPage
 from .pages.settings import SettingsPage
+from .progress_dialog import ProgressDialog
 from .theme import apply_theme
 from .workers import UiBridge, run_bg
 
@@ -113,9 +115,7 @@ class MainWindow(QMainWindow):
         # Arka plan işlerinden UI'ya güvenli geçiş köprüsü (eski `after(0, ...)`)
         self.ui = UiBridge(self)
         self.downloads = DownloadManager(self)
-        self.downloads.finished.connect(
-            lambda _id, ok, msg: self._status(("İndirme " if ok else "İndirme başarısız: ") + msg)
-        )
+        self.downloads.finished.connect(self._on_download_finished)
 
         self._playing = False          # aynı anda tek oynatma denemesi
         # Detay sayfasındaki "← Geri" hangi sekmeden gelindiyse oraya dönmeli.
@@ -341,19 +341,46 @@ class MainWindow(QMainWindow):
         # NOT: Bu gövde arka plan thread'inde; hata yutulursa kullanıcı sonsuza
         # kadar "video aranıyor…" görür. Bu yüzden her çıkış yolu raporlanır.
         try:
-            video = bolum.best_video()
+            tercih = prefs.oku()
+            video = bolum.best_video(by_res=tercih.max_res,
+                                     early_subset=tercih.aday_sayisi)
             if video is None:
                 self._status(f"{title} — çalışan video bulunamadı.")
                 return
             self._status(f"{title} — oynatıcı açılıyor…")
-            proc = video.oynat()
+            proc = prefs.oynat(video, tercih)
             if proc is None:
                 # oynat() mpv bulunamazsa None döndürüp sessizce geçiyor.
                 self._status(f"{title} — oynatıcı başlatılamadı (mpv kurulu mu?).")
+                return
+            # Buraya gelindiyse mpv kapandı: izleme geçmişi + ilerleme sorusu.
+            prefs.gecmis_kaydet(bolum, "izlendi")
+            self._status(f"{title} — oynatma bitti.")
+            self.ui.post(lambda: self._on_play_finished(bolum, title))
         except Exception as exc:
             self._status(f"{title} — oynatma hatası: {exc}")
         finally:
             self._playing = False
+
+    def _on_play_finished(self, bolum, title: str) -> None:
+        """Oynatma bitti (GUI thread'i): rozetleri tazele, ilerlemeyi sor."""
+        self._refresh_episode_history()
+        self._ask_progress(bolum, title)
+
+    def _ask_progress(self, bolum, title: str) -> None:
+        """İzleme ilerlemesi diyaloğunu aç (eski `show_progress_dialog`)."""
+        dialog = ProgressDialog(bolum, title, self)
+        dialog.progress_saved.connect(self._on_progress_saved)
+        dialog.exec()
+
+    def _on_progress_saved(self, seri: str, bolum_no: int) -> None:
+        """Yerel ilerleme yazıldı. AniList yazımı Faz 7'de buraya bağlanacak."""
+        self._status(f"İlerleme kaydedildi: {seri or 'seri'} — {bolum_no}. bölüm")
+
+    def _refresh_episode_history(self) -> None:
+        page = self.pages.get("episodes")
+        if isinstance(page, EpisodePage):
+            page.refresh_history()
 
     def _on_download(self, entry) -> None:
         """İndirmeyi kuyruğa al ve indirilenler panelini göster."""
@@ -363,34 +390,16 @@ class MainWindow(QMainWindow):
         self.show_page("downloads")
         self._sync_nav("downloads")
 
+    def _on_download_finished(self, _task_id: str, ok: bool, mesaj: str) -> None:
+        self._status(("İndirme: " if ok else "İndirme başarısız: ") + mesaj)
+        if ok:
+            # Bölüm satırındaki ⬇ rozeti geçmişten okunuyor; liste açıksa tazele.
+            self._refresh_episode_history()
+
     @staticmethod
     def _download_dir() -> str:
-        """İndirme klasörü.
-
-        Boş string DÖNDÜRMÜYORUZ: yt-dlp onu çalışma dizini sayar; paketlenmiş
-        uygulamada bu `Program Files` altı olur (yazma izni yok ya da dosyalar
-        kaybolur). Ayar okunamazsa kullanıcının Downloads klasörüne düşüyoruz.
-        """
-        try:
-            from ...cli.dosyalar import Dosyalar
-            configured = (Dosyalar().ayarlar or {}).get("indirilenler")
-            if configured and os.path.isdir(configured):
-                return configured
-            if configured:
-                # Ayarlı ama yok: oluşturmayı dene, olmazsa yedeğe düş.
-                try:
-                    os.makedirs(configured, exist_ok=True)
-                    return configured
-                except OSError:
-                    pass
-        except Exception:
-            pass
-        fallback = os.path.join(os.path.expanduser("~"), "Downloads")
-        try:
-            os.makedirs(fallback, exist_ok=True)
-        except OSError:
-            return os.path.expanduser("~")
-        return fallback
+        """İndirme klasörü (ayarlardan; bkz. `prefs.indirme_dizini`)."""
+        return prefs.indirme_dizini()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt imzası)
         """Kapanışta arka plan işlerini durdur.

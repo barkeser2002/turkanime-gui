@@ -24,11 +24,17 @@ from PySide6.QtWidgets import (
 )
 
 from ....common.episode_parser import merge_episodes
+from .. import prefs
 from ..sources_bridge import UnsupportedSource, fetch_episodes
 from ..widgets import StatusLabel
 from ..workers import WorkerSignals, run_bg
 
 PAGE_SIZE = 30
+
+# İzlendi/indirildi rozetleri — eski GUI'deki "izlendi ikonu" ayarı bu ikilinin
+# görünürlüğünü yönetiyordu ama hiçbir widget'a bağlanmamıştı.
+IKON_IZLENDI = "✓"
+IKON_INDIRILDI = "⬇"
 
 # Kaynak kimliği: rozet rengi + iki harfli kısaltma. Satırda kaynak adının
 # tamamı sığmıyor; renk + kısaltma ikilisi eski GUI'den birebir taşındı ki
@@ -173,6 +179,7 @@ class EpisodeRow(QFrame):
     toggled = Signal(object, bool)          # (bölüm anahtarı, seçili mi)
 
     def __init__(self, episode: Dict[str, Any], multi: bool = False,
+                 gecmis: Optional[Any] = None,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setObjectName("Card")
@@ -183,6 +190,8 @@ class EpisodeRow(QFrame):
         # Filtre durumunu AÇIKÇA tut: `isVisible()` ata widget'ların görünürlüğüne
         # bağlı olduğu için seçim/filtre mantığının kaynağı olamaz.
         self.filtered_out = False
+        self.izlendi = False
+        self.indirildi = False
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
@@ -191,6 +200,12 @@ class EpisodeRow(QFrame):
         self.chk = QCheckBox()
         self.chk.toggled.connect(lambda state: self.toggled.emit(self.key, state))
         layout.addWidget(self.chk)
+
+        self.lblHistory = QLabel()
+        self.lblHistory.setFixedWidth(28)
+        self.lblHistory.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lblHistory.setVisible(False)
+        layout.addWidget(self.lblHistory)
 
         self.lbl = QLabel(str(episode.get("title") or ""))
         self.lbl.setWordWrap(False)
@@ -209,6 +224,7 @@ class EpisodeRow(QFrame):
             self._build_single(layout)
 
         self.setToolTip(self._tooltip())
+        self.apply_history(gecmis)
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
     def _build_single(self, layout: QHBoxLayout) -> None:
@@ -261,6 +277,37 @@ class EpisodeRow(QFrame):
     def _tooltip(self) -> str:
         names = ", ".join(sorted(self.sources)) or "kaynak yok"
         return f"{self.episode.get('title') or ''}\nKaynaklar: {names}"
+
+    # ── Geçmiş rozeti ───────────────────────────────────────────────────────
+    def apply_history(self, gecmis: Optional[Any]) -> None:
+        """İzlendi/indirildi rozetini tazele.
+
+        Bir bölüm birden çok kaynakta olabiliyor; herhangi birinden izlendiyse
+        satır izlenmiş sayılır (kullanıcı hangi kaynaktan açtığını hatırlamaz).
+        `gecmis` None ise ("izlendi ikonu" kapalı) rozet hiç çizilmez.
+        """
+        if gecmis is None:
+            self.izlendi = self.indirildi = False
+            self.lblHistory.setVisible(False)
+            return
+        izlendi = indirildi = False
+        for entry in self.sources.values():
+            watched, downloaded = gecmis.durum((entry or {}).get("obj"))
+            izlendi = izlendi or watched
+            indirildi = indirildi or downloaded
+        self.izlendi, self.indirildi = izlendi, indirildi
+
+        parcalar = []
+        if izlendi:
+            parcalar.append(IKON_IZLENDI)
+        if indirildi:
+            parcalar.append(IKON_INDIRILDI)
+        self.lblHistory.setText("".join(parcalar))
+        self.lblHistory.setToolTip(
+            " · ".join(n for n, v in (("izlendi", izlendi), ("indirildi", indirildi)) if v))
+        self.lblHistory.setStyleSheet(
+            "color: #00b894; font-weight: 700;" if izlendi else "color: #74b9ff;")
+        self.lblHistory.setVisible(bool(parcalar))
 
     # ── Aksiyonlar ──────────────────────────────────────────────────────────
     def _emit_play(self, name: str) -> None:
@@ -317,6 +364,9 @@ class EpisodePage(QWidget):
         self._shown = 0
         self._busy = False
         self._context = ("", "", "")
+        # Geçmiş tek seferde okunur; satır başına dosya açmak birkaç yüz
+        # bölümlük listede gözle görülür gecikme demek.
+        self._gecmis: Optional[prefs.Gecmis] = None
 
         self.signals = WorkerSignals()
         self.signals.connect_found(self._on_episodes)
@@ -405,6 +455,7 @@ class EpisodePage(QWidget):
         self._selected.clear()
         self._needle = ""
         self._context = (source, slug, title)
+        self._reload_gecmis()
         self.lblTitle.setText(f"{title} — {source}")
         self.lblSources.setVisible(False)
         self._clear_rows()
@@ -452,6 +503,17 @@ class EpisodePage(QWidget):
         self._busy = False
         self.lblStatus.error(message)
 
+    # ── Geçmiş ──────────────────────────────────────────────────────────────
+    def _reload_gecmis(self) -> None:
+        """Geçmişi diskten oku (ayar kapalıysa rozet hiç çizilmesin diye None)."""
+        self._gecmis = prefs.Gecmis.yukle() if prefs.oku().izlendi_ikonu else None
+
+    def refresh_history(self) -> None:
+        """Oynatma/indirme bitince rozetleri tazele (GUI thread'inden)."""
+        self._reload_gecmis()
+        for row in self._rows:
+            row.apply_history(self._gecmis)
+
     # ── Liste yönetimi ──────────────────────────────────────────────────────
     def _clear_rows(self) -> None:
         while self._list.count():
@@ -467,7 +529,7 @@ class EpisodePage(QWidget):
         chunk = self._all[self._shown:self._shown + PAGE_SIZE]
         multi = len(active_sources(self._sources)) > 1
         for episode in chunk:
-            row = EpisodeRow(episode, multi=multi)
+            row = EpisodeRow(episode, multi=multi, gecmis=self._gecmis)
             row.play_requested.connect(self.play_requested.emit)
             row.download_requested.connect(self.download_requested.emit)
             row.toggled.connect(self._on_row_toggled)
