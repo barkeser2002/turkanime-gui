@@ -55,14 +55,18 @@ def test_card_hides_thumb_area_without_image(qtbot):
 
 
 @pytest.fixture
-def png_bytes():
+def png_bytes(qtbot):
     """Geçerli PNG üret (elle yazılmış hex kırılgan; Qt'nin kendi kodlayıcısı kesin)."""
     from PySide6.QtCore import QBuffer, QByteArray
     from PySide6.QtGui import QPixmap
 
     pix = QPixmap(4, 4)
     pix.fill()
-    buf = QBuffer(QByteArray())
+    # `QBuffer(QByteArray())` YAZMA: QBuffer arabelleğe yalnızca referans tutar,
+    # geçici QByteArray ise Python tarafında hemen toplanır ve `save()` serbest
+    # bırakılmış belleğe yazarak süreci düşürür (access violation).
+    storage = QByteArray()
+    buf = QBuffer(storage)
     buf.open(QBuffer.OpenModeFlag.WriteOnly)
     assert pix.save(buf, "PNG")
     return bytes(buf.data())

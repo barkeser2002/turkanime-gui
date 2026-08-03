@@ -46,6 +46,26 @@ def _qt_env():
     prepare_qt_env()
 
 
+@pytest.fixture(autouse=True)
+def _stub_discover_sources(request, monkeypatch):
+    """Keşif sayfalarının ağ uçlarını varsayılan olarak sustur.
+
+    `DiscoverPage` ilk gösterimde veri çeker; `main_window` fixture'ı pencereyi
+    `show()` ettiği için ana sayfa açılır ve bu, hiçbir şey yapmayan testleri
+    bile Jikan/AniList'e çıkarır. Kural 1 gereği bunu kesiyoruz; gerçek veri
+    isteyen testler kendi sahtelerini bu fixture'ın üstüne yazabilir.
+    """
+    if "network" in request.keywords:
+        return
+    import turkanime_api.anilist_client as anilist_mod
+    import turkanime_api.jikan_client as jikan_mod
+
+    monkeypatch.setattr(jikan_mod, "get_trending_anime_list", lambda *a, **k: [])
+    monkeypatch.setattr(jikan_mod, "get_seasonal_anime_list", lambda *a, **k: [])
+    monkeypatch.setattr(anilist_mod.anilist_client, "get_trending_anime",
+                        lambda *a, **k: [])
+
+
 @pytest.fixture
 def main_window(qtbot):
     """Gösterilmiş `MainWindow`.

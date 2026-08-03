@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+import random
 import time
 
 
@@ -223,7 +224,15 @@ class JikanClient:
     
     # Rate limiting: Jikan has 3 requests/second limit
     RATE_LIMIT_DELAY = 0.4  # 400ms between requests
-    
+
+    # Geçici hatalarda yeniden deneme.
+    # Neden: Jikan zaman zaman 502/503/504 döndürüyor ve tek denemede pes
+    # edilince keşif sayfaları bomboş açılıyordu. Toplam bekleme 3 denemede
+    # ~3sn'yi geçmez, yani kullanıcı "yükleniyor"da takılı kalmaz.
+    RETRY_ATTEMPTS = 3          # toplam deneme sayısı (ilk istek dahil)
+    RETRY_BASE_DELAY = 1.0      # 1sn, 2sn, 4sn... şeklinde üstel
+    RETRY_MAX_DELAY = 30.0      # sunucunun verdiği Retry-After için tavan
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
@@ -240,86 +249,127 @@ class JikanClient:
             time.sleep(self.RATE_LIMIT_DELAY - elapsed)
         self._last_request_time = time.time()
     
+    def _retry_delay(self, attempt: int, response: Optional[Any] = None) -> float:
+        """`attempt` (0'dan başlar) için beklenecek süre.
+
+        Üstel geri çekilme + küçük jitter. Jitter'ın nedeni: aynı anda açılan
+        birkaç istek (ör. üç keşif sayfası) aynı ritimde yeniden denerse
+        sunucuya senkron çarpar ve 429/5xx tekrar eder.
+
+        Sunucu `Retry-After` verdiyse ona uyulur; tavan uygulanır, aksi hâlde
+        kötü niyetli/bozuk bir başlık arayüzü dakikalarca dondurabilir.
+        """
+        if response is not None:
+            try:
+                retry_after = response.headers.get('Retry-After')
+            except Exception:
+                retry_after = None
+            if retry_after:
+                try:
+                    return min(float(retry_after), self.RETRY_MAX_DELAY)
+                except (TypeError, ValueError):
+                    pass
+        return self.RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.25)
+
     def _make_request(self, endpoint: str, params: Optional[Dict] = None, use_cache: bool = True) -> Optional[Dict]:
         """
-        Make API request with ETag-based caching and rate limiting.
-        
+        Make API request with ETag-based caching, rate limiting and retries.
+
         Uses HTTP ETag/If-None-Match for cache validation:
         - Sends If-None-Match header with cached ETag
         - On 304 Not Modified: returns cached data without re-downloading
         - On 200 OK: caches new data with new ETag
+
+        Retry policy: yalnızca geçici hatalar tekrar denenir — 5xx, 429 ve
+        bağlantı/timeout hataları. 4xx (429 hariç) kalıcı istemci hatasıdır,
+        tekrar denemek yalnızca gecikme üretir. Tüm denemeler tükenirse eski
+        davranış korunur: varsa önbellekteki veri döndürülür.
         """
         # Create cache key
         cache_key = f"{endpoint}_{json.dumps(params or {}, sort_keys=True)}"
-        
+
         # Check cache first
         cached_data = None
         cached_etag = None
         needs_revalidation = True
-        
+
         if use_cache:
             cached_data, cached_etag, needs_revalidation = self.cache.get(cache_key)
-            
+
             # If cache is fresh (within 10 min), use it directly
             if cached_data is not None and not needs_revalidation:
                 return cached_data
-        
-        # Rate limit before making request
-        self._rate_limit()
-        
+
         url = f"{self.BASE_URL}{endpoint}"
-        
-        try:
-            # Prepare headers with ETag for conditional request
-            headers = {}
-            if cached_etag:
-                headers['If-None-Match'] = cached_etag
-            
-            response = self.session.get(url, params=params, headers=headers, timeout=15)
-            
+
+        # Prepare headers with ETag for conditional request
+        headers = {}
+        if cached_etag:
+            headers['If-None-Match'] = cached_etag
+
+        last_error: Any = None
+
+        for attempt in range(self.RETRY_ATTEMPTS):
+            # Rate limit before every attempt (yeniden denemeler de sayılır)
+            self._rate_limit()
+
+            try:
+                response = self.session.get(url, params=params, headers=headers, timeout=15)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                # Ağ katmanı hatası: neredeyse her zaman geçici, yeniden dene.
+                last_error = e
+                if attempt + 1 < self.RETRY_ATTEMPTS:
+                    print(f"[Jikan] Bağlantı hatası ({e}), yeniden deneniyor…")
+                    time.sleep(self._retry_delay(attempt))
+                    continue
+                break
+            except Exception as e:
+                # Beklenmeyen istemci hatası: tekrar denemek anlamsız.
+                last_error = e
+                break
+
+            status = getattr(response, 'status_code', None)
+
             # Handle 304 Not Modified - cache is still valid
-            if response.status_code == 304:
-                if cached_data is not None:
-                    # Update cache timestamp to mark as recently validated
-                    self.cache.update_validated(cache_key)
-                    return cached_data
-            
-            response.raise_for_status()
-            data = response.json()
-            
+            if status == 304 and cached_data is not None:
+                # Update cache timestamp to mark as recently validated
+                self.cache.update_validated(cache_key)
+                return cached_data
+
+            if status == 429 or (isinstance(status, int) and 500 <= status < 600):
+                # 429: hız sınırı, 5xx: sunucu tarafı geçici arıza.
+                last_error = f"HTTP {status}"
+                if attempt + 1 < self.RETRY_ATTEMPTS:
+                    delay = self._retry_delay(attempt, response)
+                    print(f"[Jikan] HTTP {status}, {delay:.1f}sn sonra yeniden deneniyor…")
+                    time.sleep(delay)
+                    continue
+                break
+
+            try:
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                # 4xx (429 hariç) ya da bozuk gövde: kalıcı hata, döngüden çık.
+                last_error = e
+                break
+
             # Cache the response with headers
             if use_cache:
                 etag = response.headers.get('ETag')
                 expires = response.headers.get('Expires')
                 last_modified = response.headers.get('Last-Modified')
                 self.cache.set(cache_key, data, etag=etag, expires=expires, last_modified=last_modified)
-            
+
             return data
-            
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                # Rate limited, wait and retry once
-                print("[Jikan] Rate limited, waiting 2 seconds...")
-                time.sleep(2)
-                return self._make_request(endpoint, params, use_cache=False)
-            elif e.response.status_code == 304:
-                # 304 handled above, but just in case
-                if cached_data is not None:
-                    return cached_data
-            print(f"[Jikan] HTTP error: {e}")
-            # Return cached data as fallback on error
-            if cached_data is not None:
-                print("[Jikan] Using cached data as fallback")
-                return cached_data
-            return None
-        except Exception as e:
-            print(f"[Jikan] Request error: {e}")
-            # Return cached data as fallback on error
-            if cached_data is not None:
-                print("[Jikan] Using cached data as fallback")
-                return cached_data
-            return None
-    
+
+        print(f"[Jikan] İstek başarısız ({endpoint}): {last_error}")
+        # Return cached data as fallback on error
+        if cached_data is not None:
+            print("[Jikan] Using cached data as fallback")
+            return cached_data
+        return None
+
     def get_current_season(self) -> List[JikanAnime]:
         """Get anime from current season."""
         data = self._make_request("/seasons/now", {"limit": 25})

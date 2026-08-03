@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from .pages.discover import DiscoverPage
 from .pages.downloads import DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
 from .pages.search import SearchPage
@@ -159,6 +160,10 @@ class MainWindow(QMainWindow):
             page = SearchPage()
             page.anime_selected.connect(self._on_anime_selected)
             return page
+        if key in ("home", "trending", "season"):
+            page = DiscoverPage(key)
+            page.anime_selected.connect(self._on_discover_selected)
+            return page
         if key == "downloads":
             return DownloadsPage(self.downloads)
         if key == "settings":
@@ -257,6 +262,19 @@ class MainWindow(QMainWindow):
         btn = self._nav_buttons.get(key)
         if btn is not None and not btn.isChecked():
             btn.setChecked(True)
+
+    def _on_discover_selected(self, title: str) -> None:
+        """Keşif kartına tıklandı.
+
+        MyAnimeList/AniList kaydının TürkAnime kaynaklarındaki karşılığı belli
+        değil (detay sayfası henüz yok), bu yüzden başlığı arama kutusuna yazıp
+        normal arama akışına devrediyoruz.
+        """
+        title = (title or "").strip()
+        if not title:
+            return
+        self.txtSearch.setText(title)
+        self._on_search()
 
     def _on_anime_selected(self, source: str, slug: str, title: str) -> None:
         """Arama sonucundan anime seçildi: bölüm listesini aç."""
