@@ -9,7 +9,8 @@ QtWebEngine penceresini açar, kullanıcı kontrolü çözer, oturum çerezi oto
 kaydedilir.
 
 AniList OAuth bilgileri buradan girilir ama `ayarlar.json`'a YAZILMAZ: istemci
-onları kendi dosyasında tutuyor (bkz. `prefs.anilist_yaz`).
+onları kendi dosyasında tutuyor (bkz. `prefs.anilist_yaz`). Client Secret alanı
+opsiyoneldir — boş bırakılınca giriş, sır gerektirmeyen Implicit akışa düşer.
 """
 from __future__ import annotations
 
@@ -179,8 +180,16 @@ class SettingsPage(QWidget):
         # Gizli anahtar omuz üstünden okunmasın; hiçbir log/hata satırına da
         # yazılmıyor (bkz. `AniListService.giris_yap`).
         self.txtAniListSecret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.txtAniListSecret.setPlaceholderText("AniList uygulama Client Secret")
+        self.txtAniListSecret.setPlaceholderText("Client Secret (opsiyonel)")
         aform.addRow("Client Secret", self.txtAniListSecret)
+
+        self.lblAniListSecretIpucu = QLabel(
+            "Client Secret opsiyoneldir: boş bırakılırsa giriş, secret "
+            "gerektirmeyen Implicit akışla yapılır. Yalnızca kendi AniList "
+            "uygulamanızı Authorization Code akışıyla kullanacaksanız doldurun.")
+        self.lblAniListSecretIpucu.setObjectName("Muted")
+        self.lblAniListSecretIpucu.setWordWrap(True)
+        aform.addRow("", self.lblAniListSecretIpucu)
 
         self.txtAniListRedirect = QLineEdit()
         self.txtAniListRedirect.setPlaceholderText(

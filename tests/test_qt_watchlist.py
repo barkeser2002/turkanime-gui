@@ -57,7 +57,10 @@ class SahteIstemci:
         self.cagrilar.append(("search", query))
         return list(self.arama_sonucu)
 
-    def get_auth_url(self, response_type="code", state=None):
+    def get_auth_url(self, response_type=None, state=None):
+        # Gerçek istemcideki seçim: secret varsa Authorization Code, yoksa
+        # Implicit (bkz. `AniListClient.akis_turu`).
+        response_type = response_type or ("code" if self.client_secret else "token")
         return ("https://anilist.co/api/v2/oauth/authorize"
                 f"?client_id={self.client_id}&response_type={response_type}")
 
@@ -653,6 +656,44 @@ def test_ayarlar_giris_butonu_once_yapilandirmayi_kaydediyor(qtbot, sahte_anilis
     qtbot.waitUntil(lambda: bool(acilan), timeout=5000)
     assert ("config", "777", ist.client_secret, ist.redirect_uri) in ist.cagrilar
     assert "client_id=777" in acilan[0]
+
+
+def test_oauth_secretsiz_istemci_implicit_akisa_dusuyor(qtbot, sahte_anilist,
+                                                        sahte_oauth):
+    """Secret yoksa jeton fragment'la gelmeli: `response_type=token`."""
+    ist = sahte_anilist(token=None)
+    ist.client_secret = ""
+    _sunucular, acilan = sahte_oauth
+
+    assert AniListService().giris_yap() is True
+    qtbot.waitUntil(lambda: bool(acilan), timeout=5000)
+    assert "response_type=token" in acilan[0]
+    assert "response_type=code" not in acilan[0]
+
+
+def test_ayarlar_secret_alani_opsiyonel_oldugunu_soyluyor(qtbot, sahte_anilist):
+    """Alan artık zorunlu değil; kullanıcı boş bırakabileceğini görmeli."""
+    sahte_anilist()
+    page = SettingsPage(AniListService())
+    qtbot.addWidget(page)
+
+    assert "opsiyonel" in page.txtAniListSecret.placeholderText().lower()
+    ipucu = page.lblAniListSecretIpucu.text().lower()
+    assert "opsiyonel" in ipucu and "implicit" in ipucu
+
+
+def test_ayarlar_bos_secret_kaydedilebiliyor(qtbot, sahte_anilist,
+                                             preserved_settings):
+    """Secret'ı silip kaydetmek hata vermemeli (Implicit akışa geçiş)."""
+    ist = sahte_anilist()
+    page = SettingsPage(AniListService())
+    qtbot.addWidget(page)
+
+    page.txtAniListSecret.setText("")
+    page.save()
+
+    assert ("config", ist.client_id, "", ist.redirect_uri) in ist.cagrilar
+    assert "kaydedildi" in page.lblStatus.text()
 
 
 def test_ayarlar_cikis_durumu_gosteriyor(qtbot, sahte_anilist):

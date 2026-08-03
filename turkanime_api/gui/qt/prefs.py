@@ -237,7 +237,11 @@ def yerel_ilerleme() -> Dict[str, int]:
 # ── AniList OAuth yapılandırması ────────────────────────────────────────────
 @dataclass(frozen=True)
 class AniListAyar:
-    """AniList OAuth istemci bilgileri (ayar sayfasının doldurduğu alanlar)."""
+    """AniList OAuth istemci bilgileri (ayar sayfasının doldurduğu alanlar).
+
+    `client_secret` opsiyoneldir: boş kalırsa istemci sır gerektirmeyen
+    Implicit akışı seçer (bkz. `anilist_client.AniListClient.akis_turu`).
+    """
 
     client_id: str = ""
     client_secret: str = ""

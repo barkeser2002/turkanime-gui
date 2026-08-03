@@ -1,6 +1,12 @@
 """
 AniList API Client for TurkAnime GUI
 Provides authentication, trending anime, and user tracking features.
+
+**Gizli anahtar burada DURMAZ.** `client_id` OAuth2'de tasarımı gereği
+publictir (yetkilendirme URL'i zaten kullanıcının adres çubuğunda taşır), ama
+`client_secret` sırdır: depo herkese açık ve değer derlenmiş EXE'ye de gömülür.
+Bu yüzden secret yalnızca çalışma anında çözülür — bkz. `cozumlenmis_secret`.
+Secret yoksa giriş, secret istemeyen Implicit akışa düşer.
 """
 
 import requests
@@ -12,6 +18,29 @@ import os
 from typing import List, Dict, Optional, Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+# Uygulamanın public kimliği ve yerel geri dönüş adresi.
+VARSAYILAN_CLIENT_ID = "29745"
+VARSAYILAN_REDIRECT_URI = "http://localhost:9921/anilist-login"
+
+# Secret'ın okunduğu ortam değişkeni. Kendi AniList uygulamasını Authorization
+# Code akışıyla kullanmak isteyenler bunu tanımlar; kaynağa yazılmaz.
+SECRET_ORTAM_DEGISKENI = "ANILIST_CLIENT_SECRET"
+
+# Implicit akışta jeton URL *fragment*'ında gelir (`#access_token=...`) ve
+# fragment tarayıcıdan sunucuya HİÇ gönderilmez. Bu uç, aşağıdaki köprü
+# sayfasının hash'i okuyup jetonu geri yollaması için var.
+TOKEN_UCU = "/anilist-token"
+
+
+def cozumlenmis_secret() -> str:
+    """Ortam değişkenindeki client secret; tanımsızsa boş dize.
+
+    Kaynak kodda sabit bir değer YOK; öncelik sırası ortam değişkeni →
+    kullanıcının yapılandırma dosyası (`_load_config`) → boş.
+    """
+    return str(os.environ.get(SECRET_ORTAM_DEGISKENI, "") or "").strip()
+
+
 class AniListClient:
     """AniList API client with OAuth2 authentication."""
 
@@ -19,13 +48,17 @@ class AniListClient:
     AUTH_URL = "https://anilist.co/api/v2/oauth/authorize"
     TOKEN_URL = "https://anilist.co/api/v2/oauth/token"
 
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str):
+    def __init__(self, client_id: str, client_secret: str = "", redirect_uri: str = ""):
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.access_token = None
         self.refresh_token = None
         self.user_data = None
+        # Yapılandırma dosyasından gelen secret ayrıca tutulur: ortamdan gelen
+        # değeri diske kopyalamamak için (bkz. `_save_config`).
+        self._dosya_secret = ""
+        self._secret_ortamdan = False
         # Try load tokens from disk
         try:
             self._load_tokens()
@@ -36,14 +69,36 @@ class AniListClient:
             self._load_config()
         except Exception:
             pass
+        # Ortam değişkeni en son uygulanır: dosyadaki değeri de ezmeli, çünkü
+        # onu tanımlayan kullanıcı bilinçli olarak o oturumu seçiyor.
+        ortam = cozumlenmis_secret()
+        if ortam:
+            self.client_secret = ortam
+            self._secret_ortamdan = True
 
-    def get_auth_url(self, response_type: str = "code", state: Optional[str] = None) -> str:
-        """Generate OAuth2 authorization URL.
+    def secret_var_mi(self) -> bool:
+        """Authorization Code akışını sürdürecek bir secret var mı?"""
+        return bool(str(self.client_secret or "").strip())
+
+    def akis_turu(self) -> str:
+        """Kullanılacak OAuth akışı: secret varsa ``code``, yoksa ``token``.
+
+        Masaüstü uygulaması sır saklayamaz; varsayılan bu yüzden Implicit.
+        Secret'ı olan (kendi uygulamasını tanımlamış) kullanıcı eski akışta
+        kalır — kaydettiği yapılandırma bozulmasın.
+        """
+        return "code" if self.secret_var_mi() else "token"
+
+    def get_auth_url(self, response_type: Optional[str] = None,
+                     state: Optional[str] = None) -> str:
+        """OAuth2 yetkilendirme URL'ini üret.
 
         response_type:
+          - None     -> otomatik seçim (`akis_turu`)
           - "code"   -> Authorization Code flow (requires client_secret)
           - "token"  -> Implicit flow (no client_secret, access_token in fragment)
         """
+        response_type = str(response_type or "").strip() or self.akis_turu()
         params = [
             ("client_id", self.client_id),
             ("redirect_uri", self.redirect_uri),
@@ -67,7 +122,14 @@ class AniListClient:
             pass
 
     def exchange_code_for_token(self, code: str) -> bool:
-        """Exchange authorization code for access token."""
+        """Exchange authorization code for access token.
+
+        Yalnızca Authorization Code akışında çağrılır; secret yoksa AniList
+        isteği zaten reddeder, boş secret'la ağa çıkmanın anlamı yok.
+        """
+        if not self.secret_var_mi():
+            print("[AniList] client_secret tanımlı değil; Implicit akış kullanılmalı.")
+            return False
         data = {
             'grant_type': 'authorization_code',
             'client_id': self.client_id,
@@ -91,6 +153,8 @@ class AniListClient:
                 pass
             return True
         except Exception as e:
+            # Yalnızca istisna metni basılır; `data` sözlüğü client_secret
+            # taşıyor ve hiçbir log satırına girmemeli.
             print(f"Token exchange failed: {e}")
             return False
 
@@ -443,23 +507,38 @@ class AniListClient:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 self.client_id = data.get('client_id', self.client_id)
-                self.client_secret = data.get('client_secret', self.client_secret)
+                self._dosya_secret = str(data.get('client_secret', '') or '')
+                if self._dosya_secret:
+                    self.client_secret = self._dosya_secret
                 self.redirect_uri = data.get('redirect_uri', self.redirect_uri)
 
     def _save_config(self) -> None:
         path = self._config_path()
+        # Ortamdan gelen secret diske KOPYALANMAZ: kullanıcı onu bilerek süreç
+        # ömrüyle sınırlamış olabilir, "Kaydet"e basmak bu tercihi sessizce
+        # bozmamalı. Dosyadaki mevcut değer olduğu gibi korunur.
+        secret = self._dosya_secret if self._secret_ortamdan else self.client_secret
         with open(path, 'w', encoding='utf-8') as f:
             json.dump({
                 'client_id': self.client_id,
-                'client_secret': self.client_secret,
+                'client_secret': secret,
                 'redirect_uri': self.redirect_uri,
             }, f)
 
     def set_oauth_config(self, client_id: str, client_secret: str, redirect_uri: str) -> None:
-        """Update AniList OAuth client configuration and persist it."""
+        """Update AniList OAuth client configuration and persist it.
+
+        `client_secret` opsiyoneldir: boş bırakılırsa Implicit akış kullanılır.
+        """
         self.client_id = client_id
-        self.client_secret = client_secret
         self.redirect_uri = redirect_uri
+        # Ortam değişkeni etkinken alan değişmeden kaydedildiyse (ayar sayfası
+        # etkin değeri gösteriyor) secret'a dokunulmaz; kullanıcı gerçekten
+        # farklı bir değer yazdıysa artık kaynak odur.
+        if not self._secret_ortamdan or client_secret != self.client_secret:
+            self._secret_ortamdan = False
+            self._dosya_secret = client_secret
+            self.client_secret = client_secret
         try:
             self._save_config()
         except Exception:
@@ -476,6 +555,59 @@ class AniListClient:
                 os.remove(path)
         except Exception:
             pass
+
+
+def fragment_koprusu_html(token_ucu: str = TOKEN_UCU) -> str:
+    """Implicit akışta jetonu yerel sunucuya taşıyan köprü sayfası.
+
+    Fragment tarayıcıda kalır — `#access_token=...` HTTP isteğine HİÇ girmez,
+    dolayısıyla `AniListAuthServer` onu doğrudan okuyamaz. Tek yol, redirect'te
+    bu sayfayı servis edip JS'in `location.hash`'i okuyup jetonu geri
+    göndermesi. `fetch` engellenirse aynı jeton sorgu dizesiyle GET olarak
+    yollanır (yalnızca localhost'a gider, ağa çıkmaz).
+    """
+    return """<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><title>AniList girisi</title></head>
+<body style="background:#0f0f0f;color:#e6e6e6;font-family:Segoe UI,Arial,sans-serif;padding:32px;">
+<h2 id="baslik">AniList girisi tamamlaniyor...</h2>
+<p id="mesaj">Bu sekmeyi kapatmayin, birkac saniye surebilir.</p>
+<script>
+(function () {
+  var yaz = function (baslik, mesaj) {
+    document.getElementById('baslik').textContent = baslik;
+    document.getElementById('mesaj').textContent = mesaj;
+  };
+  var hash = window.location.hash || '';
+  if (hash.charAt(0) === '#') { hash = hash.substring(1); }
+  var params = new URLSearchParams(hash);
+  var token = params.get('access_token');
+  var hata = params.get('error') ||
+             new URLSearchParams(window.location.search || '').get('error');
+  if (!token) {
+    yaz('Giris tamamlanamadi',
+        hata ? ('AniList yaniti: ' + hata)
+             : 'Jeton alinamadi. Uygulamadan tekrar deneyin.');
+    return;
+  }
+  var bitti = function () {
+    yaz('Giris basarili', 'Bu sekmeyi kapatabilirsiniz.');
+    setTimeout(function () { window.close(); }, 1500);
+  };
+  var yedek = function () {
+    window.location.replace('__UC__?access_token=' + encodeURIComponent(token));
+  };
+  try {
+    fetch('__UC__', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_token: token })
+    }).then(function (r) { if (r && r.ok) { bitti(); } else { yedek(); } })
+      .catch(yedek);
+  } catch (e) { yedek(); }
+})();
+</script>
+</body></html>
+""".replace("__UC__", token_ucu)
 
 
 class AniListAuthServer:
@@ -539,39 +671,17 @@ class AniListAuthServer:
                                 pass
                             return
 
-                    # Implicit akış uyumluluğu: hash'ten access_token yakalayan sayfayı sun
+                    # Implicit akış: jeton fragment'ta, yani bu istekte YOK.
+                    # Hash'i okuyup geri gönderen köprü sayfasını sun.
+                    govde = fragment_koprusu_html().encode('utf-8')
                     self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
+                    self.send_header('Content-type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(govde)))
                     self.end_headers()
-                    # Page reads window.location.hash and forwards to /anilist-token via POST
-                    self.wfile.write("""
-                        <html><body>
-                        <script>
-                        (function(){
-                            try {
-                                var hash = window.location.hash || "";
-                                if (hash && hash.startsWith('#')) { hash = hash.substring(1); }
-                                var params = new URLSearchParams(hash);
-                                var token = params.get('access_token');
-                                if (token) {
-                                    // Send token to server
-                                    fetch('/anilist-token', {
-                                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                                        body: JSON.stringify({ access_token: token })
-                                     }).then(function(){ window.close(); })
-                                         .catch(function(){ window.close(); });
-                                 }
-                             } catch(e) { /* ignore */ }
-                             // Zamanlayıcı: 5 saniye sonra otomatik kapat
-                             setTimeout(function(){ window.close(); }, 5000);
-                         })();
-                         <p>Giriş tamamlandıysa bu pencereyi kapatabilirsiniz.</p>
-                         </script>
-                         </body></html>
-                         """.encode('utf-8'))
+                    self.wfile.write(govde)
                     return
-                if parsed_path.path.endswith("/anilist-token") and self.command == 'GET':
-                    # For compatibility if someone GETs with query token
+                if parsed_path.path.endswith(TOKEN_UCU) and self.command == 'GET':
+                    # Köprü sayfasının `fetch` yedeği: jeton sorgu dizesinde.
                     token = query_params.get('access_token', [None])[0]
                     if token:
                         self._handle_received_token(token)
@@ -636,7 +746,7 @@ class AniListAuthServer:
 
             def do_POST(self):
                 parsed_path = urlparse(self.path)
-                if parsed_path.path.endswith('/anilist-token'):
+                if parsed_path.path.endswith(TOKEN_UCU):
                     length = int(self.headers.get('Content-Length', '0') or 0)
                     body = self.rfile.read(length) if length > 0 else b""
                     try:
@@ -659,10 +769,18 @@ class AniListAuthServer:
                         self.anilist_client.set_access_token(token)
                         # Optionally fetch user to validate
                         self.anilist_client.get_current_user()
+                    govde = ("<html><head><meta charset='utf-8'></head>"
+                             "<body style='background:#0f0f0f;color:#e6e6e6;"
+                             "font-family:Segoe UI,Arial,sans-serif;padding:32px;'>"
+                             "<h2>Giris basarili</h2>"
+                             "<p>Bu sekmeyi kapatabilirsiniz.</p>"
+                             "<script>setTimeout(function(){window.close();},1500);</script>"
+                             "</body></html>").encode('utf-8')
                     self.send_response(200)
-                    self.send_header('Content-type', 'text/html')
+                    self.send_header('Content-type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(govde)))
                     self.end_headers()
-                    self.wfile.write(b"<html><body><h2>AniList Auth Success</h2><p>You can close this window.</p><script>window.close();</script></body></html>")
+                    self.wfile.write(govde)
                     # shutdown + callback
                     if self._auth_server and self._auth_server.server:
                         threading.Thread(target=self._auth_server.server.shutdown, daemon=True).start()
@@ -686,13 +804,20 @@ class AniListAuthServer:
                 return CallbackHandler(*args, anilist_client=self.client, auth_server=self, **kwargs)
 
             self.server = ThreadedTCPServer(("", port), handler_factory)
-            print(f"Starting auth server on port {port}")
+            # İstenen port 0 olabilir (işletim sistemi seçer); gerçekten
+            # bağlanılan portu basmak sorun ararken tek işe yarayan bilgi.
+            print(f"Starting auth server on port {self.server.server_address[1]}")
             self.server.serve_forever()
         except Exception as e:
             print(f"Server error: {e}")
 # Global AniList client instance
+#
+# `client_secret` bilerek BOŞ: değer kaynağa girerse hem herkese açık depoda
+# hem derlenmiş EXE'de okunabilir olur. Secret'ı `__init__` çalışma anında
+# çözer (ortam değişkeni → kullanıcı yapılandırması → boş); bulunamazsa giriş
+# secret istemeyen Implicit akışa düşer.
 anilist_client = AniListClient(
-    client_id="29745",
-    client_secret="a6L8mE9xNR2t45kl0KZ15eY0DWYhhBhP2bQpIvku",
-    redirect_uri="http://localhost:9921/anilist-login"
+    client_id=VARSAYILAN_CLIENT_ID,
+    client_secret="",
+    redirect_uri=VARSAYILAN_REDIRECT_URI,
 )

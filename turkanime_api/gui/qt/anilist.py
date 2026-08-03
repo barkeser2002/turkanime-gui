@@ -242,9 +242,11 @@ class AniListService(QObject):
                 port = geri_donus_portu(getattr(ist, "redirect_uri", ""))
                 threading.Thread(target=sunucu.start_server, args=(port,),
                                  daemon=True).start()
-            # Authorization Code akışı: implicit akış client_secret'sız çalışsa
-            # da jetonu tarayıcı adres çubuğunda taşır.
-            url = ist.get_auth_url(response_type="code")
+            # Akışı istemci seçer: client_secret varsa Authorization Code,
+            # yoksa Implicit. Masaüstü uygulaması sır saklayamadığı için
+            # varsayılan Implicit; jetonu URL fragment'ından yerel sunucuya
+            # `anilist_client.fragment_koprusu_html` taşır.
+            url = ist.get_auth_url()
             webbrowser.open(url)
         except Exception as exc:
             # Mesaja YALNIZCA istisna metni girer; client_secret hiçbir log ya

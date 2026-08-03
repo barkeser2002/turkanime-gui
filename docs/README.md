@@ -104,6 +104,7 @@ python -m turkanime_api.gui.qt
 3. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden sunucu adresini gir (zorunlu değil).
 4. **Keşfet veya Ara sekmesinden** anime seç.
 5. **Bölümü oynat** ya da **indir**; her bölüm için ayrı ilerleme çubuğu, yeniden deneme ve iptal desteği mevcut.
+6. **AniList'e bağlanmak** istersen Ayarlar → AniList → "AniList'e Giriş Yap"; gizli anahtar (client secret) gerekmez, ayrıntı için [AniList Girişi](ANILIST_OAUTH.md).
 
 ## 📺 Desteklenen Kaynaklar
 
@@ -122,7 +123,7 @@ python -m turkanime_api.gui.qt
 | Motor | Rol |
 |-------|-----|
 | **Jikan (MAL)** | Birincil arama — MyAnimeList veritabanı |
-| **AniList** | Fallback arama + kullanıcı listesi + OAuth2 |
+| **AniList** | Fallback arama + kullanıcı listesi + OAuth2 (secret gerektirmez — bkz. [AniList Girişi](ANILIST_OAUTH.md)) |
 
 ### Cloudflare Bypass Zinciri
 ```
