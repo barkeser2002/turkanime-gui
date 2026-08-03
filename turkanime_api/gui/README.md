@@ -10,32 +10,40 @@ dönmek gerekirse `pre-ctk-removal` etiketi güvenlik ağıdır.
 
 ```
 pip install -r requirements-gui.txt
+pip install pyinstaller
 ```
 
 PyInstaller ile (spec):
 
 ```
-python -m PyInstaller turkanime-qt.spec
+python -m PyInstaller turkanime-gui.spec --noconfirm
 ```
 
-Çıktı `dist/turkanime-qt/` klasörüne üretilir. **onedir**'dir, onefile değil:
+Çıktı `dist/turkanime-gui/` klasörüne üretilir. **onedir**'dir, onefile değil:
 QtWebEngine onefile'da kırılgan (`QtWebEngineProcess` çalışma anında
 bulunamıyor), bu yüzden klasör zip'lenerek dağıtılır.
+
+Spec'in yaptığı boyut budaması (bozarsanız paket ~130 MB şişer):
+- Kullanılmayan Qt modülleri (`_DROP`) — 3D, Charts, Designer, Sql, Test…
+- QtWebEngine dil paketleri yalnızca **tr + en-US**; klasörü tamamen boşaltmak
+  WebEngine'i metinsiz bırakır, o yüzden ikisi mutlaka kalmalı.
+- Qt'nin `.qm` çevirilerinden yalnızca `_tr` / `_en`.
+- `*.debug.pak` / `*.debug.bin` — release WebEngine bunları hiç okumuyor.
 
 Notlar:
 - Proje kökünde `bin/` klasörü varsa içeriği paketlenir (mpv, aria2c, ffmpeg,
   yt-dlp vb.). CI yalnızca Windows'ta bu klasörü otomatik hazırlar.
 - Uygulama simgesi `docs/TurkAnime.ico` dosyasından yüklenir.
-- İsteğe bağlı doğrulama: `dist/` altındaki çıktılar için MD5 özetini
-  oluşturmak isterseniz Windows'ta `docs/hash_dist_md5.bat` betiğini
-  çalıştırabilirsiniz. CLI build betiği (`docs/build_exe.bat`) MD5 dosyalarını
-  otomatik üretir.
+- Windows'ta hem GUI hem CLI'yı tek seferde derlemek için `docs/build-win.bat`
+  (gömülü mpv/ffmpeg/aria2c/yt-dlp indirmesi dahil).
+- SHA-256 özetleri elle üretilmiyor: release iş akışı, yayımladığı her dosyanın
+  yanına `.sha256` yazıyor ve aynı özeti `version.json`'a koyuyor.
 
 ## Çalıştırma
 
 Derlenmiş çıktı:
-- Windows: `dist/turkanime-qt/turkanime-qt.exe`
-- Linux/macOS: `dist/turkanime-qt/turkanime-qt`
+- Windows: `dist/turkanime-gui/turkanime-gui.exe`
+- Linux/macOS: `dist/turkanime-gui/turkanime-gui`
 
 Geliştirme modunda çalıştırma:
 
@@ -57,12 +65,15 @@ karantinasını kaldırmanız gerekebilir.
 
 GitHub Actions, tag (vX.Y.Z) atıldığında üç işletim sistemi için derler ve
 release'e ekler:
-- Windows: `turkanime-qt-windows.zip`
-- Linux: `turkanime-qt-linux.zip`
-- macOS: `turkanime-qt-macos.zip`
+- Windows: `turkanime-gui-windows.zip`
+- Linux: `turkanime-gui-linux.zip`
+- macOS: `turkanime-gui-macos.zip`
 
-Ayrıca her platform için konsol tabanlı CLI ikilisi (`turkanime-cli-*`)
-üretilir.
+Ayrıca her platform için konsol tabanlı CLI ikilisi (`turkanime-cli-*`), her
+dosyanın `.sha256` özeti ve `docs/version.json` üretilir. `version.json`
+şeması `turkanime_api/common/updater.platform_paketi` ile hizalı olmak
+zorunda (`platforms[os]["url"]` + `["checksum"]`); `tests/test_qt_updates.py`
+iki tarafı birden denetliyor.
 
 Windows derlemelerinde mpv, aria2c, ffmpeg ve yt-dlp, mevcutsa paketlenir.
 Linux/macOS'ta sistemde bulunmaları önerilir; lokal derlemede `bin/` altına

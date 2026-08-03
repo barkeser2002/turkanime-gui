@@ -1,6 +1,9 @@
 @echo off
 SETLOCAL ENABLEDELAYEDEXPANSION
 REM Pure-Batch Windows build helper (no PowerShell)
+REM Hem GUI (turkanime-gui.spec, onedir) hem CLI (tek dosya exe) derler.
+REM DEPO KOKUNDEN calistirin:  docs\build-win.bat
+REM (spec, gereksinimler.json ve docs\TurkAnime.ico yollari koke gore.)
 
 echo Preparing build environment...
 if not exist bin mkdir bin
@@ -84,13 +87,14 @@ for /r tmp_ffmpeg %%g in (ffprobe.exe) do (
 
 echo Embedded runtime prepared.
 
-echo Installing python deps and building Qt GUI with PyInstaller...
+echo Installing python deps and building GUI with PyInstaller...
 python -m pip install --upgrade pip || (echo pip upgrade failed & pause & exit /b 1)
 pip install -r requirements-gui.txt || echo warn: requirements-gui install failed
 pip install pyinstaller || echo warn: pyinstaller install failed
 :: Faz 9: eski pyinstaller.spec (CustomTkinter) silindi. Tek GUI spec'i bu.
-:: onedir uretir -> dist\turkanime-qt\ (QtWebEngine onefile'da kirilgan).
-python -m PyInstaller turkanime-qt.spec || echo warn: PyInstaller Qt GUI build failed
+:: Faz 10: spec adi turkanime-qt.spec -> turkanime-gui.spec olarak degisti.
+:: onedir uretir -> dist\turkanime-gui\ (QtWebEngine onefile'da kirilgan).
+python -m PyInstaller turkanime-gui.spec --noconfirm || echo warn: PyInstaller GUI build failed
 
 echo Building CLI (Windows)...
 python -m pip install --upgrade pip

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import pathlib
+import re
 
 import pytest
 
@@ -16,6 +18,9 @@ from turkanime_api.gui.qt.updates import UpdateDialog, UpdateService
 
 PAKET = b"sahte-guncelleme-paketi" * 64
 OZET = hashlib.sha256(PAKET).hexdigest()
+
+KOK = pathlib.Path(__file__).resolve().parents[1]
+IS_AKISI = KOK / ".github" / "workflows" / "release.yml"
 
 
 def _surum_kaydi(url: str, checksum: str = "", surum: str = "99.0.0") -> dict:
@@ -61,6 +66,79 @@ def test_platform_paketi_sade_anahtarla_bulunuyor():
     paket = updater.platform_paketi(veri)
     assert paket == {"url": "https://ornek/paket.exe", "checksum": OZET}
     assert updater.platform_paketi(veri, "haiku") is None
+
+
+# ── CI ↔ updater şema uyumu ─────────────────────────────────────────────────
+# Bu bölüm sessizce kırılmış bir sözleşmeyi bekliyor: release.yml bir dönem
+# `platforms[os] = {"qt": ..., "cli": ...}` yazdı, updater ise `["url"]` okudu.
+# Sonuç: uygulama içi güncelleme HER platformda "bu platform desteklenmiyor"
+# deyip sustu. Kimse fark etmedi çünkü ne CI ne de test iki tarafı bir arada
+# görüyordu.
+def _ci_kaydi(temel: str = "https://ornek/indir", ozet: str = OZET) -> dict:
+    """`release.yml`'in "Generate SHA-256 + version.json" adımının çıktısı."""
+    platformlar = {}
+    for isim, uzanti in (("windows", ".exe"), ("linux", ""), ("macos", "")):
+        gui, cli = f"turkanime-gui-{isim}.zip", f"turkanime-cli-{isim}{uzanti}"
+        platformlar[isim] = {
+            "url": f"{temel}/{gui}",
+            "checksum": ozet,
+            "gui": {"url": f"{temel}/{gui}", "checksum": ozet},
+            "cli": {"url": f"{temel}/{cli}", "checksum": ozet},
+        }
+    return {
+        "version": "99.0.0",
+        "release_date": "2030-01-01T00:00:00Z",
+        "changelog": "V99.0.0 — test",
+        "platforms": platformlar,
+    }
+
+
+@pytest.mark.parametrize("isim", ["windows", "linux", "macos"])
+def test_ci_semasi_url_ve_checksum_cozuluyor(isim):
+    paket = updater.platform_paketi(_ci_kaydi(), isim)
+    assert paket is not None, "CI'ın yazdığı kayıt updater tarafından okunamıyor"
+    assert paket["url"].endswith(f"turkanime-gui-{isim}.zip")
+    assert paket["checksum"] == OZET, "SHA-256 alanı taşınmıyor"
+
+
+def test_ci_semasiyla_indirme_ve_dogrulama_uctan_uca(qtbot, tmp_path,
+                                                     local_server, ayarla):
+    """CI biçimindeki kayıt gerçek indirme akışını sonuna kadar yürütüyor mu?"""
+    ayarla(indirilenler=str(tmp_path))
+    veri = _ci_kaydi(temel=local_server(body=PAKET).rstrip("/"))
+
+    servis = UpdateService()
+    with qtbot.waitSignal(servis.download_ready, timeout=10000) as blocker:
+        assert servis.indir(veri) is True
+    inen = blocker.args[0]
+    assert os.path.basename(inen) == f"turkanime-gui-{get_os()}.zip"
+    assert updater.dosya_ozeti(inen) == OZET
+
+
+def test_release_yml_ile_updater_ayni_anahtarlari_kullaniyor():
+    """Üretici tarafı da denetleniyor: yalnızca sözlüğü taklit etmek yetmez."""
+    metin = IS_AKISI.read_text(encoding="utf-8")
+    assert '"url": f"{base}/{gui}"' in metin, "CI üst düzey `url` yazmıyor"
+    assert '"checksum": gui_ozet' in metin, "CI üst düzey `checksum` yazmıyor"
+    assert 'f"turkanime-gui-{isim}.zip"' in metin
+    assert "dist/turkanime-gui-" in metin, "paketleme adımıyla ad uyuşmuyor"
+    assert '"qt":' not in metin, "updater'ın okumadığı eski şema geri gelmiş"
+
+
+# ── Sürüm tutarlılığı ───────────────────────────────────────────────────────
+def test_surum_tek_kaynaktan_okunuyor():
+    """version.py / cli/version.py / pyproject.toml aynı sürümü söylemeli."""
+    from turkanime_api import version as paket_surum
+    from turkanime_api.cli import version as cli_surum
+
+    assert cli_surum.__version__ == paket_surum.__version__
+
+    pyproject = KOK / "pyproject.toml"
+    if not pyproject.is_file():        # kurulu pakette dosya yok
+        pytest.skip("kaynak ağacından çalışmıyor")
+    eslesme = re.search(r'^version = "(.+?)"',
+                        pyproject.read_text(encoding="utf-8"), re.M)
+    assert eslesme and eslesme.group(1) == paket_surum.__version__
 
 
 # ── Yeni sürüm tespiti ───────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ debug.log
 build/*
 dist/turkanime*
 !dist/version.json
-# Qt GUI build çıktıları (turkanime-qt.spec)
+# GUI build çıktıları (turkanime-gui.spec)
 dist-qt/
 build-qt/
 

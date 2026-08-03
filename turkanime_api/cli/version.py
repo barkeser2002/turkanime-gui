@@ -4,13 +4,15 @@ Sürüm numarası PEP8 standartınca oluşturuldu
     X.Y.Z = Major,   Minor,   Patch
             Önemli,  Özellik, Onarım
 
-Script çok farklı şekillerde servis edildiğinden
-build çeşiti ve versiyon numarası bu script'e embedlandı.
+Sürüm numarası burada TUTULMUYOR: `turkanime_api/version.py` tek kaynak.
+Eskiden iki dosyada iki literal vardı ve biri güncellenip diğeri unutulunca
+CLI kendini yanlış sürümle tanıtıyordu (release CI'ı ikisini ayrı ayrı
+sed'lemek zorundaydı).
 """
 import re
 import requests
+from ..version import __version__   # noqa: F401  (yeniden dışa veriliyor)
 __author__ = "https://github.com/barkeser2002/turkanime-gui"
-__version__ = "9.4.12.2"
 __build__ = "source" # source,exe,pip
 
 def guncel_surum():
