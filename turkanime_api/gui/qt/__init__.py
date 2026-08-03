@@ -1,7 +1,7 @@
-"""PySide6 tabanlı yeni TürkAnime GUI'si.
+"""PySide6 tabanlı TürkAnime GUI'si.
 
-CustomTkinter GUI'si (`turkanime_api.gui.main`) geçiş tamamlanana kadar
-çalışmaya devam eder; bu paket onun yerini kademeli olarak alır.
+Projenin tek arayüzü. Faz 9'da CustomTkinter yığını silindi ve hem
+`turkanime-gui` hem `turkanime-qt` giriş noktaları buradaki `run`'a bağlandı.
 """
 from .app import MainWindow, run, prepare_qt_env  # noqa: F401
 from .workers import UiBridge, WorkerSignals, run_bg  # noqa: F401

@@ -5,7 +5,7 @@ name: Release (tag → build, publish, PyPI)
 #   git tag 9.4.12.2  && git push origin 9.4.12.2
 #
 # Workflow:
-#   1) Tüm platformlar için GUI + CLI + Simple GUI exe'lerini paralel derle
+#   1) Tüm platformlar için Qt GUI (zip) + CLI (exe) paketlerini paralel derle
 #   2) Tag adında bir GitHub Release oluştur (release notlarını docs/V<tag>.md'den çek)
 #   3) Eski release'leri otomatik temizle (en son 5'i koru)
 #   4) PyPI'a poetry ile yayınla
@@ -71,9 +71,9 @@ jobs:
           Copy-Item -Force $ffmpegExe.FullName bin/
           if ($ffprobeExe) { Copy-Item -Force $ffprobeExe.FullName bin/ }
 
-      - name: Build GUI (main)
-        shell: bash
-        run: python -m PyInstaller pyinstaller.spec --noconfirm
+      # NOT: Eski "Build GUI (main)" adımı (CustomTkinter, pyinstaller.spec)
+      # Faz 9'da kaldırıldı — o yığın da spec dosyası da silindi. Tek GUI
+      # artık aşağıdaki Qt derlemesi.
 
       # PySide6 + QtWebEngine GUI'si. onedir üretir (QtWebEngine ile onefile
       # kırılgan: QtWebEngineProcess çalışma anında bulunamıyor), bu yüzden
@@ -135,7 +135,6 @@ jobs:
             --hidden-import yt_dlp `
             --hidden-import curl_cffi `
             --hidden-import Crypto `
-            --hidden-import selenium `
             --add-data "gereksinimler.json;." `
             compiled.py
 
@@ -151,7 +150,7 @@ jobs:
           python -m PyInstaller \
             --noconfirm --name turkanime-cli --onefile --console \
             --hidden-import yt_dlp --hidden-import curl_cffi \
-            --hidden-import Crypto --hidden-import selenium \
+            --hidden-import Crypto \
             --add-data "gereksinimler.json:." compiled.py
 
       - name: Rename artifacts per OS
@@ -160,25 +159,22 @@ jobs:
           OS="${{ matrix.os }}"
           case "$OS" in
             windows-latest)
-              mv dist/turkanime-gui.exe          dist/turkanime-gui-windows.exe          2>/dev/null || true
               if   [[ -f dist/TurkAnime.exe ]];     then mv dist/TurkAnime.exe          dist/turkanime-cli-windows.exe
               elif [[ -f dist/turkanime-cli.exe ]]; then mv dist/turkanime-cli.exe      dist/turkanime-cli-windows.exe
               fi
-              for f in turkanime-gui-windows.exe turkanime-qt-windows.zip turkanime-cli-windows.exe; do
+              for f in turkanime-qt-windows.zip turkanime-cli-windows.exe; do
                 [[ -f dist/$f ]] && certutil -hashfile dist/$f MD5 > dist/$f.md5 || true
               done
               ;;
             ubuntu-latest)
-              mv dist/turkanime-gui     dist/turkanime-gui-linux     2>/dev/null || true
               mv dist/turkanime-cli     dist/turkanime-cli-linux     2>/dev/null || true
-              for f in turkanime-gui-linux turkanime-qt-linux.zip turkanime-cli-linux; do
+              for f in turkanime-qt-linux.zip turkanime-cli-linux; do
                 [[ -f dist/$f ]] && md5sum dist/$f > dist/$f.md5 || true
               done
               ;;
             macos-latest)
-              mv dist/turkanime-gui     dist/turkanime-gui-macos     2>/dev/null || true
               mv dist/turkanime-cli     dist/turkanime-cli-macos     2>/dev/null || true
-              for f in turkanime-gui-macos turkanime-qt-macos.zip turkanime-cli-macos; do
+              for f in turkanime-qt-macos.zip turkanime-cli-macos; do
                 [[ -f dist/$f ]] && md5 -r dist/$f > dist/$f.md5 || true
               done
               ;;
@@ -198,7 +194,8 @@ jobs:
               "release_date": datetime.datetime.utcnow().isoformat() + "Z",
               "platforms": {
                   os_: {
-                      "gui":    f"{base}/turkanime-gui-{os_}{ext}",
+                      # "gui" anahtarı Faz 9'da kaldırıldı: CustomTkinter exe'si
+                      # artık üretilmiyor. GUI = Qt zip'i.
                       "qt":     f"{base}/turkanime-qt-{os_}.zip",
                       "cli":    f"{base}/turkanime-cli-{os_}{ext}",
                   } for os_, ext in (("windows", ".exe"), ("linux", ""), ("macos", ""))
@@ -214,7 +211,6 @@ jobs:
         with:
           name: turkanime-${{ matrix.os }}
           path: |
-            dist/turkanime-gui-*
             dist/turkanime-qt-*.zip
             dist/turkanime-cli-*
             docs/version.json

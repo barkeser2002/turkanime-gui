@@ -74,7 +74,10 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Artık kullanılmayan eski GUI yığını + gereksiz ağır bağımlılıklar
+    # DİKKAT: burası import listesi DEĞİL, dışlama listesi. Faz 9'da CTk yığını
+    # silindiği için customtkinter/tkinter/selenium/PIL projede artık hiç
+    # geçmiyor; yine de burada bırakılıyorlar ki transitif bir bağımlılık
+    # (ör. bir paketin tkinter'a dokunması) onları sessizce pakete sokmasın.
     excludes=[
         'customtkinter', 'tkinter', 'selenium', 'undetected_chromedriver',
         'matplotlib', 'numpy', 'scipy', 'pandas', 'PIL',

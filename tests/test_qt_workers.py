@@ -69,6 +69,33 @@ def test_ui_bridge_survives_callback_error(qtbot):
     qtbot.waitUntil(lambda: ok == [True], timeout=5000)
 
 
+def test_task_survives_deleted_signals(qtbot):
+    """Pencere ağ isteği sürerken kapatılırsa `_Task` çökmemeli.
+
+    Sinyal nesnesi C++ tarafında yıkıldıktan sonra arka plan işi hâlâ koşuyor
+    olabilir; `emit` orada `RuntimeError: Signal source has been deleted`
+    fırlatır. Korumasız hâlde bu üç kez zincirleniyordu (asıl emit → hata
+    bildirimi → `finished`) ve kapanışta konsola yığınla traceback basıyordu.
+    """
+    from PySide6.QtCore import QObject
+    from turkanime_api.gui.qt.workers import _Task
+
+    sig = WorkerSignals()
+    # Alıcıyı C++ tarafında yık (pencere kapanınca olan bu).
+    QObject.deleteLater(sig)
+    qtbot.wait(50)
+
+    calisti = []
+
+    def job():
+        calisti.append(True)
+        sig.emit_found("veri")          # RuntimeError fırlatacak
+
+    task = _Task(job, (), {}, sig)
+    task.run()                          # istisna DIŞARI sızmamalı
+    assert calisti == [True]
+
+
 def test_long_tasks_use_separate_pool():
     """Uzun işler ayrı havuzda koşmalı.
 

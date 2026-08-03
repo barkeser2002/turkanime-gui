@@ -78,7 +78,7 @@ turkanime-cli
 git clone https://github.com/barkeser2002/turkanime-gui.git
 cd turkanime-indirici
 pip install -r requirements-gui.txt
-python -m turkanime_api.gui.main
+python -m turkanime_api.gui.qt
 ```
 
 ## 🚀 Kullanım

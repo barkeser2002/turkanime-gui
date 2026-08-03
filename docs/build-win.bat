@@ -84,11 +84,13 @@ for /r tmp_ffmpeg %%g in (ffprobe.exe) do (
 
 echo Embedded runtime prepared.
 
-echo Installing python deps and building GUI with PyInstaller...
+echo Installing python deps and building Qt GUI with PyInstaller...
 python -m pip install --upgrade pip || (echo pip upgrade failed & pause & exit /b 1)
 pip install -r requirements-gui.txt || echo warn: requirements-gui install failed
 pip install pyinstaller || echo warn: pyinstaller install failed
-python -m PyInstaller pyinstaller.spec || echo warn: PyInstaller GUI build failed
+:: Faz 9: eski pyinstaller.spec (CustomTkinter) silindi. Tek GUI spec'i bu.
+:: onedir uretir -> dist\turkanime-qt\ (QtWebEngine onefile'da kirilgan).
+python -m PyInstaller turkanime-qt.spec || echo warn: PyInstaller Qt GUI build failed
 
 echo Building CLI (Windows)...
 python -m pip install --upgrade pip
@@ -116,7 +118,7 @@ echo Generating compiled.py
 >>compiled.py echo     main()
 
 echo Running PyInstaller for CLI
-pyinstaller --noconfirm --onefile --console --icon "docs\TurkAnime.ico" --name "TurkAnime" --version-file versionfile.txt --hidden-import yt_dlp --hidden-import curl_cffi --hidden-import Crypto --hidden-import selenium --add-data "gereksinimler.json;." compiled.py || echo warn: PyInstaller CLI build failed
+pyinstaller --noconfirm --onefile --console --icon "docs\TurkAnime.ico" --name "TurkAnime" --version-file versionfile.txt --hidden-import yt_dlp --hidden-import curl_cffi --hidden-import Crypto --add-data "gereksinimler.json;." compiled.py || echo warn: PyInstaller CLI build failed
 
 echo Build complete. Artifacts are in the dist\ directory.
 

@@ -22,10 +22,23 @@ def test_is_available():
     assert qtcb.is_available() is True
 
 
-def test_netscape_format_matches_legacy_selenium_module():
-    """Eski modülle bayt bayt aynı çıktı — drop-in uyumun kanıtı."""
-    from turkanime_api.gui import cookie_browser as legacy
-    assert qtcb._cookies_to_netscape(SAMPLE) == legacy._cookies_to_netscape(SAMPLE)
+# Eski Selenium modülünün (`gui/cookie_browser.py`) SAMPLE için ürettiği çıktı,
+# Faz 9'da o modül silinmeden hemen önce çalıştırılıp donduruldu. Karşılaştırma
+# artık canlı modüle değil bu sabite karşı yapılıyor — biçim güvencesi aynen
+# duruyor, ölü Selenium bağımlılığı olmadan.
+GOLDEN_SATIRLAR = [
+    ".tranimeizle.io\tTRUE\t/\tTRUE\t1900000000\t.AitrWeb.Session\tabc123",
+    "www.tranimeizle.io\tFALSE\t/anime\tFALSE\t0\tage_verified\ttrue",
+]
+
+
+def test_netscape_format_matches_frozen_legacy_output():
+    """Eski Selenium sürümüyle bayt bayt aynı veri satırları."""
+    uretilen = qtcb._cookies_to_netscape(SAMPLE)
+    veri = [s for s in uretilen.splitlines() if s and not s.startswith("#")]
+    assert veri == GOLDEN_SATIRLAR
+    # `tranime.set_session_cookie()` her satırda tam 7 alan bekliyor.
+    assert all(len(s.split("\t")) == 7 for s in veri)
 
 
 def test_netscape_roundtrips_through_set_session_cookie():

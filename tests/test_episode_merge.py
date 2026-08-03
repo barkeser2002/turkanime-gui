@@ -1,8 +1,8 @@
 """Bölüm parser'ı + çok kaynaklı birleştirme (Faz 5).
 
 Bu dosyadaki hiçbir test Qt ya da ağ gerektirmez: `common/episode_parser.py`
-saf Python ve iki arayüzün (CustomTkinter + Qt) ORTAK kaynağı. Buradaki
-beklentiler bozulursa bölüm listesi her iki arayüzde birden bozulur.
+saf Python ve hem CLI hem Qt arayüzünün ORTAK kaynağı. Buradaki beklentiler
+bozulursa bölüm listesi her iki tarafta birden bozulur.
 """
 from __future__ import annotations
 
@@ -182,12 +182,8 @@ def test_kaynak_kayitlari_oldugu_gibi_tasiniyor():
     assert merged[0]["sources"]["TürkAnime"] is entry
 
 
-# ── Eski GUI ile tek kaynak ─────────────────────────────────────────────────
-def test_eski_gui_ayni_fonksiyonlari_kullaniyor():
-    """`common/ui.py` parser'ı kendi kopyalamasın; ikisi aynı nesne olmalı."""
-    pytest.importorskip("customtkinter")
-    from turkanime_api.common import episode_parser, ui
-
-    assert ui.extract_episode_info is episode_parser.extract_episode_info
-    assert ui.normalize_episode_title is episode_parser.normalize_episode_title
-    assert ui.merge_episodes is episode_parser.merge_episodes
+# NOT: Burada eskiden `common/ui.py`'nin parser'ı kendi kopyalamadığını
+# doğrulayan bir test vardı. Faz 9'da `common/ui.py` (CustomTkinter) silindi;
+# artık korunacak bir kopya-şim yok — Qt sayfaları doğrudan
+# `common/episode_parser.py`'dan import ediyor. Test konusuz kaldığı için
+# kaldırıldı.

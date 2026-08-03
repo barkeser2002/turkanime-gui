@@ -93,13 +93,34 @@ class _Task(QRunnable):
         try:
             self._fn(*self._args, **self._kwargs)
         except Exception as exc:  # arka plan hatası UI'yı düşürmemeli
-            if self._signals is not None:
-                self._signals.emit_error(f"{exc}")
-            else:
-                traceback.print_exc()
+            self._yay_hata(exc)
         finally:
-            if self._signals is not None:
-                self._signals.finished.emit()
+            self._yay_bitti()
+
+    # ── Sinyal yayma (alıcı silinmiş olabilir) ──────────────────────────────
+    #
+    # Kullanıcı ağ isteği sürerken pencereyi kapatırsa sinyal nesnesi C++
+    # tarafında yıkılır ama arka plan işi hâlâ koşuyordur; `emit` o noktada
+    # `RuntimeError: Signal source has been deleted` fırlatır. Korumasız hâlde
+    # bu üç kez zincirleme patlıyordu: önce asıl emit, sonra hata bildirimi,
+    # sonra `finally`'deki `finished` — kapanışta konsola yığınla traceback.
+    # Alıcı yoksa yayacak kimse de yok; sessizce geçmek doğru davranış.
+    def _yay_hata(self, exc: Exception) -> None:
+        if self._signals is None:
+            traceback.print_exc()
+            return
+        try:
+            self._signals.emit_error(f"{exc}")
+        except RuntimeError:
+            pass
+
+    def _yay_bitti(self) -> None:
+        if self._signals is None:
+            return
+        try:
+            self._signals.finished.emit()
+        except RuntimeError:
+            pass
 
 
 # Uzun süren işler (indirme, mpv ile oynatma) için AYRI havuz.

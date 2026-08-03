@@ -14,12 +14,13 @@ Kaynaklar bölüm başlıklarını farklı formatlarda veriyor:
 
 Bu modül üç API verir:
     ``parse_episode(text)``       → :class:`EpisodeInfo` (zengin sonuç)
-    ``extract_episode_info(text)``→ ``(sezon, bölüm)`` (eski GUI sözleşmesi)
+    ``extract_episode_info(text)``→ ``(sezon, bölüm)`` (sade sözleşme)
     ``merge_episodes(data)``      → kaynakları tek listede birleştirir
 
-Parser burada TEK yerde durur: `common/ui.py` (CustomTkinter GUI) ve
-`gui/qt/pages/episodes.py` (Qt GUI) aynı fonksiyonları import eder. İki ayrı
-regex seti tutmak, iki arayüzün aynı bölümü farklı numaralandırması demekti.
+Parser burada TEK yerde durur; `gui/qt/pages/episodes.py`, `pages/detail.py` ve
+`qt/progress_dialog.py` aynı fonksiyonları import eder. İki ayrı regex seti
+tutmak, aynı bölümün iki yerde farklı numaralanması demekti — bu modül o
+ayrışmayı kapatmak için çıkarıldı.
 """
 from __future__ import annotations
 
@@ -202,7 +203,7 @@ def sort_episodes(titles: List[str]) -> List[Tuple[str, EpisodeInfo]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Eski GUI sözleşmesi — `common/ui.py` bunları buradan import eder
+# Sade (sezon, bölüm) sözleşmesi — Qt sayfaları bunları buradan import eder
 # ─────────────────────────────────────────────────────────────────────────────
 _FIRST_NUMBER_RE = re.compile(r"(\d+)")
 
