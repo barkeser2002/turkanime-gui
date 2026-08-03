@@ -1,0 +1,173 @@
+"""Qt threading altyapısı — CustomTkinter'daki elle yazılmış desenlerin karşılığı.
+
+Eski GUI'de arka plan işi `threading.Thread(daemon=True)` ile çalışıp sonucu
+`self.after(0, ...)` ile UI thread'ine taşıyordu. Qt'de bu iki mekanizmanın
+karşılığı:
+
+- `WorkerSignals`  : elle yazılmış callback registry yerine gerçek Qt sinyalleri.
+                     Alıcı GUI thread'inde yaşadığı için bağlantı otomatik olarak
+                     *queued* olur; yani ayrıca marshalling gerekmez.
+- `run_bg(fn)`     : `threading.Thread(...).start()` yerine QThreadPool.
+- `UiBridge`       : elden geçirilmemiş `self.after(0, cb)` çağrıları için köprü.
+
+Eski `connect_*` / `emit_*` metod isimleri korunur ki mevcut worker sınıfları
+(DownloadWorker, VideoFindWorker, SearchWorker, EpisodesWorker) minimum
+değişiklikle taşınabilsin.
+"""
+from __future__ import annotations
+
+import traceback
+from typing import Any, Callable
+
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+
+
+class WorkerSignals(QObject):
+    """Arka plan işlerinin UI'ya haber verdiği sinyaller.
+
+    Eski saf-Python `WorkerSignals` sınıfıyla aynı yüzeyi sunar; farkı, altta
+    gerçek Qt sinyallerinin olması ve thread güvenliğinin Qt tarafından
+    sağlanmasıdır.
+    """
+
+    progress = Signal(str)
+    progress_item = Signal(object)
+    error = Signal(str)
+    error_item = Signal(object)
+    success = Signal()
+    found = Signal(object)
+    finished = Signal()
+
+    # ── Geriye dönük uyumlu bağlama yardımcıları ────────────────────────────
+    def connect_progress(self, cb: Callable[[str], None]) -> None:
+        self.progress.connect(cb)
+
+    def connect_progress_item(self, cb: Callable[[Any], None]) -> None:
+        self.progress_item.connect(cb)
+
+    def connect_error(self, cb: Callable[[str], None]) -> None:
+        self.error.connect(cb)
+
+    def connect_error_item(self, cb: Callable[[Any], None]) -> None:
+        self.error_item.connect(cb)
+
+    def connect_success(self, cb: Callable[[], None]) -> None:
+        self.success.connect(cb)
+
+    def connect_found(self, cb: Callable[[Any], None]) -> None:
+        self.found.connect(cb)
+
+    # ── Geriye dönük uyumlu yayma yardımcıları ──────────────────────────────
+    def emit_progress(self, msg: str) -> None:
+        self.progress.emit(msg)
+
+    def emit_progress_item(self, item: Any) -> None:
+        self.progress_item.emit(item)
+
+    def emit_error(self, msg: str) -> None:
+        self.error.emit(str(msg))
+
+    def emit_error_item(self, item: Any) -> None:
+        self.error_item.emit(item)
+
+    def emit_success(self) -> None:
+        self.success.emit()
+
+    def emit_found(self, item: Any) -> None:
+        self.found.emit(item)
+
+
+class _Task(QRunnable):
+    """Bir callable'ı thread havuzunda çalıştıran QRunnable sarmalayıcı."""
+
+    def __init__(self, fn: Callable[..., Any], args: tuple, kwargs: dict,
+                 signals: WorkerSignals | None):
+        super().__init__()
+        self._fn = fn
+        self._args = args
+        self._kwargs = kwargs
+        self._signals = signals
+
+    @Slot()
+    def run(self) -> None:  # pragma: no cover - thread gövdesi
+        try:
+            self._fn(*self._args, **self._kwargs)
+        except Exception as exc:  # arka plan hatası UI'yı düşürmemeli
+            if self._signals is not None:
+                self._signals.emit_error(f"{exc}")
+            else:
+                traceback.print_exc()
+        finally:
+            if self._signals is not None:
+                self._signals.finished.emit()
+
+
+# Uzun süren işler (indirme, mpv ile oynatma) için AYRI havuz.
+#
+# Neden: `video.oynat()` mpv süreci bitene kadar, `video.indir()` de indirme
+# bitene kadar çalıştığı thread'i tutar. Bunlar global havuza konursa 30 bölüm
+# seçip indirmeye basmak havuzu tamamen doldurur; arama/bölüm-listesi görevleri
+# kuyrukta bekler, `_busy` bayrakları hiç sıfırlanmaz ve arayüz kalıcı olarak
+# "aranıyor…" durumunda kilitlenir.
+_long_pool: QThreadPool | None = None
+MAX_CONCURRENT_LONG_TASKS = 3
+
+
+def long_task_pool() -> QThreadPool:
+    """İndirme/oynatma gibi uzun işler için ayrılmış havuz."""
+    global _long_pool
+    if _long_pool is None:
+        _long_pool = QThreadPool()
+        _long_pool.setMaxThreadCount(MAX_CONCURRENT_LONG_TASKS)
+    return _long_pool
+
+
+def run_bg(fn: Callable[..., Any], *args, signals: WorkerSignals | None = None,
+           long_running: bool = False, **kwargs) -> None:
+    """`fn`'i arka planda çalıştır (eski `threading.Thread(daemon=True)` yerine).
+
+    `long_running=True` verilirse iş, kısa UI görevlerini aç bırakmamak için
+    ayrı havuza gönderilir.
+
+    Hata olursa `signals.error` yayılır; sinyal verilmemişse traceback basılır.
+    """
+    pool = long_task_pool() if long_running else QThreadPool.globalInstance()
+    pool.start(_Task(fn, args, kwargs, signals))
+
+
+def shutdown_pools(msecs: int = 3000) -> None:
+    """Kapanışta havuzları boşalt; çalışanların bitmesini kısa süre bekle."""
+    for pool in (QThreadPool.globalInstance(), _long_pool):
+        if pool is None:
+            continue
+        pool.clear()                 # henüz başlamamışları at
+        pool.waitForDone(msecs)      # çalışanlara kısa mühlet
+
+
+class UiBridge(QObject):
+    """`self.after(0, cb)` çağrılarının Qt karşılığı.
+
+    Arka plan thread'inden `bridge.call.emit(fn)` denince `fn`, GUI thread'inde
+    çalıştırılır (queued connection). Böylece eski `after(0, ...)` çağrıları
+    mekanik olarak dönüştürülebilir.
+    """
+
+    call = Signal(object)
+
+    def __init__(self, parent: QObject | None = None):
+        super().__init__(parent)
+        self.call.connect(self._invoke)
+
+    @Slot(object)
+    def _invoke(self, fn: Callable[[], Any]) -> None:
+        try:
+            fn()
+        except Exception:  # UI callback'i uygulamayı düşürmemeli
+            traceback.print_exc()
+
+    def post(self, fn: Callable[[], Any]) -> None:
+        """`after(0, fn)` ile birebir aynı anlam."""
+        self.call.emit(fn)
+
+
+__all__ = ["WorkerSignals", "run_bg", "UiBridge", "long_task_pool", "shutdown_pools"]
