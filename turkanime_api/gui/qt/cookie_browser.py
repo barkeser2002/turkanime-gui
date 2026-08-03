@@ -150,11 +150,16 @@ class CookieBrowserDialog(QDialog):
         # (`tranime_cookie`) bizim tarafımızdan kaydediliyor. Her oturumu temiz
         # başlatmak `cookieAdded`'in daima tetiklenmesini garantiler.
         #
-        # DİKKAT: Profil dialog'a ÇOCUK YAPILMAZ — QObject yıkımı çocukları
-        # eklenme sırasına göre siler, profil view'dan önce silinirse sayfa
-        # sarkan işaretçi tutar (Qt profilin sayfadan uzun yaşamasını şart
-        # koşar) → kapanışta çökme. Referansı Python tarafında tutuyoruz.
-        self._profile = QWebEngineProfile()
+        # YAŞAM SÜRESİ: Qt, profilin sayfadan **uzun yaşamasını** şart koşar.
+        # Profil dialog'a çocuk yapılırsa yıkım sırası profili sayfadan önce
+        # silebiliyor; ebeveynsiz bırakılıp yalnızca Python referansıyla
+        # tutulursa da dialog GC edilince aynı yarış oluşuyor (test paketinde
+        # Windows erişim ihlaliyle çökme olarak yakalandı).
+        # Çözüm: profili QApplication'a bağla — uygulama boyunca yaşar, yani
+        # her zaman sayfadan sonra yıkılır. Ebeveynli `QWebEngineProfile(parent)`
+        # yine **off-the-record**'dur (kalıcı profil ancak isim verilince olur).
+        from PySide6.QtWidgets import QApplication
+        self._profile = QWebEngineProfile(QApplication.instance())
 
         store = self._profile.cookieStore()
         store.cookieAdded.connect(self._on_cookie_added)
