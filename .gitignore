@@ -1,16 +1,33 @@
-geckodriver.log
-log
+# ── Python ──────────────────────────────────────────────────────────────────
+# Not: eskiden her dizin için ayrı __pycache__ satırı vardı; yeni bir paket
+# eklendiğinde (ör. gui/qt/) unutuluyordu. Genel desen bunu kalıcı çözer.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Kullanıcı verisi / yerel durum (asla commit edilmez) ─────────────────────
 ayarlar.json
 gecmis.json
-turkanime_api/cli/__pycache__/*
-turkanime_api/__pycache__/*
-.vscode/*
-build/*
-!dist/version.json
-dist/turkanime*
-turkanime_api/gui/__pycache__/*
-turkanime_api/sources/__pycache__/*
-turkanime_api/common/__pycache__/*
-turkanime_server/
+geckodriver.log
+log
 debug.log
+# mpv script'lerinin yazdığı izleme geçmişi (`~~` mpv'nin config-dizini sözdizimi;
+# uygulama repo dizininden başlatılınca klasör buraya düşüyor)
+~~state/
+
+# ── Derleme çıktıları ───────────────────────────────────────────────────────
+build/*
+dist/turkanime*
+!dist/version.json
+# Qt GUI build çıktıları (turkanime-qt.spec)
+dist-qt/
+build-qt/
+
+# ── Araç / editör ───────────────────────────────────────────────────────────
+.vscode/*
 .claude
+turkanime_server/
+
+# graphify bilgi grafiği (üretilen; `graphify update .` ile yenilenir)
+graphify-out/
