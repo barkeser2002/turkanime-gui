@@ -13,7 +13,7 @@ import os
 import sys
 from typing import Dict
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from . import prefs
 from .anilist import AniListService
+from .discord import DiscordService
 from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
 from .pages.downloads import DownloadManager, DownloadsPage
@@ -29,14 +30,20 @@ from .pages.episodes import EpisodePage
 from .pages.search import SearchPage
 from .pages.settings import SettingsPage
 from .pages.watchlist import WatchlistPage
-from .progress_dialog import ProgressDialog
+from .progress_dialog import ProgressDialog, anime_adi
+from .requirements import RequirementsDialog, RequirementsService
 from .theme import ACCENT, apply_theme
+from .updates import UpdateDialog, UpdateService
 from .workers import UiBridge, run_bg
 
 # Header'daki AniList avatarı (kare, köşeler tema tarafından yuvarlanmıyor).
 AVATAR_BOYUTU = 28
 
 APP_TITLE = "TürkAnime İndirici"
+
+# Açılış denetimleri (güncelleme, gereksinim, Discord) pencere çizildikten sonra:
+# ilk kareyi ağ isteği ve `--version` çağrılarıyla geciktirmenin anlamı yok.
+ACILIS_DENETIM_GECIKMESI = 1500
 
 # Sol menü: (anahtar, etiket). Sonraki fazlarda her biri gerçek sayfayla dolacak.
 NAV_ITEMS = [
@@ -129,14 +136,30 @@ class MainWindow(QMainWindow):
         self.anilist.avatar_ready.connect(self._on_anilist_avatar)
         self.anilist.status_changed.connect(self._on_anilist_status)
 
+        # Çevresel servisler. Sayfalardan ÖNCE kuruluyor: `show_page` Discord'a
+        # haber veriyor ve ayar sayfası bu üçünü düğmelerine bağlıyor.
+        self.updates = UpdateService(self)
+        self.updates.update_available.connect(self._on_update_available)
+        self.updates.check_failed.connect(lambda mesaj: self._status(mesaj))
+        self.requirements = RequirementsService(self)
+        self.requirements.missing_found.connect(self._on_requirements_missing)
+        self.discord = DiscordService(self)
+        self._update_dialog: QWidget | None = None
+        self._req_dialog: QWidget | None = None
+        self._dl_titles: Dict[str, str] = {}
+        self.downloads.added.connect(self._on_download_added)
+        self.downloads.progress.connect(self._on_download_progress)
+
         self._playing = False          # aynı anda tek oynatma denemesi
         # Detay sayfasındaki "← Geri" hangi sekmeden gelindiyse oraya dönmeli.
         self._detail_origin = "home"
+        self._current_page = "home"    # Discord durumu buradan türetiliyor
         self.pages: Dict[str, QWidget] = {}
         self._build_ui()
         self.show_page("home")
         # Jeton diskte duruyor olabilir; kullanıcı adını/avatarı arka planda al.
         self.anilist.baslat()
+        QTimer.singleShot(ACILIS_DENETIM_GECIKMESI, self._acilis_denetimleri)
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
@@ -195,7 +218,9 @@ class MainWindow(QMainWindow):
             page.settings_requested.connect(self._goto_settings)
             return page
         if key == "settings":
-            return SettingsPage(self.anilist)
+            return SettingsPage(self.anilist, discord=self.discord,
+                                updates=self.updates,
+                                requirements=self.requirements)
         return PlaceholderPage(label)
 
     def _goto_settings(self) -> None:
@@ -292,6 +317,8 @@ class MainWindow(QMainWindow):
         page = self.pages.get(key)
         if page is not None:
             self.stack.setCurrentWidget(page)
+            self._current_page = key
+            self.discord.sayfa(key)
 
     def _on_search(self) -> None:
         query = self.txtSearch.text().strip()
@@ -370,6 +397,7 @@ class MainWindow(QMainWindow):
             return
         self._playing = True
         self._status(f"{entry.get('title')} — video aranıyor…")
+        self.discord.izliyor(anime_adi(bolum, ""), entry.get("title") or "")
         # long_running: oynatma, mpv kapanana kadar thread'i tutar.
         run_bg(self._play_blocking, bolum, entry.get("title") or "",
                long_running=True)
@@ -401,6 +429,7 @@ class MainWindow(QMainWindow):
 
     def _on_play_finished(self, bolum, title: str) -> None:
         """Oynatma bitti (GUI thread'i): rozetleri tazele, ilerlemeyi sor."""
+        self.discord.sayfa(self._current_page)
         self._refresh_episode_history()
         self._ask_progress(bolum, title)
 
@@ -466,8 +495,18 @@ class MainWindow(QMainWindow):
         self.show_page("downloads")
         self._sync_nav("downloads")
 
-    def _on_download_finished(self, _task_id: str, ok: bool, mesaj: str) -> None:
+    def _on_download_added(self, task_id: str, title: str) -> None:
+        """İş adlarını sakla: `progress` sinyali yalnızca kimlik taşıyor."""
+        self._dl_titles[task_id] = title
+
+    def _on_download_progress(self, task_id: str, yuzde: int, _detay: str) -> None:
+        self.discord.indiriyor(self._dl_titles.get(task_id, "Bölüm"), yuzde)
+
+    def _on_download_finished(self, task_id: str, ok: bool, mesaj: str) -> None:
         self._status(("İndirme: " if ok else "İndirme başarısız: ") + mesaj)
+        self._dl_titles.pop(task_id, None)
+        if not self.downloads.active_ids():
+            self.discord.sayfa(self._current_page)
         if ok:
             # Bölüm satırındaki ⬇ rozeti geçmişten okunuyor; liste açıksa tazele.
             self._refresh_episode_history()
@@ -477,6 +516,44 @@ class MainWindow(QMainWindow):
         """İndirme klasörü (ayarlardan; bkz. `prefs.indirme_dizini`)."""
         return prefs.indirme_dizini()
 
+    # ── Çevresel servisler ──────────────────────────────────────────────────
+    def _acilis_denetimleri(self) -> None:
+        """Açılıştaki sessiz denetimler (pencere çizildikten sonra)."""
+        self.discord.baslat()
+        self.updates.kontrol_et(sessiz=True)
+        self.requirements.denetle()
+
+    def _on_update_available(self, version_data) -> None:
+        """Yeni sürüm bulundu: diyaloğu aç (GUI thread'i).
+
+        `exec()` yerine `open()`: açılış denetimi kullanıcının önüne iç içe bir
+        olay döngüsü koymamalı, pencereyi kullanmaya devam edebilmeli.
+        """
+        if self._update_dialog is not None:
+            return
+        self._status(f"Yeni sürüm mevcut: {(version_data or {}).get('version', '')}")
+        dialog = UpdateDialog(self.updates, version_data, self)
+        dialog.finished.connect(lambda _=0: self._dialog_kapandi("_update_dialog"))
+        self._update_dialog = dialog
+        dialog.open()
+
+    def _on_requirements_missing(self, eksikler) -> None:
+        """Eksik araç sihirbazını aç."""
+        if self._req_dialog is not None or not eksikler:
+            return
+        self._status("Eksik araçlar bulundu: " + ", ".join(eksikler))
+        dialog = RequirementsDialog(self.requirements, eksikler, self)
+        dialog.finished.connect(lambda _=0: self._dialog_kapandi("_req_dialog"))
+        self._req_dialog = dialog
+        dialog.open()
+
+    def _dialog_kapandi(self, alan: str) -> None:
+        """Diyalog referansını bırak; `deleteLater` olmadan pencere sızar."""
+        dialog = getattr(self, alan, None)
+        setattr(self, alan, None)
+        if dialog is not None:
+            dialog.deleteLater()
+
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt imzası)
         """Kapanışta arka plan işlerini durdur.
 
@@ -485,6 +562,10 @@ class MainWindow(QMainWindow):
         devam eder ve silinmiş C++ nesnesine çarpar (çökme). Bu yüzden kısa bir
         süre bitmelerini bekliyoruz.
         """
+        try:
+            self.discord.durdur()
+        except Exception:
+            pass
         try:
             from .workers import shutdown_pools
             shutdown_pools(3000)
@@ -496,6 +577,13 @@ class MainWindow(QMainWindow):
 def run() -> int:
     """GUI'yi başlat. `turkanime-gui` giriş noktası buraya bağlanacak."""
     prepare_qt_env()
+    # mpv/ffmpeg/aria2c uygulama dizininde ya da gömülü `bin/` altında olabilir;
+    # eski CTk giriş noktası PATH'i böyle hazırlıyordu, Qt'ninki unutmuştu.
+    try:
+        from ...common.requirements import path_hazirla
+        path_hazirla()
+    except Exception:
+        pass
 
     app = QApplication.instance() or QApplication(sys.argv)
     apply_theme(app)

@@ -73,6 +73,25 @@ def _stub_discover_sources(request, monkeypatch):
                             lambda *a, _s=sonuc, **k: _s)
 
 
+@pytest.fixture(autouse=True)
+def _stub_cevresel_servisler(request, monkeypatch):
+    """Açılış denetimlerini (güncelleme, gereksinim, Discord) sustur.
+
+    `MainWindow` açılıştan kısa süre sonra `version.json` ve `gereksinimler.json`
+    adreslerine çıkıyor, ayrıca Discord'a bağlanmayı deniyor. Kural 1 gereği
+    kesiliyor; bu servisleri sınayan testler kendi sahtelerini üstüne yazar.
+    """
+    if "network" in request.keywords:
+        return
+    import turkanime_api.gui.qt.discord as discord_mod
+    from turkanime_api.common import requirements as req_mod
+    from turkanime_api.common import updater as upd_mod
+
+    monkeypatch.setattr(upd_mod, "surum_bilgisi_getir", lambda *a, **k: {})
+    monkeypatch.setattr(req_mod, "eksik_araclar", lambda *a, **k: [])
+    monkeypatch.setattr(discord_mod, "KULLANILABILIR", False)
+
+
 @pytest.fixture
 def main_window(qtbot):
     """Gösterilmiş `MainWindow`.

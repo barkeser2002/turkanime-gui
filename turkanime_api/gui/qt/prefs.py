@@ -38,6 +38,8 @@ class Tercihler:
     dakika_hatirla: bool = True
     izlerken_kaydet: bool = False
     izlendi_ikonu: bool = True
+    discord: bool = True
+    gereksinim_atlandi: bool = False
 
 
 def _dosya():
@@ -74,7 +76,25 @@ def oku() -> Tercihler:
         dakika_hatirla=bool(ayarlar.get("dakika hatirla", True)),
         izlerken_kaydet=bool(ayarlar.get("izlerken kaydet", False)),
         izlendi_ikonu=bool(ayarlar.get("izlendi ikonu", True)),
+        discord=bool(ayarlar.get("discord_rich_presence", True)),
+        gereksinim_atlandi=bool(ayarlar.get("gereksinim_atlandi", False)),
     )
+
+
+def ayar_yaz(**degerler: Any) -> bool:
+    """Ayarları diske yaz (`ayarlar.json`).
+
+    Servisler `Dosyalar`'ı doğrudan tanımasın diye buradan geçiyor: okuma zaten
+    burada toplu, yazma da aynı kapıdan geçmezse anahtar adları iki yerde
+    ayrışır (ör. "discord_rich_presence" vs "discord").
+    """
+    if not degerler:
+        return False
+    try:
+        _dosya().set_ayar(ayar_list=dict(degerler))
+    except Exception:
+        return False
+    return True
 
 
 def indirme_dizini(tercih: Optional[Tercihler] = None) -> str:
@@ -293,7 +313,7 @@ class Gecmis:
                 slug in (self.indirildi.get(seri) or []))
 
 
-__all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "indirme_dizini",
-           "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
+__all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
+           "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

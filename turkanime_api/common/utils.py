@@ -76,6 +76,21 @@ def get_platform() -> str:
 
     return f"{system}_{machine}"
 
+def get_os() -> str:
+    """`version.json` / `gereksinimler.json` anahtarlarındaki sade platform adı.
+
+    `get_platform()` "windows_x64" gibi mimari ekli bir ad döndürüyor; iki JSON
+    dosyası ise yalnızca "windows"/"linux"/"macos" anahtarlarını tanıyor. İkisi
+    karıştırıldığında sözlükten hiçbir zaman kayıt dönmüyor, yani güncelleme ve
+    gereksinim indirmesi sessizce "platform desteklenmiyor"a düşüyordu.
+    """
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    if system in ("windows", "linux"):
+        return system
+    return system or "unknown"
+
 def get_arch() -> str:
     """Mevcut mimariyi tespit et."""
     machine = platform.machine().lower()

@@ -27,15 +27,28 @@ from ..widgets import StatusLabel
 
 
 class SettingsPage(QWidget):
-    """İndirme klasörü, TRAnime cookie'si, bypass ve AniList ayarları."""
+    """İndirme klasörü, TRAnime cookie'si, bypass, AniList ve çevresel servisler."""
 
     def __init__(self, servis: Optional[AniListService] = None,
-                 parent: Optional[QWidget] = None):
+                 parent: Optional[QWidget] = None, discord=None, updates=None,
+                 requirements=None):
         super().__init__(parent)
         self._cookie_worker = None
         self.servis = servis or AniListService(self)
+        # Çevresel servisler ana pencereye ait; sayfa yalnızca düğmelerini
+        # bağlar. Yoksa (tek başına açılan sayfa/test) ilgili bölüm pasif olur.
+        self.discord = discord
+        self.updates = updates
+        self.requirements = requirements
         self._build_ui()
         self.servis.auth_changed.connect(self._on_auth)
+        if updates is not None:
+            updates.up_to_date.connect(
+                lambda: self.lblStatus.ok("Uygulamanız güncel."))
+            updates.check_failed.connect(self.lblStatus.error)
+        if requirements is not None:
+            requirements.all_present.connect(
+                lambda: self.lblStatus.ok("Tüm gereksinimler kurulu."))
         self.reload()
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
@@ -80,6 +93,33 @@ class SettingsPage(QWidget):
         self.chkAria = QCheckBox("aria2c ile indir")
         form.addRow("", self.chkAria)
         layout.addWidget(box)
+
+        # ── Discord / bakım ─────────────────────────────────────────────────
+        dbox = QFrame(); dbox.setObjectName("Panel")
+        dl = QVBoxLayout(dbox)
+        dl.setContentsMargins(16, 14, 16, 14)
+        dl.setSpacing(8)
+
+        self.chkDiscord = QCheckBox("Discord Rich Presence")
+        # Anlık etkili: "Kaydet"i beklemek, kullanıcının kapattığı sonra da
+        # profilinde görünmeye devam etmesi demek olurdu.
+        self.chkDiscord.toggled.connect(self._discord_degisti)
+        dl.addWidget(self.chkDiscord)
+        self.lblDiscord = QLabel()
+        self.lblDiscord.setObjectName("Muted")
+        self.lblDiscord.setWordWrap(True)
+        dl.addWidget(self.lblDiscord)
+
+        drow = QHBoxLayout()
+        self.btnUpdate = QPushButton("Güncellemeleri Denetle")
+        self.btnUpdate.clicked.connect(self._guncelleme_denetle)
+        drow.addWidget(self.btnUpdate)
+        self.btnRequirements = QPushButton("Gereksinimleri Denetle")
+        self.btnRequirements.clicked.connect(self._gereksinim_denetle)
+        drow.addWidget(self.btnRequirements)
+        drow.addStretch(1)
+        dl.addLayout(drow)
+        layout.addWidget(dbox)
 
         # ── TRAnimeİzle cookie ──────────────────────────────────────────────
         cbox = QFrame(); cbox.setObjectName("Panel")
@@ -196,6 +236,7 @@ class SettingsPage(QWidget):
         self.chkAria.setChecked(bool(ayarlar.get("aria2c kullan", False)))
         self.txtFlare.setText(str(ayarlar.get("flaresolverr_url") or ""))
         self._show_cookie_state(str(ayarlar.get("tranime_cookie") or ""))
+        self._reload_discord(bool(ayarlar.get("discord_rich_presence", True)))
         self._reload_anilist()
 
     def save(self) -> None:
@@ -277,6 +318,48 @@ class SettingsPage(QWidget):
             return
         self._show_cookie_state("")
         self.lblStatus.info("Çerez temizlendi.")
+
+    # ── Discord / bakım ─────────────────────────────────────────────────────
+    def _reload_discord(self, acik: bool) -> None:
+        """Anahtarı ayardan doldur (sinyali tetiklemeden) ve durumu yaz."""
+        from ..discord import kullanilabilir
+        self.chkDiscord.blockSignals(True)
+        self.chkDiscord.setChecked(acik)
+        self.chkDiscord.blockSignals(False)
+        if not kullanilabilir():
+            # Anahtar yine de kullanılabilir kalır: kullanıcı pypresence'ı sonra
+            # kurabilir, tercihi şimdiden kaydedebilsin.
+            self.lblDiscord.setText(
+                "pypresence kurulu değil — özellik kapalı (pip install pypresence).")
+        elif self.discord is not None and self.discord.bagli:
+            self.lblDiscord.setText("Discord'a bağlı ✓")
+        else:
+            self.lblDiscord.setText(
+                "Discord açık değilse bağlantı kurulmaz; uygulama etkilenmez.")
+
+    def _discord_degisti(self, acik: bool) -> None:
+        if not prefs.ayar_yaz(discord_rich_presence=bool(acik)):
+            self.lblStatus.error("Discord ayarı kaydedilemedi.")
+            return
+        if self.discord is not None:
+            self.discord.ayar_uygula()      # anında bağlan/kop
+        self._reload_discord(bool(acik))
+        self.lblStatus.info("Discord Rich Presence "
+                            + ("açıldı." if acik else "kapatıldı."))
+
+    def _guncelleme_denetle(self) -> None:
+        if self.updates is None:
+            return
+        self.lblStatus.info("Güncellemeler denetleniyor…")
+        self.updates.kontrol_et(sessiz=False)
+
+    def _gereksinim_denetle(self) -> None:
+        """Elle denetim: "Atla" tercihini de geri alır."""
+        if self.requirements is None:
+            return
+        self.requirements.atlandi_yaz(False)
+        self.lblStatus.info("Gereksinimler denetleniyor…")
+        self.requirements.denetle(kullanici_istegi=True)
 
     # ── AniList ─────────────────────────────────────────────────────────────
     def _reload_anilist(self) -> None:

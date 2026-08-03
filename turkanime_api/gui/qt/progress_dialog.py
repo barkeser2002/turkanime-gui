@@ -19,8 +19,11 @@ from . import prefs
 from ...common.episode_parser import extract_episode_info
 
 
-def _anime_adi(bolum, yedek: str) -> str:
-    """Seri adı — `Bolum.title` gibi ağa çıkabilecek alanlara dokunmadan."""
+def anime_adi(bolum, yedek: str = "") -> str:
+    """Seri adı — `Bolum.title` gibi ağa çıkabilecek alanlara dokunmadan.
+
+    Diyalog dışında da kullanılıyor (Discord durumu), bu yüzden genel.
+    """
     anime = getattr(bolum, "anime", None)
     for alan in ("_title", "title", "slug"):
         deger = getattr(anime, alan, None)
@@ -55,7 +58,7 @@ class ProgressDialog(QDialog):
 
         # Okunabilir seri adı öznitelikte: AniList araması slug ("naruto-test")
         # yerine bununla yapılır, aksi hâlde eşleşme çok daha zayıf olur.
-        self.anime_adi = _anime_adi(bolum, self.seri)
+        self.anime_adi = anime_adi(bolum, self.seri)
 
         info = QLabel(f"{self.anime_adi}\n{bolum_adi}")
         info.setObjectName("Muted")
@@ -100,4 +103,4 @@ class ProgressDialog(QDialog):
         self.accept()
 
 
-__all__ = ["ProgressDialog"]
+__all__ = ["ProgressDialog", "anime_adi"]
