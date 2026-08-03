@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
 from .pages.downloads import DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
@@ -117,6 +118,8 @@ class MainWindow(QMainWindow):
         )
 
         self._playing = False          # aynı anda tek oynatma denemesi
+        # Detay sayfasındaki "← Geri" hangi sekmeden gelindiyse oraya dönmeli.
+        self._detail_origin = "home"
         self.pages: Dict[str, QWidget] = {}
         self._build_ui()
         self.show_page("home")
@@ -143,7 +146,13 @@ class MainWindow(QMainWindow):
             self.pages[key] = page
             self.stack.addWidget(page)
 
-        # Bölüm listesi menüde yer almaz; arama sonucundan açılır.
+        # Detay ve bölüm listesi menüde yer almaz; keşif/arama sonucundan açılır.
+        detail = DetailPage()
+        detail.episodes_ready.connect(self._on_detail_episodes)
+        detail.back_requested.connect(self._on_detail_back)
+        self.pages["detail"] = detail
+        self.stack.addWidget(detail)
+
         episodes = EpisodePage()
         episodes.play_requested.connect(self._on_play)
         episodes.download_requested.connect(self._on_download)
@@ -263,25 +272,52 @@ class MainWindow(QMainWindow):
         if btn is not None and not btn.isChecked():
             btn.setChecked(True)
 
-    def _on_discover_selected(self, title: str) -> None:
-        """Keşif kartına tıklandı.
+    def _on_discover_selected(self, item) -> None:
+        """Keşif kartına tıklandı: kaydın tamamıyla detay sayfasını aç.
 
-        MyAnimeList/AniList kaydının TürkAnime kaynaklarındaki karşılığı belli
-        değil (detay sayfası henüz yok), bu yüzden başlığı arama kutusuna yazıp
-        normal arama akışına devrediyoruz.
+        Kaynak/slug verilmiyor: MyAnimeList/AniList kimliğinin TürkAnime
+        kaynaklarındaki karşılığı bilinmiyor. Kullanıcı detay sayfasında
+        "Bölümleri Getir"e basınca eşleştirme diyaloğu devreye girer.
         """
-        title = (title or "").strip()
-        if not title:
-            return
-        self.txtSearch.setText(title)
-        self._on_search()
+        page = self.pages.get("detail")
+        if isinstance(item, dict) and item and isinstance(page, DetailPage):
+            self._open_detail(lambda: page.show_anime(item))
 
     def _on_anime_selected(self, source: str, slug: str, title: str) -> None:
-        """Arama sonucundan anime seçildi: bölüm listesini aç."""
+        """Arama sonucundan anime seçildi: kaynağı bağlı detay sayfasını aç."""
+        page = self.pages.get("detail")
+        if isinstance(page, DetailPage):
+            self._open_detail(lambda: page.show_match(source, slug, title))
+
+    def _open_detail(self, populate) -> None:
+        """Detay sayfasına geç ve dönüş noktasını hatırla.
+
+        Detaya hem keşiften hem aramadan gelinebiliyor; sabit bir "Geri" hedefi
+        (ör. ana sayfa) kullanıcıyı aramasından koparırdı.
+        """
+        current = self.stack.currentWidget()
+        for key, page in self.pages.items():
+            if page is current and key not in ("detail", "episodes"):
+                self._detail_origin = key
+                break
+        self.show_page("detail")
+        populate()
+
+    def _on_detail_back(self) -> None:
+        self.show_page(self._detail_origin)
+        self._sync_nav(self._detail_origin)
+
+    def _on_detail_episodes(self, source: str, slug: str, title: str,
+                            episodes) -> None:
+        """Detay sayfası bölümleri çekti: listeyi olduğu gibi devral.
+
+        `EpisodePage.load` burada `episodes` ile çağrılır; parametresiz çağrı
+        aynı listeyi ikinci kez ağdan indirirdi.
+        """
         page = self.pages.get("episodes")
         if isinstance(page, EpisodePage):
             self.show_page("episodes")
-            page.load(source, slug, title)
+            page.load(source, slug, title, episodes=episodes)
 
     # ── Oynatma / indirme ───────────────────────────────────────────────────
     def _status(self, msg: str, timeout: int = 6000) -> None:

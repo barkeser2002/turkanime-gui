@@ -139,11 +139,18 @@ class EpisodePage(QWidget):
         self.lblStatus.info("Arama sonucundan bir anime seçin.")
 
     # ── Yükleme ─────────────────────────────────────────────────────────────
-    def load(self, source: str, slug: str, title: str) -> None:
-        if self._busy:
+    def load(self, source: str, slug: str, title: str,
+             episodes: Optional[List[Dict[str, Any]]] = None) -> None:
+        """Bölüm listesini göster.
+
+        `episodes` verilirse ağa ÇIKILMAZ: detay sayfası listeyi zaten çekmiş
+        olur ve ikinci çağrı hem gereksiz beklemedir hem de bazı kaynaklarda
+        (TRAnimeİzle, Tranimaci) yeniden bot-koruma turu tetikler.
+        """
+        if episodes is None and self._busy:
             self.lblStatus.info("Önceki istek sürüyor, lütfen bekleyin…")
             return
-        self._busy = True
+        self._busy = episodes is None
         # Yeni anime: seçim durumunu ve "Tümünü Seç" etiketini sıfırla, aksi
         # hâlde buton "Seçimi Kaldır" derken hiçbir satır seçili olmaz.
         self.btnAll.setChecked(False)
@@ -151,8 +158,11 @@ class EpisodePage(QWidget):
         self._context = (source, slug, title)
         self.lblTitle.setText(f"{title} — {source}")
         self._clear_rows()
-        self.lblStatus.info("Bölümler getiriliyor…")
         self.btnMore.hide()
+        if episodes is not None:
+            self._on_episodes(episodes)
+            return
+        self.lblStatus.info("Bölümler getiriliyor…")
         run_bg(self._do_load, source, slug, title, signals=self.signals)
 
     def _do_load(self, source: str, slug: str, title: str) -> None:

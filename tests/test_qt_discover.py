@@ -210,15 +210,15 @@ def test_score_badge_uses_score_color(qtbot, fake_sources):
     assert none.lblSource.text() == "Puansız"
 
 
-def test_card_click_bridges_to_search(qtbot, main_window, fake_sources, monkeypatch):
-    """Detay sayfası yokken kart tıklaması aramaya köprülenmeli."""
+def test_card_click_opens_detail_page(qtbot, main_window, fake_sources):
+    """Kart tıklaması detay sayfasını açar ve TÜM kaydı taşır.
+
+    Faz 4 öncesi yalnızca başlık taşınıp aramaya köprüleniyordu; artık özet ve
+    türlerin yeniden çekilmesine gerek kalmasın diye sözlüğün tamamı gider.
+    """
     from PySide6.QtCore import Qt
 
     fake_sources(trending=[make_item("Cowboy Bebop")])
-
-    searched: list = []
-    monkeypatch.setattr(main_window.pages["search"], "start_search",
-                        lambda q: searched.append(q))
 
     page = main_window.pages["trending"]
     main_window.show_page("trending")
@@ -227,9 +227,10 @@ def test_card_click_bridges_to_search(qtbot, main_window, fake_sources, monkeypa
 
     qtbot.mouseClick(page.cards()[0], Qt.MouseButton.LeftButton)
 
-    assert searched == ["Cowboy Bebop"]
-    assert main_window.txtSearch.text() == "Cowboy Bebop"
-    assert main_window.stack.currentWidget() is main_window.pages["search"]
+    detail = main_window.pages["detail"]
+    assert main_window.stack.currentWidget() is detail
+    assert detail.lblTitle.text() == "Cowboy Bebop"
+    assert [b.text() for b in detail.genre_badges] == ["Action"]
 
 
 def test_main_window_wires_all_discover_modes(main_window):

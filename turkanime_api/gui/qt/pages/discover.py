@@ -117,8 +117,10 @@ def fetch_discover(mode: str, limit: int = LIST_LIMIT) -> List[Dict[str, Any]]:
 class DiscoverPage(QWidget):
     """Trend / sezon listelerini kart ızgarasında gösteren keşif sayfası."""
 
-    # Seçilen animenin başlığı — detay sayfası gelene kadar aramaya köprülenir.
-    anime_selected = Signal(str)
+    # Seçilen animenin TAM kaydı (başlık değil): detay sayfası özet, tür,
+    # stüdyo ve kapağı bu sözlükten okur; yalnızca başlık taşınsaydı hepsi
+    # yeniden ağdan çekilmek zorunda kalırdı.
+    anime_selected = Signal(object)
     # (AnimeCard, görsel baytları) — arka plandan UI thread'ine
     thumb_ready = Signal(object, object)
 
@@ -244,7 +246,7 @@ class DiscoverPage(QWidget):
         # olmadığı için oraya puanı yazıyoruz.
         badge = f"★ {score / 10:.1f}" if score else "Puansız"
 
-        card = AnimeCard(title, badge, payload=title, image_url=cover_url(item))
+        card = AnimeCard(title, badge, payload=item, image_url=cover_url(item))
         color = score_color(score / 100.0) if score else TEXT_MUTED
         card.lblSource.setStyleSheet(
             f"color: {color}; font-size: 11px; font-weight: 600;")
@@ -266,8 +268,8 @@ class DiscoverPage(QWidget):
         self.lblStatus.error(f"Yüklenemedi: {message}")
 
     def _on_card_clicked(self, payload) -> None:
-        if payload:
-            self.anime_selected.emit(str(payload))
+        if isinstance(payload, dict) and payload:
+            self.anime_selected.emit(payload)
 
     def cards(self) -> List[AnimeCard]:
         """Ekrandaki kartlar (test ve köprüleme için)."""

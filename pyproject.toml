@@ -64,7 +64,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # adapters-test-all.py bir pytest paketi değil, elle çalıştırılan ağ betiği.
-addopts = "-q --ignore=tests/adapters-test-all.py"
+# NOT: buraya `-q` KOYMA — komut satırında da `-q` verilince `-qq` olur ve
+# pytest özet satırını ("N passed") hiç basmaz; doğrulama körleşir.
+addopts = "--ignore=tests/adapters-test-all.py"
 markers = [
     "network: gerçek ağ erişimi gerektirir (varsayılan olarak atlanır; --network ile çalıştır)",
 ]
