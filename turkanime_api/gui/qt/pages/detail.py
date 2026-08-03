@@ -24,11 +24,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QTextBrowser, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QScrollArea, QTextBrowser, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
+from ....common.episode_parser import merge_episodes
 from ..sources_bridge import (
     METADATA_ONLY, UnsupportedSource, fetch_episodes, supported_sources,
 )
@@ -46,6 +47,10 @@ MAX_BADGES = 8
 # Eşleşme diyaloğunda kaynak başına gösterilecek aday sayısı. Amaç doğru kaydı
 # bulmak, tam listeyi taramak değil.
 MATCH_LIMIT_PER_SOURCE = 8
+
+# "Tüm kaynaklar" otomatik eşleştirmesinde kaynak başına aday sayısı. Kullanıcı
+# seçmiyor, en iyi adayı biz alıyoruz; fazlasını çekmek yalnızca bekleme demek.
+AUTO_MATCH_LIMIT = 1
 
 # AniList/Jikan büyük harfli sabitler döndürür; kullanıcıya Türkçe gösteriyoruz.
 SEASON_LABELS = {"WINTER": "Kış", "SPRING": "İlkbahar", "SUMMER": "Yaz",
@@ -135,6 +140,21 @@ def meta_line(item: Dict[str, Any]) -> str:
     if status:
         parts.append(status)
     return " • ".join(parts)
+
+
+def episode_total(episodes: Any) -> int:
+    """Toplam bölüm sayısı — yük düz liste de olabilir, `{kaynak: liste}` de."""
+    if isinstance(episodes, dict):
+        return sum(len(items or []) for items in episodes.values())
+    return len(episodes or [])
+
+
+def first_slug(items: Any) -> str:
+    """Arama sonucundan ilk geçerli slug (otomatik eşleştirme için)."""
+    for item in (items or []):
+        if isinstance(item, dict) and item.get("slug"):
+            return str(item["slug"])
+    return ""
 
 
 def save_match(source: str, slug: str, title: str) -> bool:
@@ -294,11 +314,16 @@ class AnimeMatchDialog(QDialog):
 class DetailPage(QWidget):
     """Tek bir animenin künyesi + bölüm listesine geçiş noktası."""
 
-    # (kaynak, slug, başlık, bölümler) — liste zaten çekildi, tekrar çekilmesin
+    # (kaynak, slug, başlık, bölümler) — liste zaten çekildi, tekrar çekilmesin.
+    # Son alan tek kaynakta düz liste, çok kaynakta `{kaynak: liste}` sözlüğü.
     episodes_ready = Signal(str, str, str, object)
     back_requested = Signal()
     # (request_id, görsel baytları) — arka plandan UI thread'ine
     cover_ready = Signal(int, object)
+    # (request_id, {kaynak: slug}, tüm_kaynaklar_mı, istenen_kaynak)
+    sources_resolved = Signal(object)
+    # (request_id, kaynak, bölümler, hata) — kaynak başına tek iş
+    source_loaded = Signal(object)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -306,6 +331,13 @@ class DetailPage(QWidget):
         self._slug = ""
         self._match_title = ""
         self._busy = False
+        # Kaynak → slug. Slug'lar kaynağa özgü ("cowboy-bebop" vs "17"), bu
+        # yüzden çok kaynaklı yükleme tek bir slug'la yapılamaz.
+        self._bindings: Dict[str, str] = {}
+        # Süren çok kaynaklı yüklemenin toplama durumu (bkz. `_dispatch`)
+        self._pending: Dict[str, Any] = {}
+        # Bu istek için otomatik eşleştirme yapıldı mı (aynı aramayı tekrarlama)
+        self._resolved_for = -1
         # Yarış koruması: her yeni anime bu sayacı artırır, arka plandan dönen
         # her sonuç kendi kimliğiyle gelir ve eskiyse sessizce atılır.
         self._request_id = 0
@@ -314,6 +346,8 @@ class DetailPage(QWidget):
         self.signals.connect_found(self._on_episodes)
         self.signals.connect_error_item(self._on_failed)
         self.cover_ready.connect(self._apply_cover)
+        self.sources_resolved.connect(self._on_sources_resolved)
+        self.source_loaded.connect(self._on_source_loaded)
 
         self._build_ui()
 
@@ -406,6 +440,14 @@ class DetailPage(QWidget):
         self.cmbSource.currentTextChanged.connect(self._on_source_changed)
         actions.addWidget(self.cmbSource)
 
+        # Varsayılan KAPALI: tek kaynak, tek istek. İşaretlenince bütün
+        # kaynaklarda otomatik eşleşme aranır ve bölümler tek listede birleşir —
+        # bu, kaynak sayısı kadar ağ isteği demek, kullanıcı istemeden olmamalı.
+        self.chkAllSources = QCheckBox("Tüm kaynaklar")
+        self.chkAllSources.setToolTip(
+            "Bölümleri desteklenen bütün kaynaklardan çekip tek listede birleştir.")
+        actions.addWidget(self.chkAllSources)
+
         self.btnEpisodes = QPushButton("Bölümleri Getir")
         self.btnEpisodes.setObjectName("Primary")
         self.btnEpisodes.clicked.connect(self.load_episodes)
@@ -475,10 +517,15 @@ class DetailPage(QWidget):
         """Keşif kartından gelen tam metadata kaydını göster."""
         self._request_id += 1
         self._busy = False           # önceki isteğin sonucu artık geçersiz
+        self._pending = {}           # yarıda kalan toplama durumu da geçersiz
+        self._resolved_for = -1
         self.btnEpisodes.setEnabled(True)
         self._anime = dict(anime or {})
         self._match_title = anime_title(self._anime)
         self._slug = str(slug or "")
+        # Bağlantılar animeye özgü: yeni animede eskisinin slug'ları kalırsa
+        # başka bir animenin bölümleri listeye karışır.
+        self._bindings = {source: self._slug} if (source and self._slug) else {}
         if source:
             self._select_source(source)
         self._render()
@@ -506,6 +553,10 @@ class DetailPage(QWidget):
         """
         self._slug = str(slug or "")
         self._match_title = title or self._match_title
+        # Diğer kaynakların bağlantısı SİLİNMEZ: kullanıcı ikinci bir kaynağı
+        # elle eşleştirdiyse "Tüm kaynaklar" o eşleşmeyi de kullanabilmeli.
+        if self._slug:
+            self._bindings[source] = self._slug
         self._select_source(source)
         self.lblStatus.ok(f"{source} → {title} eşleştirildi.")
         save_match(source, self._slug, self._match_title)
@@ -617,40 +668,148 @@ class DetailPage(QWidget):
 
     # ── Bölüm yükleme ───────────────────────────────────────────────────────
     def load_episodes(self) -> None:
-        """Seçili kaynaktan bölümleri arka planda getir."""
-        if not self._slug:
+        """Seçili kaynak(lar)dan bölümleri arka planda getir."""
+        if not self._bindings:
             # Keşiften gelen kayıtta kaynak/slug yok (MyAnimeList/AniList kimliği
             # TürkAnime kaynaklarına karşılık gelmiyor). Kullanıcıyı çıkmaza
             # sokmak yerine eşleştirme diyaloğunu başlık dolu açıyoruz.
             self.lblStatus.info("Bu anime bir kaynağa bağlı değil, eşleştirin.")
             self.open_match_dialog()
-            if not self._slug:
+            if not self._bindings:
                 return
-        source = self.current_source()
         if self._busy:
             self.lblStatus.info("Önceki istek sürüyor, lütfen bekleyin…")
             return
+
+        rid = self._request_id
+        source = self.current_source()
+        want_all = self.chkAllSources.isChecked()
+        # Kombo başka kaynağa çevrildiyse o kaynağın slug'ı bilinmiyor olabilir;
+        # elimizdeki slug BAŞKA kaynağa ait, onunla istek atmak yanlış animenin
+        # bölümlerini getirir. Bu yüzden önce eşleşme aranır.
+        need_resolve = (want_all and self._resolved_for != rid) or (
+            not want_all and source not in self._bindings
+            and source not in METADATA_ONLY)
+
         self._busy = True
         self.btnEpisodes.setEnabled(False)
-        self.lblStatus.info(f"{source} bölümleri getiriliyor…")
-        run_bg(self._do_load, self._request_id, source, self._slug,
-               self._match_title)
+        if need_resolve:
+            self.lblStatus.info("Kaynaklarda eşleşme aranıyor…")
+            run_bg(self._do_resolve, rid, self._match_title,
+                   dict(self._bindings), want_all, source)
+            return
+        self._dispatch(rid, self._targets(want_all, source))
+
+    def _targets(self, want_all: bool, source: str) -> Dict[str, str]:
+        """Bu yüklemede hangi kaynak hangi slug ile çekilecek."""
+        if want_all:
+            return dict(self._bindings)
+        slug = self._bindings.get(source, "")
+        return {source: slug} if slug else {}
+
+    def _dispatch(self, rid: int, targets: Dict[str, str]) -> None:
+        """Kaynak başına bir arka plan işi başlat ve toplama durumunu kur."""
+        if not targets:
+            self._on_failed((rid, "Bu anime için kaynak eşleşmesi bulunamadı."))
+            return
+        primary = (self.current_source() if self.current_source() in targets
+                   else next(iter(targets)))
+        self._pending = {
+            "rid": rid, "expected": len(targets), "primary": primary,
+            "slug": targets[primary], "title": self._match_title,
+            "results": {}, "errors": {},
+        }
+        if len(targets) > 1:
+            self.lblStatus.info(
+                f"{len(targets)} kaynaktan bölümler getiriliyor…")
+        else:
+            self.lblStatus.info(f"{primary} bölümleri getiriliyor…")
+        # Kaynak başına AYRI iş: biri kilitlenirse ya da patlarsa diğerleri
+        # kendi hızında gelmeye devam eder.
+        for source, slug in targets.items():
+            run_bg(self._do_load, rid, source, slug, self._match_title)
+
+    def _do_resolve(self, rid: int, title: str, known: Dict[str, str],
+                    want_all: bool, wanted: str) -> None:
+        """Arka plan: kaynak başına en iyi adayı bulup slug'a bağla."""
+        from ....common.adapters import SearchEngine
+
+        try:
+            results = SearchEngine().search_all_sources_rich(
+                title, limit_per_source=AUTO_MATCH_LIMIT)
+        except Exception as exc:
+            self.signals.emit_error_item((rid, f"Kaynak araması başarısız: {exc}"))
+            return
+
+        bindings = dict(known)
+        supported = set(supported_sources())
+        for source, items in (results or {}).items():
+            if source in bindings or source in METADATA_ONLY:
+                continue
+            if source not in supported:
+                continue                      # aramada var ama oynatması yok
+            if not want_all and source != wanted:
+                continue
+            slug = first_slug(items)
+            if slug:
+                bindings[source] = slug
+        self.sources_resolved.emit((rid, bindings, want_all, wanted))
+
+    def _on_sources_resolved(self, payload) -> None:
+        """GUI thread'i: çözülen bağlantıları sakla ve yüklemeyi başlat."""
+        try:
+            rid, bindings, want_all, wanted = payload
+        except (TypeError, ValueError):
+            return
+        if rid != self._request_id:
+            return
+        self._bindings.update(bindings or {})
+        if want_all:
+            self._resolved_for = rid       # aynı anime için bir daha arama
+        self._dispatch(rid, self._targets(want_all, wanted))
 
     def _do_load(self, rid: int, source: str, slug: str, title: str) -> None:
         """Arka plan thread'i — sonucu KENDİ istek kimliğiyle geri yollar.
 
         Hatalar burada yakalanır: `run_bg`'nin genel hata sinyali kimlik
         taşımaz, yani eski bir isteğin hatası yeni animenin ekranına düşerdi.
+        Kaynak hatası da yutulmaz, kaynağın adıyla birlikte rapor edilir.
         """
         try:
             episodes = fetch_episodes(source, slug, title)
         except UnsupportedSource as exc:
-            self.signals.emit_error_item((rid, str(exc)))
+            self.source_loaded.emit((rid, source, [], str(exc)))
             return
         except Exception as exc:
-            self.signals.emit_error_item((rid, f"Bölümler alınamadı: {exc}"))
+            self.source_loaded.emit((rid, source, [], f"Bölümler alınamadı: {exc}"))
             return
-        self.signals.emit_found((rid, source, slug, title, episodes))
+        self.source_loaded.emit((rid, source, list(episodes or []), ""))
+
+    def _on_source_loaded(self, payload) -> None:
+        """GUI thread'i: kaynak sonuçlarını topla, hepsi gelince devret."""
+        try:
+            rid, source, episodes, error = payload
+        except (TypeError, ValueError):
+            return
+        state = self._pending
+        if rid != self._request_id or state.get("rid") != rid:
+            return               # geç dönen eski istek — ekranı EZMESİN
+
+        state["results"][source] = list(episodes or [])
+        if error:
+            state["errors"][source] = error
+        if len(state["results"]) < state["expected"]:
+            return               # diğer kaynaklar hâlâ yolda
+
+        self._pending = {}
+        results, errors = state["results"], state["errors"]
+        if not episode_total(results) and errors:
+            # Hiç bölüm yok ve nedeni belli: kullanıcıya "bulunamadı" değil,
+            # kaynağın kendi hata mesajı gösterilmeli.
+            self._on_failed((rid, " • ".join(errors.values())))
+            return
+        self._on_episodes((rid, state["primary"], state["slug"], state["title"],
+                           results))
 
     def _on_episodes(self, payload) -> None:
         """GUI thread'i: sonuç güncel isteğe aitse bölüm sayfasına devret."""
@@ -663,10 +822,21 @@ class DetailPage(QWidget):
         self._busy = False
         self.btnEpisodes.setEnabled(True)
 
-        if not episodes:
+        total = episode_total(episodes)
+        if not total:
             self.lblStatus.error(f"{source} kaynağında bölüm bulunamadı.")
             return
-        self.lblStatus.ok(f"{len(episodes)} bölüm bulundu.")
+
+        if isinstance(episodes, dict) and len(episodes) > 1:
+            loaded = [s for s, items in episodes.items() if items]
+            failed = [s for s, items in episodes.items() if not items]
+            message = (f"{len(merge_episodes(episodes))} bölüm • "
+                       f"{len(episodes)} kaynaktan {len(loaded)} tanesi yüklendi.")
+            if failed:
+                message += f" Yüklenemeyen: {', '.join(failed)}."
+            self.lblStatus.ok(message)
+        else:
+            self.lblStatus.ok(f"{total} bölüm bulundu.")
         self.episodes_ready.emit(source, slug, title, episodes)
 
     def _on_failed(self, payload) -> None:
@@ -688,4 +858,5 @@ class DetailPage(QWidget):
 
 
 __all__ = ["DetailPage", "AnimeMatchDialog", "clean_html", "studio_names",
-           "genre_names", "meta_line", "save_match", "MATCH_LIMIT_PER_SOURCE"]
+           "genre_names", "meta_line", "save_match", "episode_total",
+           "first_slug", "MATCH_LIMIT_PER_SOURCE", "AUTO_MATCH_LIMIT"]

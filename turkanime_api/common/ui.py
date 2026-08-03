@@ -5,140 +5,15 @@ Optimize edilmiş bölüm listesi - tek liste, kaynak butonları ile.
 
 import customtkinter as ctk
 from typing import List, Dict, Any, Callable, Optional
-import re
 from .adapters import AniListAdapter, TurkAnimeAdapter, AnimeciXAdapter, AnizleAdapter
-
-
-def extract_episode_info(title: str) -> tuple[int, int]:
-    """Bölüm başlığından sezon ve bölüm numarasını çıkar.
-    
-    Desteklenen formatlar:
-    - "Anime İsmi 1. Bölüm" → (1, 1)  # sezon 1, bölüm 1
-    - "1. Bölüm" → (1, 1)
-    - "Bölüm 1" → (1, 1)
-    - "Episode 1" → (1, 1)
-    - "EP 1" → (1, 1)
-    - "01" → (1, 1)
-    - "S01E05" → (1, 5)  # sezon 1, bölüm 5
-    - "S02E03" → (2, 3)  # sezon 2, bölüm 3
-    - "1x05" → (1, 5)
-    - "2x03" → (2, 3)
-    - "Sezon 2 Bölüm 5" → (2, 5)
-    - "2. Sezon 5. Bölüm" → (2, 5)
-    
-    Returns:
-        tuple[int, int]: (sezon_numarası, bölüm_numarası)
-    """
-    if not title:
-        return (1, 0)
-    
-    # Önce temizle
-    title = title.strip()
-    
-    # S01E05 formatı (sezon ve bölüm)
-    match = re.search(r'[Ss](\d+)[Ee](\d+)', title)
-    if match:
-        return (int(match.group(1)), int(match.group(2)))
-    
-    # 1x05 formatı
-    match = re.search(r'(\d+)[xX](\d+)', title)
-    if match:
-        return (int(match.group(1)), int(match.group(2)))
-    
-    # "Sezon X Bölüm Y" veya "X. Sezon Y. Bölüm" formatı
-    match = re.search(r'[Ss]ezon\s*(\d+).*?[Bb][öoÖO]l[üuÜU]m\s*(\d+)', title)
-    if match:
-        return (int(match.group(1)), int(match.group(2)))
-    
-    match = re.search(r'(\d+)\s*\.\s*[Ss]ezon.*?(\d+)\s*\.\s*[Bb][öoÖO]l[üuÜU]m', title)
-    if match:
-        return (int(match.group(1)), int(match.group(2)))
-    
-    # "X. Bölüm" formatı (en yaygın Türkçe format) - sezon 1 varsayılan
-    match = re.search(r'(\d+)\s*\.\s*[Bb][öoÖO]l[üuÜU]m', title)
-    if match:
-        return (1, int(match.group(1)))
-    
-    # "Bölüm X" formatı
-    match = re.search(r'[Bb][öoÖO]l[üuÜU]m\s*[:\-]?\s*(\d+)', title)
-    if match:
-        return (1, int(match.group(1)))
-    
-    # "Episode X" veya "EP X" formatı
-    match = re.search(r'[Ee]pisode\s*[:\-]?\s*(\d+)', title)
-    if match:
-        return (1, int(match.group(1)))
-    
-    match = re.search(r'[Ee][Pp]\s*[:\-]?\s*(\d+)', title)
-    if match:
-        return (1, int(match.group(1)))
-    
-    # Sadece sayı (örn: "01", "1", "001")
-    match = re.search(r'^(\d+)$', title)
-    if match:
-        return (1, int(match.group(1)))
-    
-    # Son çare: title'daki ilk sayıyı al
-    match = re.search(r'(\d+)', title)
-    if match:
-        return (1, int(match.group(1)))
-    
-    return (1, 0)
-
-
-def extract_episode_number(title: str) -> int:
-    """Bölüm başlığından bölüm numarasını çıkar (geriye uyumluluk).
-    
-    Desteklenen formatlar:
-    - "Anime İsmi 1. Bölüm" → 1
-    - "1. Bölüm" → 1
-    - "Bölüm 1" → 1
-    - "Episode 1" → 1
-    - "EP 1" → 1
-    - "01" → 1
-    - "S01E05" → 5
-    - "1x05" → 5
-    """
-    _, episode = extract_episode_info(title)
-    return episode
-
-
-def normalize_episode_title(title: str, episode_num: int, season_num: int = 1) -> str:
-    """Bölüm başlığını normalize et - anime ismini kaldır, sezon bilgisini koru.
-    
-    "Anime İsmi 1. Bölüm" → "1. Bölüm"
-    "S02E05" → "S02E05"
-    "2. Sezon 5. Bölüm" → "S02E05"
-    """
-    if not title:
-        if season_num > 1:
-            return f"S{season_num:02d}E{episode_num:02d}"
-        return f"{episode_num}. Bölüm"
-    
-    # Sezon bilgisi varsa S0XE0Y formatında döndür
-    if season_num > 1:
-        return f"S{season_num:02d}E{episode_num:02d}"
-    
-    # Zaten normalize edilmişse (sadece bölüm bilgisi varsa)
-    if re.match(r'^\d+\s*\.\s*[Bb][öÖ]l[üÜ]m', title.strip()):
-        return title.strip()
-    
-    if re.match(r'^[Bb][öÖ]l[üÜ]m\s*\d+', title.strip()):
-        return title.strip()
-    
-    if re.match(r'^[Ee]pisode\s*\d+', title.strip(), re.IGNORECASE):
-        return title.strip()
-    
-    if re.match(r'^[Ss]\d+[Ee]\d+', title.strip()):
-        return title.strip()
-    
-    # "Anime İsmi X. Bölüm" formatından "X. Bölüm"ü çıkar
-    match = re.search(r'(\d+\s*\.\s*[Bb][öÖ]l[üÜ]m.*?)$', title)
-    if match:
-        return match.group(1).strip()
-    
-    # Varsayılan format
-    return f"{episode_num}. Bölüm"
+# Bölüm parser'ı ve birleştirici artık TEK yerde: `common/episode_parser.py`.
+# Buradaki kopyalar Qt arayüzündeki sürümle ayrışmaya başlamıştı (aynı bölüm
+# iki arayüzde farklı numaralanıyordu). İsimler geriye dönük uyumluluk için
+# bu modülden de erişilebilir kalıyor.
+from .episode_parser import (  # noqa: F401  (dışarıdan `ui.X` diye import edilebilir)
+    extract_episode_info, extract_episode_number, merge_episodes,
+    normalize_episode_title,
+)
 
 
 class AccordionSourceEpisodeList:
@@ -204,59 +79,12 @@ class AccordionSourceEpisodeList:
         self._create_episode_list()
 
     def _merge_episodes(self) -> List[Dict[str, Any]]:
-        """Tüm kaynaklardan bölümleri birleştir ve sezon+bölüm numarasına göre grupla.
-        
-        Farklı kaynaklardan gelen bölüm isimleri farklı formatta olabilir:
-        - TürkAnime: "Anime İsmi 1. Bölüm"
-        - AnimeciX: "1. Bölüm"
-        - Anizle: "Bölüm 1"
-        - Çoklu sezon: "S02E05", "2x05", "2. Sezon 5. Bölüm"
-        
-        Bu metod sezon ve bölüm numarasını akıllıca çıkarır ve eşleştirir.
+        """Tüm kaynaklardan bölümleri birleştir — mantık `episode_parser`'da.
+
+        Birleştirme algoritmasını burada tutmak, Qt arayüzüne taşındığında iki
+        kopya demekti; artık ikisi de aynı fonksiyonu çağırıyor.
         """
-        # (sezon, bölüm) tuple'ına göre gruplama
-        episode_map = {}  # {(season, ep_number): {'title': str, 'sources': {source_name: episode_obj}}}
-        
-        for source_name, episodes in self.sources_data.items():
-            if not episodes:
-                continue
-            for idx, ep in enumerate(episodes):
-                # Önce mevcut episode_number ve season_number'ı kontrol et
-                ep_num = ep.get('episode_number', ep.get('number', 0))
-                season_num = ep.get('season_number', ep.get('season', 1)) or 1
-                ep_title = ep.get('title', '')
-                
-                # Eğer episode_number yoksa veya 0 ise, title'dan çıkar
-                if not ep_num or ep_num == 0:
-                    season_num, ep_num = extract_episode_info(ep_title)
-                elif season_num == 1:
-                    # Episode number var ama sezon yok, title'dan sezon bilgisini al
-                    title_season, _ = extract_episode_info(ep_title)
-                    if title_season > 1:
-                        season_num = title_season
-                
-                # Hala bulunamadıysa, index'i kullan (1'den başlayarak)
-                if not ep_num or ep_num == 0:
-                    ep_num = idx + 1
-                
-                # Unique key: (sezon, bölüm)
-                key = (season_num, ep_num)
-                
-                # Bölüm başlığını normalize et
-                normalized_title = normalize_episode_title(ep_title, ep_num, season_num)
-                
-                if key not in episode_map:
-                    episode_map[key] = {
-                        'season': season_num,
-                        'number': ep_num,
-                        'title': normalized_title,
-                        'sources': {}
-                    }
-                episode_map[key]['sources'][source_name] = ep
-        
-        # Sıralı liste oluştur (önce sezon, sonra bölüm numarasına göre)
-        merged = sorted(episode_map.values(), key=lambda x: (x['season'], x['number']))
-        return merged
+        return merge_episodes(self.sources_data)
 
     def _load_user_episode_status(self):
         """Kullanıcının episode status'lerini API'den yükler."""
