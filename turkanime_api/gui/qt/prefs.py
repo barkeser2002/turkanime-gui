@@ -181,11 +181,84 @@ def gecmis_kaydet(bolum, islem: str) -> bool:
 
 
 def ilerleme_kaydet(seri: str, bolum_no: int) -> bool:
-    """Serinin yerel izleme ilerlemesini yaz (AniList Faz 7'de bağlanacak)."""
+    """Serinin yerel izleme ilerlemesini yaz.
+
+    AniList yazımı buradan YAPILMAZ: yerel kayıt her kullanıcı için çalışmalı,
+    ağ işi ise `gui.qt.anilist.AniListService` üzerinden arka plana gider.
+    """
     if not seri:
         return False
     try:
         _dosya().set_ilerleme(seri, int(bolum_no))
+    except Exception:
+        return False
+    return True
+
+
+def yerel_ilerleme() -> Dict[str, int]:
+    """`gecmis.json`'daki ``seri slug -> son tamamlanan bölüm`` eşlemesi.
+
+    AniList→yerel senkronunun girdisi: yalnızca burada kaydı olan seriler
+    güncellenir (bkz. `anilist.senkron_guncellemeleri`).
+    """
+    try:
+        data = _dosya().gecmis or {}
+    except Exception:
+        return {}
+    sonuc: Dict[str, int] = {}
+    for seri, no in (data.get("ilerleme") or {}).items():
+        try:
+            sonuc[str(seri)] = int(no)
+        except (TypeError, ValueError):
+            continue          # elle bozulmuş kayıt senkronu düşürmemeli
+    return sonuc
+
+
+# ── AniList OAuth yapılandırması ────────────────────────────────────────────
+@dataclass(frozen=True)
+class AniListAyar:
+    """AniList OAuth istemci bilgileri (ayar sayfasının doldurduğu alanlar)."""
+
+    client_id: str = ""
+    client_secret: str = ""
+    redirect_uri: str = ""
+
+
+def _anilist_modulu():
+    """`turkanime_api.anilist_client` modülü.
+
+    Modül üzerinden erişim şart: testler singleton'ı komple değiştirebilsin
+    diye nesne değil, modül tutuluyor (bkz. `_dosya`).
+    """
+    from ... import anilist_client as modul
+    return modul
+
+
+def anilist_oku() -> AniListAyar:
+    """AniList OAuth ayarlarını oku.
+
+    Bu üçlü `ayarlar.json`'da DEĞİL, istemcinin kendi dosyasında duruyor; yolu
+    taşımak kullanıcının kayıtlı girişini geçersiz kılardı. Okuma yine de
+    buradan geçiyor ki sayfalar istemci nesnesini doğrudan tanımasın.
+    """
+    try:
+        ist = _anilist_modulu().anilist_client
+        return AniListAyar(
+            client_id=str(getattr(ist, "client_id", "") or ""),
+            client_secret=str(getattr(ist, "client_secret", "") or ""),
+            redirect_uri=str(getattr(ist, "redirect_uri", "") or ""),
+        )
+    except Exception:
+        return AniListAyar()
+
+
+def anilist_yaz(client_id: str, client_secret: str, redirect_uri: str) -> bool:
+    """OAuth ayarlarını istemciye yaz ve kalıcılaştır."""
+    try:
+        ist = _anilist_modulu().anilist_client
+        ist.set_oauth_config(str(client_id or "").strip(),
+                             str(client_secret or "").strip(),
+                             str(redirect_uri or "").strip())
     except Exception:
         return False
     return True
@@ -220,6 +293,7 @@ class Gecmis:
                 slug in (self.indirildi.get(seri) or []))
 
 
-__all__ = ["Tercihler", "Gecmis", "oku", "indirme_dizini", "oynat", "indir",
-           "bolum_kimligi", "gecmis_kaydet", "ilerleme_kaydet",
+__all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "indirme_dizini",
+           "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
+           "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

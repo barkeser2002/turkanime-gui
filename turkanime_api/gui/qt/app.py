@@ -14,22 +14,27 @@ import sys
 from typing import Dict
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from . import prefs
+from .anilist import AniListService
 from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
 from .pages.downloads import DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
 from .pages.search import SearchPage
 from .pages.settings import SettingsPage
+from .pages.watchlist import WatchlistPage
 from .progress_dialog import ProgressDialog
-from .theme import apply_theme
+from .theme import ACCENT, apply_theme
 from .workers import UiBridge, run_bg
+
+# Header'daki AniList avatarı (kare, köşeler tema tarafından yuvarlanmıyor).
+AVATAR_BOYUTU = 28
 
 APP_TITLE = "TürkAnime İndirici"
 
@@ -117,12 +122,21 @@ class MainWindow(QMainWindow):
         self.downloads = DownloadManager(self)
         self.downloads.finished.connect(self._on_download_finished)
 
+        # AniList tek bir servisten yürür: ayar sayfası girişi yapar, izleme
+        # listesi ve ilerleme yazımı aynı jetonu/oturumu paylaşır.
+        self.anilist = AniListService(self)
+        self.anilist.auth_changed.connect(self._on_anilist_user)
+        self.anilist.avatar_ready.connect(self._on_anilist_avatar)
+        self.anilist.status_changed.connect(self._on_anilist_status)
+
         self._playing = False          # aynı anda tek oynatma denemesi
         # Detay sayfasındaki "← Geri" hangi sekmeden gelindiyse oraya dönmeli.
         self._detail_origin = "home"
         self.pages: Dict[str, QWidget] = {}
         self._build_ui()
         self.show_page("home")
+        # Jeton diskte duruyor olabilir; kullanıcı adını/avatarı arka planda al.
+        self.anilist.baslat()
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
@@ -175,9 +189,19 @@ class MainWindow(QMainWindow):
             return page
         if key == "downloads":
             return DownloadsPage(self.downloads)
+        if key == "watchlist":
+            page = WatchlistPage(self.anilist)
+            page.anime_selected.connect(self._on_discover_selected)
+            page.settings_requested.connect(self._goto_settings)
+            return page
         if key == "settings":
-            return SettingsPage()
+            return SettingsPage(self.anilist)
         return PlaceholderPage(label)
+
+    def _goto_settings(self) -> None:
+        """"Ayarlar'a Git" yönlendirmesi (sol menü de senkron kalmalı)."""
+        self.show_page("settings")
+        self._sync_nav("settings")
 
     def _build_header(self) -> QWidget:
         header = QFrame()
@@ -205,6 +229,19 @@ class MainWindow(QMainWindow):
         self.btnSearch.setObjectName("Primary")
         self.btnSearch.clicked.connect(self._on_search)
         layout.addWidget(self.btnSearch)
+
+        # AniList giriş durumu: avatar yalnızca indirildiğinde görünür, aksi
+        # hâlde 28px'lik boş bir kutu header'da delik gibi durur.
+        layout.addSpacing(8)
+        self.lblAvatar = QLabel()
+        self.lblAvatar.setFixedSize(AVATAR_BOYUTU, AVATAR_BOYUTU)
+        self.lblAvatar.setVisible(False)
+        layout.addWidget(self.lblAvatar)
+
+        self.lblAniList = QLabel()
+        self.lblAniList.setObjectName("Muted")
+        layout.addWidget(self.lblAniList)
+        self._on_anilist_user(None)
 
         return header
 
@@ -370,12 +407,51 @@ class MainWindow(QMainWindow):
     def _ask_progress(self, bolum, title: str) -> None:
         """İzleme ilerlemesi diyaloğunu aç (eski `show_progress_dialog`)."""
         dialog = ProgressDialog(bolum, title, self)
-        dialog.progress_saved.connect(self._on_progress_saved)
+        # Okunabilir seri adını sinyale iliştiriyoruz: `progress_saved` yalnızca
+        # slug taşıyor, AniList'te "naruto-test" diye aramak eşleşmez.
+        ad = getattr(dialog, "anime_adi", "")
+        dialog.progress_saved.connect(
+            lambda seri, no, _ad=ad: self._on_progress_saved(seri, no, _ad))
         dialog.exec()
 
-    def _on_progress_saved(self, seri: str, bolum_no: int) -> None:
-        """Yerel ilerleme yazıldı. AniList yazımı Faz 7'de buraya bağlanacak."""
+    def _on_progress_saved(self, seri: str, bolum_no: int,
+                           anime_adi: str = "") -> None:
+        """Yerel ilerleme yazıldı; AniList'e de yansıt.
+
+        `ilerleme_yaz` giriş yoksa sessizce atlar — yerel kayıt zaten yapıldı,
+        AniList kullanmayan kullanıcıyı her bölüm sonunda uyarmanın anlamı yok.
+        """
         self._status(f"İlerleme kaydedildi: {seri or 'seri'} — {bolum_no}. bölüm")
+        self.anilist.ilerleme_yaz(seri, bolum_no, anime_adi)
+
+    # ── AniList ─────────────────────────────────────────────────────────────
+    def _on_anilist_user(self, user) -> None:
+        """Giriş durumu değişti (GUI thread'i): header'ı ve senkronu güncelle."""
+        if isinstance(user, dict) and user.get("name"):
+            self.lblAniList.setText(str(user["name"]))
+            self.lblAniList.setStyleSheet(f"color: {ACCENT}; font-weight: 600;")
+            # Giriş tazelendiğinde AniList → yerel ilerleme senkronu; kullanıcı
+            # başka cihazda izlediyse rozetleri burada yakalıyoruz.
+            self.anilist.yereli_senkronla()
+        else:
+            self.lblAniList.setText("AniList: giriş yok")
+            self.lblAniList.setStyleSheet("")
+            self.lblAvatar.clear()
+            self.lblAvatar.setVisible(False)
+
+    def _on_anilist_avatar(self, data) -> None:
+        pix = QPixmap()
+        if not pix.loadFromData(bytes(data or b"")):
+            return
+        self.lblAvatar.setPixmap(pix.scaled(
+            AVATAR_BOYUTU, AVATAR_BOYUTU,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation))
+        self.lblAvatar.setVisible(True)
+
+    def _on_anilist_status(self, mesaj: str, _hata: bool) -> None:
+        """Servis mesajları durum çubuğuna (sinyal zaten GUI thread'inde)."""
+        self.statusBar().showMessage(mesaj, 8000)
 
     def _refresh_episode_history(self) -> None:
         page = self.pages.get("episodes")

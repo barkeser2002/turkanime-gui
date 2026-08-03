@@ -48,12 +48,16 @@ def _qt_env():
 
 @pytest.fixture(autouse=True)
 def _stub_discover_sources(request, monkeypatch):
-    """Keşif sayfalarının ağ uçlarını varsayılan olarak sustur.
+    """Keşif ve AniList ağ uçlarını varsayılan olarak sustur.
 
     `DiscoverPage` ilk gösterimde veri çeker; `main_window` fixture'ı pencereyi
     `show()` ettiği için ana sayfa açılır ve bu, hiçbir şey yapmayan testleri
     bile Jikan/AniList'e çıkarır. Kural 1 gereği bunu kesiyoruz; gerçek veri
     isteyen testler kendi sahtelerini bu fixture'ın üstüne yazabilir.
+
+    AniList uçları da susturuluyor: `MainWindow` açılışta diskteki jetonla
+    kullanıcıyı tazeliyor. Geliştirme makinesinde gerçek bir jeton varsa test
+    paketi habersizce AniList'e bağlanırdı.
     """
     if "network" in request.keywords:
         return
@@ -62,8 +66,11 @@ def _stub_discover_sources(request, monkeypatch):
 
     monkeypatch.setattr(jikan_mod, "get_trending_anime_list", lambda *a, **k: [])
     monkeypatch.setattr(jikan_mod, "get_seasonal_anime_list", lambda *a, **k: [])
-    monkeypatch.setattr(anilist_mod.anilist_client, "get_trending_anime",
-                        lambda *a, **k: [])
+    for uc, sonuc in (("get_trending_anime", []), ("search_anime", []),
+                      ("get_user_anime_list", []), ("get_current_user", None),
+                      ("update_anime_progress", False)):
+        monkeypatch.setattr(anilist_mod.anilist_client, uc,
+                            lambda *a, _s=sonuc, **k: _s)
 
 
 @pytest.fixture

@@ -52,7 +52,10 @@ class AnimeCard(QFrame):
         self.lblThumb.setVisible(bool(image_url))
         outer.addWidget(self.lblThumb, 0)
 
-        col = QVBoxLayout()
+        # Sütun layout'u öznitelikte tutuluyor: alt sınıflar (ör. izleme listesi
+        # kartı) başlığın altına satır ekleyebilsin. Layout'u `layout().itemAt`
+        # ile kazımak, kart iç yapısı değişince sessizce bozulurdu.
+        self.col = col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(6)
 

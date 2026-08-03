@@ -4,7 +4,7 @@ Eski GUI'deki `show_progress_dialog` karşılığı. Bir fark var: eski sürüm 
 numarayı doğrudan AniList'e yazıyordu ve AniList kimliği yoksa hiçbir yere
 kaydetmiyordu — yani AniList'e bağlı olmayan kullanıcı için diyalog tamamen boşa
 çalışıyordu. Burada ilerleme önce YEREL geçmişe yazılır; AniList yazımı Faz
-7'de `progress_saved` sinyaline bağlanacak.
+7'de `progress_saved` sinyaline bağlandı (bkz. `app.MainWindow._ask_progress`).
 """
 from __future__ import annotations
 
@@ -53,7 +53,11 @@ class ProgressDialog(QDialog):
         head.setObjectName("Subtitle")
         layout.addWidget(head)
 
-        info = QLabel(f"{_anime_adi(bolum, self.seri)}\n{bolum_adi}")
+        # Okunabilir seri adı öznitelikte: AniList araması slug ("naruto-test")
+        # yerine bununla yapılır, aksi hâlde eşleşme çok daha zayıf olur.
+        self.anime_adi = _anime_adi(bolum, self.seri)
+
+        info = QLabel(f"{self.anime_adi}\n{bolum_adi}")
         info.setObjectName("Muted")
         info.setWordWrap(True)
         layout.addWidget(info)

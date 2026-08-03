@@ -7,6 +7,9 @@ Buradaki en önemli iş **TRAnimeİzle cookie'si**: o kaynak bot kontrolü neden
 cookie olmadan hiç bölüm döndürmüyor. "Tarayıcıdan Al" düğmesi gömülü
 QtWebEngine penceresini açar, kullanıcı kontrolü çözer, oturum çerezi otomatik
 kaydedilir.
+
+AniList OAuth bilgileri buradan girilir ama `ayarlar.json`'a YAZILMAZ: istemci
+onları kendi dosyasında tutuyor (bkz. `prefs.anilist_yaz`).
 """
 from __future__ import annotations
 
@@ -18,16 +21,21 @@ from PySide6.QtWidgets import (
     QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
+from .. import prefs
+from ..anilist import AniListService
 from ..widgets import StatusLabel
 
 
 class SettingsPage(QWidget):
-    """İndirme klasörü, TRAnime cookie'si ve bypass ayarları."""
+    """İndirme klasörü, TRAnime cookie'si, bypass ve AniList ayarları."""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, servis: Optional[AniListService] = None,
+                 parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._cookie_worker = None
+        self.servis = servis or AniListService(self)
         self._build_ui()
+        self.servis.auth_changed.connect(self._on_auth)
         self.reload()
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
@@ -109,6 +117,55 @@ class SettingsPage(QWidget):
         bform.addRow("", hint)
         layout.addWidget(bbox)
 
+        # ── AniList ─────────────────────────────────────────────────────────
+        abox = QFrame(); abox.setObjectName("Panel")
+        al = QVBoxLayout(abox)
+        al.setContentsMargins(16, 14, 16, 14)
+        al.setSpacing(8)
+
+        al.addWidget(QLabel("AniList hesabı"))
+        self.lblAniList = QLabel()
+        self.lblAniList.setObjectName("Muted")
+        self.lblAniList.setWordWrap(True)
+        al.addWidget(self.lblAniList)
+
+        aform = QFormLayout()
+        aform.setSpacing(8)
+        self.txtAniListId = QLineEdit()
+        self.txtAniListId.setPlaceholderText("AniList uygulama Client ID")
+        aform.addRow("Client ID", self.txtAniListId)
+
+        self.txtAniListSecret = QLineEdit()
+        # Gizli anahtar omuz üstünden okunmasın; hiçbir log/hata satırına da
+        # yazılmıyor (bkz. `AniListService.giris_yap`).
+        self.txtAniListSecret.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txtAniListSecret.setPlaceholderText("AniList uygulama Client Secret")
+        aform.addRow("Client Secret", self.txtAniListSecret)
+
+        self.txtAniListRedirect = QLineEdit()
+        self.txtAniListRedirect.setPlaceholderText(
+            "http://localhost:9921/anilist-login")
+        aform.addRow("Redirect URI", self.txtAniListRedirect)
+        al.addLayout(aform)
+
+        ahint = QLabel("Redirect URI, AniList geliştirici panelindekiyle birebir "
+                       "aynı olmalı; portu yerel giriş sunucusu dinler.")
+        ahint.setObjectName("Muted")
+        ahint.setWordWrap(True)
+        al.addWidget(ahint)
+
+        arow = QHBoxLayout()
+        self.btnAniListLogin = QPushButton("AniList'e Giriş Yap")
+        self.btnAniListLogin.setObjectName("Primary")
+        self.btnAniListLogin.clicked.connect(self._anilist_login)
+        arow.addWidget(self.btnAniListLogin)
+        self.btnAniListLogout = QPushButton("Çıkış Yap")
+        self.btnAniListLogout.clicked.connect(self._anilist_logout)
+        arow.addWidget(self.btnAniListLogout)
+        arow.addStretch(1)
+        al.addLayout(arow)
+        layout.addWidget(abox)
+
         actions = QHBoxLayout()
         actions.addStretch(1)
         btnSave = QPushButton("Kaydet")
@@ -139,6 +196,7 @@ class SettingsPage(QWidget):
         self.chkAria.setChecked(bool(ayarlar.get("aria2c kullan", False)))
         self.txtFlare.setText(str(ayarlar.get("flaresolverr_url") or ""))
         self._show_cookie_state(str(ayarlar.get("tranime_cookie") or ""))
+        self._reload_anilist()
 
     def save(self) -> None:
         try:
@@ -152,6 +210,9 @@ class SettingsPage(QWidget):
             })
         except Exception as exc:
             self.lblStatus.error(f"Kaydedilemedi: {exc}")
+            return
+        if not self._save_anilist():
+            self.lblStatus.error("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı.")
             return
         self.lblStatus.ok("Ayarlar kaydedildi.")
 
@@ -216,6 +277,52 @@ class SettingsPage(QWidget):
             return
         self._show_cookie_state("")
         self.lblStatus.info("Çerez temizlendi.")
+
+    # ── AniList ─────────────────────────────────────────────────────────────
+    def _reload_anilist(self) -> None:
+        ayar = prefs.anilist_oku()
+        self.txtAniListId.setText(ayar.client_id)
+        self.txtAniListSecret.setText(ayar.client_secret)
+        self.txtAniListRedirect.setText(ayar.redirect_uri)
+        self._show_anilist_state(self.servis.kullanici)
+
+    def _save_anilist(self) -> bool:
+        """OAuth üçlüsünü istemciye yaz (`ayarlar.json`'a değil)."""
+        return prefs.anilist_yaz(self.txtAniListId.text(),
+                                 self.txtAniListSecret.text(),
+                                 self.txtAniListRedirect.text())
+
+    def _show_anilist_state(self, user: Any) -> None:
+        if isinstance(user, dict) and user.get("name"):
+            self.lblAniList.setText(f"Giriş yapıldı: {user['name']} ✓")
+            self.lblAniList.setStyleSheet("color: #00b894;")
+        elif self.servis.giris_var_mi():
+            self.lblAniList.setText("Jeton kayıtlı, kullanıcı bilgisi bekleniyor…")
+            self.lblAniList.setStyleSheet("")
+        else:
+            self.lblAniList.setText(
+                "Giriş yapılmamış — İzleme Listesi ve ilerleme senkronu için giriş yapın.")
+            self.lblAniList.setStyleSheet("")
+
+    def _on_auth(self, user: Any) -> None:
+        self._show_anilist_state(user)
+
+    def _anilist_login(self) -> None:
+        """Önce ekrandaki OAuth bilgilerini kaydet, sonra tarayıcıyı aç.
+
+        Kaydetmeden başlatmak, kullanıcının az önce yapıştırdığı Client ID'yi
+        yok sayıp eski (çoğu zaman boş) yapılandırmayla giriş denemek olurdu.
+        """
+        if not self._save_anilist():
+            self.lblStatus.error("AniList yapılandırması kaydedilemedi.")
+            return
+        if self.servis.giris_yap():
+            self.lblStatus.info("Tarayıcıda AniList girişini tamamlayın…")
+
+    def _anilist_logout(self) -> None:
+        self.servis.cikis_yap()
+        self._show_anilist_state(None)
+        self.lblStatus.info("AniList oturumu kapatıldı.")
 
 
 __all__ = ["SettingsPage"]
