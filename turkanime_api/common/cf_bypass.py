@@ -6,8 +6,8 @@ farklı yöntemleri bir arada sunar:
 
 1. curl_cffi - Firefox/Chrome TLS fingerprint taklidi
 2. cloudscraper - JS Challenge çözümü
-3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu)
-4. undetected-chromedriver - Selenium tabanlı tam bypass
+3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu, opsiyonel)
+4. QtWebEngine - Yerel gömülü Chromium (ayrı süreçte; Selenium'un yerini aldı)
 5. Normal requests - Fallback
 
 Kullanım:
@@ -18,10 +18,13 @@ Kullanım:
 """
 from __future__ import annotations
 
+import json
+import os
+import threading
 import time
 import random
-from typing import Optional, Dict, Any
 from urllib.parse import urlparse
+from typing import Optional, Dict, Any
 
 # curl_cffi - TLS fingerprint taklidi için
 try:
@@ -40,12 +43,21 @@ except ImportError:
 # requests - Fallback için
 import requests
 
-# undetected-chromedriver - Son çare Selenium bypass
+# QtWebEngine çözücü - Selenium/undetected-chromedriver'ın yerini aldı.
+# Gerçek bir Chromium'u ayrı süreçte çalıştırır (yerel, gömülü FlareSolverr gibi).
 try:
-    import undetected_chromedriver as uc
-    HAS_UC = True
-except ImportError:
-    HAS_UC = False
+    from .cf_qt_solver import (  # noqa: F401
+        DEFAULT_TIMEOUT as _QT_SOLVER_TIMEOUT,
+        CHALLENGE_MARKERS as _CHALLENGE_MARKERS,
+    )
+    import importlib.util as _ilu
+    HAS_QTWEBENGINE = _ilu.find_spec("PySide6.QtWebEngineCore") is not None
+except Exception:
+    HAS_QTWEBENGINE = False
+    _CHALLENGE_MARKERS = (
+        "Just a moment", "Checking your browser", "cf-browser-verification",
+        "challenge-platform", "Security Verification", "turn JavaScript on",
+    )
 
 
 # User-Agent listesi (rotasyon için)
@@ -69,8 +81,8 @@ class CFSession:
     Sırasıyla şu yöntemleri dener:
     1. curl_cffi (Firefox TLS fingerprint)
     2. cloudscraper (JS Challenge)
-    3. FlareSolverr (uzak headless browser)
-    4. undetected-chromedriver (Selenium)
+    3. FlareSolverr (uzak headless browser — opsiyonel)
+    4. QtWebEngine (yerel gömülü Chromium, ayrı süreçte)
     5. Normal requests (fallback)
     """
 
@@ -93,11 +105,16 @@ class CFSession:
         
         self._curl_session: Optional[Any] = None
         self._cloud_session: Optional[Any] = None
-        self._uc_driver: Optional[Any] = None
+        self._qt_solver: Optional[Any] = None      # QtWebEngine alt-süreci
+        # Çözücü tek seferde tek istek işler; SearchEngine adapterleri paralel
+        # çalıştığı için kilitsiz yazıp okursak thread'ler birbirinin cevabını
+        # tüketir (A sitesinin HTML'i B'nin parser'ına gider).
+        self._qt_lock = threading.Lock()
         self._cookies: Dict[str, str] = {}
         self._last_method: Optional[str] = None
         self._flaresolverr_user_agent: Optional[str] = None
-        
+        self._flaresolverr_down: bool = False   # devre kesici (bkz. _try_flaresolverr)
+
         # Hangi yöntemlerin mevcut olduğunu kontrol et
         self._available_methods = []
         if HAS_CURL_CFFI:
@@ -105,9 +122,36 @@ class CFSession:
         if HAS_CLOUDSCRAPER:
             self._available_methods.append("cloudscraper")
         self._available_methods.append("flaresolverr")  # Her zaman denenebilir
-        if HAS_UC:
-            self._available_methods.append("undetected_chrome")
+        if HAS_QTWEBENGINE:
+            self._available_methods.append("qtwebengine")
         self._available_methods.append("requests")  # Her zaman mevcut
+
+    @staticmethod
+    def _cookie_matches_host(name: str, value: str, host: str, data: Dict[str, Any]) -> bool:
+        """Çerez, isteğin host'una mı ait? (çözücü tüm kavanozu döndürüyor)"""
+        domains = data.get("cookie_domains") or {}
+        dom = (domains.get(name) or "").lstrip(".").lower()
+        if not dom or not host:
+            return True          # domain bilgisi yoksa eski davranış
+        return host == dom or host.endswith("." + dom)
+
+    @staticmethod
+    def _is_challenge(resp) -> bool:
+        """Cevap gerçek içerik değil, bir koruma/challenge sayfası mı?
+
+        KRİTİK: Challenge sayfaları da HTTP 200 döner. Bunu kontrol etmezsek
+        zincir ilk yöntemde (curl_cffi) "başarı" sanıp kısa devre yapar ve
+        gerçek tarayıcı (QtWebEngine) rung'ına hiç ulaşılmaz.
+        """
+        if resp is None:
+            return False
+        if getattr(resp, "status_code", 200) == 202:
+            return True
+        try:
+            head = resp.text[:6000]
+        except Exception:
+            return False
+        return any(marker in head for marker in _CHALLENGE_MARKERS)
 
     def _get_curl_session(self):
         """curl_cffi session'ı lazy-load et."""
@@ -131,17 +175,95 @@ class CFSession:
             )
         return self._cloud_session
 
-    def _get_uc_driver(self):
-        """undetected-chromedriver'ı lazy-load et."""
-        if self._uc_driver is None and HAS_UC:
-            options = uc.ChromeOptions()
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument(f"--user-agent={random.choice(USER_AGENTS)}")
-            self._uc_driver = uc.Chrome(options=options)
-        return self._uc_driver
+    def _get_qt_solver(self):
+        """QtWebEngine çözücü alt-sürecini lazy-spawn et ve yeniden kullan.
+
+        Ayrı süreç kullanmamızın sebebi: QtWebEngine bir QApplication'ın ana
+        thread'inde çalışmak zorunda, oysa CFSession senkron olarak hem GUI
+        worker thread'lerinden hem de Qt'siz CLI'dan çağrılıyor.
+        """
+        if not HAS_QTWEBENGINE:
+            return None
+        if self._qt_solver is not None and self._qt_solver.poll() is None:
+            return self._qt_solver
+
+        import subprocess
+        import sys as _sys
+        try:
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8")
+            if getattr(_sys, "frozen", False):
+                # Paketlenmiş EXE'de `-m modul` çalışmaz (sys.executable uygulamanın
+                # kendisi). Uygulamayı özel bayrakla yeniden çağırıyoruz; giriş
+                # noktası (gui/qt/__main__.py) bunu yakalayıp çözücüyü başlatır.
+                cmd = [_sys.executable, "--cf-qt-solver"]
+            else:
+                cmd = [_sys.executable, "-m", "turkanime_api.common.cf_qt_solver"]
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, encoding="utf-8", bufsize=1, env=env,
+            )
+            ready = proc.stdout.readline()          # hazır sinyalini bekle
+            if not ready or not json.loads(ready).get("ok"):
+                proc.kill()
+                return None
+            self._qt_solver = proc
+            return proc
+        except Exception as e:
+            print(f"[CF Bypass] QtWebEngine çözücü başlatılamadı: {e}")
+            return None
+
+    def _try_qtwebengine(self, url: str, timeout: Optional[int] = None) -> Optional[requests.Response]:
+        """Gerçek Chromium ile challenge'ı çöz (undetected-chromedriver'ın yerine).
+
+        Yalnızca GET destekler; POST için zincir requests'e düşer.
+        """
+        try:
+            # Kilit: istek/cevap çifti bölünmez olmalı (bkz. _qt_lock).
+            with self._qt_lock:
+                proc = self._get_qt_solver()
+                if proc is None:
+                    return None
+                req = {"url": url, "timeout": int(timeout or self.timeout)}
+                proc.stdin.write(json.dumps(req, ensure_ascii=True) + "\n")
+                proc.stdin.flush()
+                line = proc.stdout.readline()
+            if not line:
+                return None
+            data = json.loads(line)
+            if not data.get("ok"):
+                print(f"[CF Bypass] QtWebEngine: {data.get('error')}")
+                return None
+
+            # Çözücü tüm çerez kavanozunu döndürür; yalnızca BU host'a ait
+            # olanları alıyoruz. Aksi hâlde bir sitenin cf_clearance'ı başka
+            # siteye iliştirilip 403/challenge döngüsü yaratır.
+            host = (urlparse(url).hostname or "").lower()
+            for name, value in (data.get("cookies") or {}).items():
+                if self._cookie_matches_host(name, value, host, data):
+                    self._cookies[name] = value
+            ua = data.get("user_agent")
+            if ua:
+                self._flaresolverr_user_agent = ua
+
+            html = data.get("html") or ""
+            fake_resp = requests.Response()
+            fake_resp.status_code = int(data.get("status") or 200)
+            fake_resp._content = html.encode("utf-8")
+            fake_resp.headers["Content-Type"] = "text/html; charset=utf-8"
+            fake_resp.url = data.get("url") or url
+
+            self._last_method = "qtwebengine"
+            return fake_resp
+        except Exception as e:
+            print(f"[CF Bypass] QtWebEngine hatası: {e}")
+            # Bozulmuş süreci at ki bir sonraki çağrı temiz başlasın
+            try:
+                self._qt_solver.kill()
+            except Exception:
+                pass
+            self._qt_solver = None
+        return None
 
     def _try_curl_cffi(self, url: str, headers: Dict[str, str], method: str = "GET", **kwargs) -> Optional[requests.Response]:
         """curl_cffi ile istek at."""
@@ -227,6 +349,11 @@ class CFSession:
         FlareSolverr uzak bir headless browser sunucusudur.
         API: POST http://host:8191/v1
         """
+        # Devre kesici: sunucuya bir kez bağlanılamadıysa oturum boyunca tekrar
+        # deneme. Aksi hâlde erişilemez bir FlareSolverr her istekte timeout
+        # süresi kadar gecikme ve log gürültüsü üretiyor.
+        if getattr(self, "_flaresolverr_down", False):
+            return None
         try:
             api_url = f"{self.flaresolverr_url.rstrip('/')}/v1"
             payload: Dict[str, Any] = {
@@ -280,40 +407,15 @@ class CFSession:
             return fake_resp
 
         except requests.exceptions.ConnectionError:
-            print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı")
+            self._flaresolverr_down = True
+            print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı "
+                  "— bu oturumda tekrar denenmeyecek")
         except requests.exceptions.Timeout:
-            print("[CF Bypass] FlareSolverr zaman aşımı")
+            self._flaresolverr_down = True
+            print("[CF Bypass] FlareSolverr zaman aşımı "
+                  "— bu oturumda tekrar denenmeyecek")
         except Exception as e:
             print(f"[CF Bypass] FlareSolverr hatası: {e}")
-        return None
-
-    def _try_undetected_chrome(self, url: str, headers: Dict[str, str]) -> Optional[str]:
-        """undetected-chromedriver ile sayfa al (sadece GET)."""
-        if not HAS_UC:
-            return None
-        
-        try:
-            driver = self._get_uc_driver()
-            driver.get(url)
-            
-            # CF challenge için bekle
-            time.sleep(5)
-            
-            # Sayfa yüklenene kadar bekle
-            for _ in range(10):
-                if "Just a moment" not in driver.page_source:
-                    break
-                time.sleep(1)
-            
-            self._last_method = "undetected_chrome"
-            
-            # Çerezleri al
-            for cookie in driver.get_cookies():
-                self._cookies[cookie["name"]] = cookie["value"]
-            
-            return driver.page_source
-        except Exception as e:
-            print(f"[CF Bypass] undetected-chromedriver hatası: {e}")
         return None
 
     def _try_requests_fallback(self, url: str, headers: Dict[str, str], method: str = "GET", **kwargs) -> Optional[requests.Response]:
@@ -359,30 +461,25 @@ class CFSession:
         for attempt in range(self.max_retries):
             # 1. curl_cffi dene
             resp = self._try_curl_cffi(url, headers, "GET", **kwargs)
-            if resp is not None:
+            if resp is not None and not self._is_challenge(resp):
                 return resp
-            
+
             # 2. cloudscraper dene
             resp = self._try_cloudscraper(url, headers, "GET", **kwargs)
-            if resp is not None:
+            if resp is not None and not self._is_challenge(resp):
                 return resp
-            
+
             # 3. FlareSolverr dene
             resp = self._try_flaresolverr(url, "GET")
-            if resp is not None:
+            if resp is not None and not self._is_challenge(resp):
                 return resp
-            
-            # 4. undetected-chrome dene (HTML döner, Response değil)
-            html = self._try_undetected_chrome(url, headers)
-            if html is not None:
-                # Sahte Response nesnesi oluştur
-                fake_resp = requests.Response()
-                fake_resp.status_code = 200
-                fake_resp._content = html.encode("utf-8")
-                fake_resp.headers["Content-Type"] = "text/html; charset=utf-8"
-                return fake_resp
-            
-            # 5. Normal requests dene
+
+            # 4. QtWebEngine dene (yerel gömülü Chromium, ayrı süreçte)
+            resp = self._try_qtwebengine(url)
+            if resp is not None and not self._is_challenge(resp):
+                return resp
+
+            # 5. Normal requests dene (son çare: challenge olsa bile döndür)
             resp = self._try_requests_fallback(url, headers, "GET", **kwargs)
             if resp is not None:
                 return resp
@@ -440,11 +537,16 @@ class CFSession:
             except Exception:
                 pass
         
-        if self._uc_driver is not None:
+        if self._qt_solver is not None:
             try:
-                self._uc_driver.quit()
+                self._qt_solver.stdin.close()
+                self._qt_solver.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    self._qt_solver.kill()
+                except Exception:
+                    pass
+            self._qt_solver = None
 
     def __enter__(self):
         return self
@@ -504,5 +606,5 @@ __all__ = [
     "cf_post",
     "HAS_CURL_CFFI",
     "HAS_CLOUDSCRAPER",
-    "HAS_UC",
+    "HAS_QTWEBENGINE",
 ]

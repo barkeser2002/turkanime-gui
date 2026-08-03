@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Any, Dict, Callable
 import json
 from tempfile import NamedTemporaryFile
+from os import remove
 from os.path import join
 import subprocess as sp
 import re
@@ -13,8 +14,6 @@ from yt_dlp import YoutubeDL
 
 from .animecix import _video_streams
 from ..common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
-from turkanime_api.sources.animecix import search_animecix
-from turkanime_api.objects import Anime
 
 
 def _slugify(text: str) -> str:
@@ -120,10 +119,19 @@ class AdapterVideo:
         if callback:
             opts['progress_hooks'] = [callback]
         opts['outtmpl'] = {'default': out_tmpl_dir + r'.%(ext)s'}
-        with NamedTemporaryFile("w", delete=False) as tmp:
+        # delete=False şart: yt-dlp dosyayı adıyla ikinci kez açıyor (Windows'ta
+        # açık bir NamedTemporaryFile yeniden açılamaz). Bu yüzden temizliği biz
+        # yapıyoruz — aksi hâlde her indirme bir geçici dosya sızdırır.
+        with NamedTemporaryFile("w", delete=False, suffix=".info.json") as tmp:
             json.dump(self.info, tmp)
-        with YoutubeDL(opts) as ydl:  # type: ignore
-            ydl.download_with_info_file(tmp.name)
+        try:
+            with YoutubeDL(opts) as ydl:  # type: ignore
+                ydl.download_with_info_file(tmp.name)
+        finally:
+            try:
+                remove(tmp.name)
+            except OSError:
+                pass
 
     def get(self, key, default=None):
         """Dictionary-like get method for compatibility."""

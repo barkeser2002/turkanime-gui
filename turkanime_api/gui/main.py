@@ -16,22 +16,18 @@ import json
 import time
 import appdirs
 import tempfile
-import platform
 from zipfile import ZipFile
 from py7zr import SevenZipFile
 import tarfile
 from shutil import move
 
 from turkanime_api.objects import Anime, Bolum
-from turkanime_api.bypass import fetch
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.cli.cli_tools import VidSearchCLI, indir_aria2c
-from turkanime_api.cli.gereksinimler import Gereksinimler
 from turkanime_api.sources.animecix import CixAnime, search_animecix
-from turkanime_api.sources.anizle import AnizleAnime, search_anizle, get_episode_streams
+from turkanime_api.sources.anizle import AnizleAnime, get_episode_streams
 from turkanime_api.sources.tranime import (
-    TRAnimeAnime, TRAnimeEpisode, search_tranime, 
-    get_anime_by_slug as get_tranime_anime,
+    search_tranime, 
     get_anime_episodes as get_tranime_episodes,
     get_episode_details as get_tranime_episode_details,
     set_session_cookie as set_tranime_cookie
@@ -326,7 +322,7 @@ class RequirementsManager:
                 # İlk executable dosyayı kullan
                 for root, dirs, files in os.walk(extract_dir):
                     for file in files:
-                        if file_ext in ["exe", ""] or not "." in file:
+                        if file_ext in ["exe", ""] or "." not in file:
                             app_files.append(os.path.join(root, file))
                             break
                     if app_files:
@@ -1137,7 +1133,7 @@ class MainWindow(ctk.CTk):
         selectors_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
         selectors_frame.pack(side="left", padx=(0, 10))
 
-        self.cmbSource = ctk.CTkComboBox(selectors_frame, values=["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime"],
+        self.cmbSource = ctk.CTkComboBox(selectors_frame, values=["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime", "Tranimaci", "AnimeDepo"],
                                        width=110, height=30,
                                        command=self.on_source_change,
                                        font=ctk.CTkFont(size=10))
@@ -1629,7 +1625,7 @@ class MainWindow(ctk.CTk):
         title_label.pack(pady=(20, 10))
 
         # Açıklama
-        desc_text = f"Aşağıdaki gereksinimler bulunamadı:\n\n" + "\n".join(f"• {dep}" for dep in missing_deps)
+        desc_text = "Aşağıdaki gereksinimler bulunamadı:\n\n" + "\n".join(f"• {dep}" for dep in missing_deps)
         desc_text += "\n\nBu gereksinimler olmadan uygulama tam çalışmayabilir."
         desc_label = ctk.CTkLabel(dialog, text=desc_text, wraplength=450)
         desc_label.pack(pady=(0, 20))
@@ -2633,7 +2629,6 @@ class MainWindow(ctk.CTk):
 
     def browse_download_folder(self):
         """İndirme klasörü seç."""
-        from tkinter import filedialog
         folder = filedialog.askdirectory()
         if folder:
             self.txtDownloadFolder.delete(0, "end")
@@ -3089,7 +3084,7 @@ class MainWindow(ctk.CTk):
                 trending = anilist_client.get_trending_anime(page=1, per_page=12)
                 self.after(0, lambda: self.display_trending_anime(trending))
             except Exception as e:
-                self.after(0, lambda: self.show_trending_error(str(e)))
+                self.after(0, lambda e=e: self.show_trending_error(str(e)))
 
         threading.Thread(target=load_worker, daemon=True).start()
 
@@ -3495,7 +3490,9 @@ class MainWindow(ctk.CTk):
                     "AnimeciX": 8,    # 8 saniye
                     "Anizle": 8,      # 8 saniye
                     "TRAnimeİzle": 12, # 12 saniye (bot koruma)
-                    "AniList": 5      # 5 saniye (daha hızlı)
+                    "AniList": 5,     # 5 saniye (daha hızlı)
+                    "Tranimaci": 10,  # 10 saniye (WAF PoW çözümü dahil)
+                    "AnimeDepo": 10,  # 10 saniye (GitLab dizin + bölüm JSON)
                 }
 
                 def search_source_with_timeout(source_name, timeout_seconds):
@@ -3740,6 +3737,97 @@ class MainWindow(ctk.CTk):
                                 with open("debug.log", "a") as f:
                                     f.write(f"ERROR: {source_name} hatası: {str(e)}\n")
 
+                        elif source_name == "Tranimaci":
+                            try:
+                                from turkanime_api.sources.tranimaci import (
+                                    search_tranimaci,
+                                    get_anime_episodes as get_tranimaci_episodes,
+                                    get_episode_streams as get_tranimaci_streams,
+                                )
+                                search_results = search_tranimaci(query_title, limit=1)
+                                if search_results:
+                                    slug, name = search_results[0]
+                                    tra_episodes = get_tranimaci_episodes(slug)
+                                    if tra_episodes:
+                                        episodes = []
+                                        ada = AdapterAnime(slug=slug, title=name)
+                                        for ep_slug, ep_title in tra_episodes:
+                                            def make_stream_provider(es):
+                                                def provider(url):
+                                                    try:
+                                                        return get_tranimaci_streams(es)
+                                                    except Exception:
+                                                        return []
+                                                return provider
+                                            ep_url = f"https://tranimaci.com/video/{ep_slug}"
+                                            ab = AdapterBolum(
+                                                url=ep_url,
+                                                title=ep_title,
+                                                anime=ada,
+                                                stream_provider=make_stream_provider(ep_slug),
+                                                player_name="TRANIMACI"
+                                            )
+                                            episodes.append({
+                                                "title": ep_title,
+                                                "obj": ab,
+                                                "anime_title": name
+                                            })
+                                        sources_data[source_name] = episodes
+                                        source_status[source_name] = "completed"
+                                    else:
+                                        source_status[source_name] = "no_results"
+                                else:
+                                    source_status[source_name] = "no_results"
+                            except Exception as e:
+                                source_status[source_name] = "error"
+                                with open("debug.log", "a") as f:
+                                    f.write(f"ERROR: {source_name} hatası: {str(e)}\n")
+
+                        elif source_name == "AnimeDepo":
+                            try:
+                                from turkanime_api.sources.animedepo import (
+                                    search_animedepo,
+                                    get_anime_episodes as get_animedepo_episodes,
+                                    get_episode_streams as get_animedepo_streams,
+                                )
+                                search_results = search_animedepo(query_title, limit=1)
+                                if search_results:
+                                    slug, name = search_results[0]
+                                    ad_episodes = get_animedepo_episodes(slug)
+                                    if ad_episodes:
+                                        episodes = []
+                                        ada = AdapterAnime(slug=slug, title=name)
+                                        for ep_id, ep_title in ad_episodes:
+                                            def make_stream_provider(es):
+                                                def provider(url):
+                                                    try:
+                                                        return get_animedepo_streams(es)
+                                                    except Exception:
+                                                        return []
+                                                return provider
+                                            ab = AdapterBolum(
+                                                url=ep_id,  # "anime_slug/bolum_slug" bileşik kimliği
+                                                title=ep_title,
+                                                anime=ada,
+                                                stream_provider=make_stream_provider(ep_id),
+                                                player_name="ANIMEDEPO"
+                                            )
+                                            episodes.append({
+                                                "title": ep_title,
+                                                "obj": ab,
+                                                "anime_title": name
+                                            })
+                                        sources_data[source_name] = episodes
+                                        source_status[source_name] = "completed"
+                                    else:
+                                        source_status[source_name] = "no_results"
+                                else:
+                                    source_status[source_name] = "no_results"
+                            except Exception as e:
+                                source_status[source_name] = "error"
+                                with open("debug.log", "a") as f:
+                                    f.write(f"ERROR: {source_name} hatası: {str(e)}\n")
+
                         # Başarılı tamamlandı, timer'ı iptal et
                         timer.cancel()
                         elapsed_time = time.time() - start_time
@@ -3757,7 +3845,7 @@ class MainWindow(ctk.CTk):
 
                 # Paralel arama - her kaynak için ayrı thread
                 threads = []
-                all_sources = ["TürkAnime", "AnimeciX", "AniList", "Anizle", "TRAnimeİzle", "OpenAnime"]
+                all_sources = ["TürkAnime", "AnimeciX", "AniList", "Anizle", "TRAnimeİzle", "OpenAnime", "Tranimaci", "AnimeDepo"]
                 for source_name in all_sources:
                     timeout = source_timeouts.get(source_name, 10)
                     thread = threading.Thread(
@@ -3995,11 +4083,11 @@ class MainWindow(ctk.CTk):
             return
 
         # Sadece bölümler için kullanılacak kaynakları ayır (AniList hariç)
-        display_sources = {k: v for k, v in self.all_episodes.items() if k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime"]}
+        display_sources = {k: v for k, v in self.all_episodes.items() if k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime", "Tranimaci", "AnimeDepo"]}
 
         # Kaynak durumlarını kontrol et ve kullanıcıya bildir
         loaded_sources = [k for k, v in display_sources.items() if v and len(v) > 0]
-        failed_sources = [k for k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime"] if k not in display_sources or not display_sources.get(k)]
+        failed_sources = [k for k in ["TürkAnime", "AnimeciX", "Anizle", "TRAnimeİzle", "OpenAnime", "Tranimaci", "AnimeDepo"] if k not in display_sources or not display_sources.get(k)]
 
         if loaded_sources:
             status_msg = f"✅ {len(loaded_sources)} kaynak yüklendi: {', '.join(loaded_sources)}"
@@ -4232,7 +4320,7 @@ class MainWindow(ctk.CTk):
                 dw.signals.connect_error(lambda msg: self.after(0, lambda m=msg: self.message(f"İndirme hatası: {m}", error=True)))
                 dw.run()
             except Exception as e:
-                self.after(0, lambda: self.message(f"İndirme başlatılamadı: {e}", error=True))
+                self.after(0, lambda e=e: self.message(f"İndirme başlatılamadı: {e}", error=True))
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_download_panel(self, bolumler):
@@ -4418,7 +4506,7 @@ class MainWindow(ctk.CTk):
                     results = anilist_client.search_anime(original_title)
                 self.after(0, lambda: self.display_anilist_search_results(results, f"Arama: {original_title}"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"Arama hatası: {e}", error=True))
+                self.after(0, lambda e=e: self.message(f"Arama hatası: {e}", error=True))
 
         threading.Thread(target=search_worker, daemon=True).start()
 
@@ -4491,7 +4579,7 @@ class MainWindow(ctk.CTk):
                     dw.signals.connect_error(lambda msg: self.after(0, lambda m=msg: self.message(f"❌ İndirme hatası: {m}", error=True)))
                     dw.run()
                 except Exception as e:
-                    self.after(0, lambda: self.message(f"❌ İndirme başlatılamadı: {e}", error=True))
+                    self.after(0, lambda e=e: self.message(f"❌ İndirme başlatılamadı: {e}", error=True))
             
             threading.Thread(target=worker, daemon=True).start()
         
@@ -4628,7 +4716,6 @@ class MainWindow(ctk.CTk):
     def get_downloaded_files(self):
         """İndirilen dosyaları tara."""
         import os
-        from pathlib import Path
 
         downloads = []
         try:
@@ -4765,7 +4852,6 @@ class MainWindow(ctk.CTk):
         """İndirilenler listesini güncelle."""
         try:
             import os
-            from pathlib import Path
 
             # İndirilen dosya yolunu oluştur
             anime_slug = bolum.anime.slug if bolum.anime else ""
@@ -5201,7 +5287,7 @@ class MainWindow(ctk.CTk):
 
                 self.after(0, lambda: self.display_anilist_search_results(results, f"Arama: {search_query}"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"Arama hatası: {e}", error=True))
+                self.after(0, lambda e=e: self.message(f"Arama hatası: {e}", error=True))
 
         threading.Thread(target=search_worker, daemon=True).start()
 
@@ -5260,7 +5346,7 @@ class MainWindow(ctk.CTk):
                 results = anilist_client.get_trending_anime()
                 self.after(0, lambda: self.display_anilist_results(results, "AniList Trendler"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"Trend yükleme hatası: {e}", error=True))
+                self.after(0, lambda e=e: self.message(f"Trend yükleme hatası: {e}", error=True))
 
         threading.Thread(target=trending_worker, daemon=True).start()
 
@@ -5300,7 +5386,7 @@ class MainWindow(ctk.CTk):
 
                 self.after(0, lambda: self.display_anilist_results(anime_list, f"AniList {list_type} Listesi"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"İzleme listesi hatası: {e}", error=True))
+                self.after(0, lambda e=e: self.message(f"İzleme listesi hatası: {e}", error=True))
 
         threading.Thread(target=watchlist_worker, daemon=True).start()
 
@@ -5317,7 +5403,7 @@ class MainWindow(ctk.CTk):
                 self.sync_progress_with_anilist()
                 self.after(0, lambda: self.message("Senkronizasyon tamamlandı"))
             except Exception as e:
-                self.after(0, lambda: self.message(f"Senkronizasyon hatası: {e}", error=True))
+                self.after(0, lambda e=e: self.message(f"Senkronizasyon hatası: {e}", error=True))
 
         threading.Thread(target=sync_worker, daemon=True).start()
 

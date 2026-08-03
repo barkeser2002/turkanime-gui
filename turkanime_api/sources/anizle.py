@@ -681,6 +681,52 @@ def _get_episode_translators(episode_slug: str) -> List[Dict[str, str]]:
     return translators
 
 
+def _origin_of(url: str) -> Optional[str]:
+    """URL'den 'https://host' kökünü çıkar."""
+    m = re.match(r"(https?://[^/]+)", url or "")
+    return m.group(1) if m else None
+
+
+def _extract_hls_stream(page_html: str, origin: str, player_page_url: str,
+                        label: str) -> Optional[Dict[str, str]]:
+    """Yeni video.js player'ından HLS stream'i çıkar ve DOĞRULA.
+
+    Anizle FirePlayer'dan video.js + HLS'e geçti; sayfa artık şunu içeriyor:
+        const masterUrl       = "/stream/<32hex>/master.txt";
+        const nativeMasterUrl = "/stream/<32hex>/native.m3u8";
+
+    ÖNEMLİ: URL'yi doğrulamadan döndürmüyoruz. Bu uçlar hâlâ gömülü-player
+    bağlamı dışından 404 veriyor; erişilemeyen bir adresi "stream" diye
+    döndürmek yt-dlp'nin onu generic link sanıp bozuk indirme üretmesine yol
+    açar (sessiz başarısızlık). Yalnızca gerçekten '#EXTM3U' dönen adresi
+    kabul ediyoruz; böylece koruma ileride gevşerse kod kendiliğinden çalışır.
+    """
+    m = (re.search(r'\bmasterUrl\s*=\s*"([^"]+)"', page_html)
+         or re.search(r'nativeMasterUrl\s*=\s*"([^"]+)"', page_html))
+    if not m:
+        return None
+
+    path = m.group(1)
+    url = path if path.startswith("http") else origin + path
+
+    try:
+        resp = _http_get(url, timeout=HTTP_TIMEOUT, headers={
+            "Referer": player_page_url,
+            "Accept": "*/*",
+            "X-Requested-With": "XMLHttpRequest",
+        })
+    except Exception:
+        return None
+
+    body = "" if resp is None else (resp.text or "")
+    if resp is None or resp.status_code != 200 or not body.lstrip().startswith("#EXTM3U"):
+        print("[Anizle] Yeni video.js player'ı bulundu ama stream korumalı "
+              f"({'yanıt yok' if resp is None else resp.status_code}); atlanıyor.")
+        return None
+
+    return {"url": url, "label": label, "type": "hls", "referer": player_page_url}
+
+
 def _process_single_video(video_info: Dict[str, str]) -> Optional[Dict[str, str]]:
     """
     Tek bir video için stream URL'sini al.
@@ -703,26 +749,34 @@ def _process_single_video(video_info: Dict[str, str]) -> Optional[Dict[str, str]
             return None
         
         player_id, _ = iframe_result
-        
-        # Player sayfasını al (anizle.org/player/, Referer gerekli!)
-        player_page_url = f"{API_BASE_URL}/player/{player_id}"
+
+        # Player sayfası, video URL'siyle AYNI host'tan alınmalı. Sabit
+        # API_BASE_URL kullanmak kırılgan: site anizle.org -> anizle.co taşındı
+        # ve eski host player sayfasına 404 döndürüyor. Video URL'leri API'den
+        # mutlak geldiği için host'u oradan türetiyoruz (domain yine değişirse
+        # kendiliğinden uyar).
+        origin = _origin_of(video_url) or API_BASE_URL
+        player_page_url = f"{origin}/player/{player_id}"
         player_response = _http_get(
             player_page_url,
             timeout=HTTP_TIMEOUT,
-            headers={"Referer": f"{API_BASE_URL}/"}
+            headers={"Referer": f"{origin}/"}
         )
-        
+
         if player_response is None or player_response.status_code != 200:
             return None
-        
-        # FirePlayer ID'sini çöz
-        fireplayer_id = _extract_fireplayer_id(player_response.text)
-        if not fireplayer_id:
-            return None
-        
-        # Gerçek video URL'sini al
-        return _get_video_stream_from_player(fireplayer_id, f"{fansub_name} - {video_name}")
-        
+
+        page_html = player_response.text
+        label = f"{fansub_name} - {video_name}"
+
+        # 1) Eski FirePlayer yolu (hâlâ kullanan player'lar için)
+        fireplayer_id = _extract_fireplayer_id(page_html)
+        if fireplayer_id:
+            return _get_video_stream_from_player(fireplayer_id, label)
+
+        # 2) Yeni video.js / HLS player'ı
+        return _extract_hls_stream(page_html, origin, player_page_url, label)
+
     except Exception:
         return None
 
@@ -785,7 +839,7 @@ def get_episode_streams(episode_slug: str, timeout: int = HTTP_TIMEOUT) -> List[
                 pass
     
     if not streams:
-        print(f"[Anizle] Yerel işlemde stream bulunamadı, uzak sunucu deniyor...")
+        print("[Anizle] Yerel işlemde stream bulunamadı, uzak sunucu deniyor...")
         return _get_streams_remote(episode_slug, timeout)
 
     print(f"[Anizle] {len(streams)} stream bulundu")

@@ -12,13 +12,13 @@
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V9.4.9.3](docs/V9.4.9.3.md)
+**Sürüm notları:** [V9.5.0](docs/V9.5.0.md)
 
 TürkAnime artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi sunuyor. Terminal (CLI) sürümü destek dışı bırakıldı; tüm geliştirme modern masaüstü uygulamasına odaklanıyor.
 
 ## ✨ Öne Çıkan Özellikler
 
-- **4 kaynak, tek arayüz:** Anizle, AnimeCix, TürkAnime ve TRAnimeİzle'den paralel erişim.
+- **7 kaynak, tek arayüz:** TürkAnime, AnimeCix, Anizle, TRAnimeİzle, OpenAnime, Tranimaci ve AnimeDepo'dan paralel erişim.
 - **Jikan + AniList arama:** MyAnimeList (Jikan) birincil, AniList fallback — geniş anime kataloguna erişim.
 - **FlareSolverr CF bypass:** Cloudflare korumalı sitelere uzak headless browser ile otomatik erişim. Sunucu adresi ayarlardan özelleştirilebilir.
 - **Hızlı stream çekme:** Paralel işleme ile 8 kat hızlı video link alma.
@@ -29,14 +29,14 @@ TürkAnime artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme de
 - **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur.
 - **Netflix benzeri arayüz:** Hover efektli kartlar, batch rendering, poster galerileri, akıcı animasyonlar.
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
-- **TRAnimeİzle cookie desteği:** İlk açılışta otomatik cookie toplama teklifi, entegre tarayıcı ile tek tıkla cookie alma (Selenium), Netscape format desteği, manuel rehber.
+- **TRAnimeİzle cookie desteği:** İlk açılışta otomatik cookie toplama teklifi, uygulama içine gömülü tarayıcı (QtWebEngine) ile tek tıkla cookie alma, Netscape format desteği, manuel rehber.
 - **Çoklu platform:** Windows için hazır paket, Python 3.9+ olan her platformdan pip ile çalıştır.
 - **Adaptör testleri:** Tüm kaynakları tek komutla test eden kapsamlı test suite'i.
 
 ## 🧭 Uygulama Akışı
 
 1. **Keşfet:** Jikan/AniList trend listeler ve kişisel öneriler tek ekranda.
-2. **Ara:** 4 kaynakta paralel arama, Jikan+AniList veritabanını aynı anda gez.
+2. **Ara:** tüm kaynaklarda paralel arama, Jikan+AniList veritabanını aynı anda gez.
 3. **İndir & Oynat:** mpv entegrasyonu sayesinde indirme ve izleme tek pencerede.
 4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, AniList'e anında yansır.
 
@@ -94,10 +94,13 @@ python -m turkanime_api.gui.main
 ### Birincil Kaynaklar
 | Kaynak | Açıklama |
 |--------|----------|
-| **Anizle** | 4500+ anime, paralel stream çekme, HLS desteği, FirePlayer pipeline |
+| **TürkAnime** | Klasik Türk anime kaynağı (şifreli embed çözümü) |
 | **AnimeCix** | Dinamik video ID, geniş fansub seçenekleri |
-| **TürkAnime** | Klasik Türk anime kaynağı |
-| **TRAnimeİzle** | Cookie tabanlı oturum, fuzzy + doğrudan arama, geniş arşiv |
+| **Anizle** | Geniş arşiv; site video.js/HLS'e geçtiği için şu an bölüm başına sınırlı kaynak |
+| **TRAnimeİzle** | Cookie tabanlı oturum — Ayarlar'dan gömülü tarayıcıyla çerez alınmalı |
+| **OpenAnime** | SvelteKit SSR JSON çıkarımı + CF bypass |
+| **Tranimaci** | SHA-256 proof-of-work WAF + JS kapısı (QtWebEngine ile aşılır), multi-CDN mp4 |
+| **AnimeDepo** | GitLab üzerinde barındırılan statik arşiv; gerçek arama ucu yok, dizin indirilip yerel fuzzy arama yapılır |
 
 ### Arama Motorları
 | Motor | Rol |
@@ -109,10 +112,13 @@ python -m turkanime_api.gui.main
 ```
 1. curl_cffi      (TLS fingerprint taklidi)
 2. cloudscraper   (JS Challenge çözümü)
-3. FlareSolverr   (Uzak headless browser)
-4. undetected-chromedriver (Selenium bypass)
+3. FlareSolverr   (Uzak headless browser — opsiyonel)
+4. QtWebEngine    (Yerel gömülü Chromium, ayrı süreçte)
 5. requests       (Fallback)
 ```
+> Not: Zincir, HTTP 200 dönen *challenge sayfalarını* da tanır ve başarı
+> saymaz; aksi hâlde ilk adımda kısa devre olup gerçek tarayıcıya hiç
+> ulaşılmıyordu. Selenium/undetected-chromedriver tamamen kaldırıldı.
 
 ### Video Sunucuları
 ```
@@ -142,6 +148,7 @@ python tests/adapters-test-all.py
 python tests/adapters-test-all.py --source animecix
 python tests/adapters-test-all.py --source anizle
 python tests/adapters-test-all.py --source tranime
+python tests/adapters-test-all.py --source animedepo
 
 # Stream testlerini atla (hızlı)
 python tests/adapters-test-all.py --skip-streams
@@ -160,6 +167,7 @@ python tests/adapters-test-all.py --json
 | **AnimeCix** | Arama, sezon/bölüm listeleme, video stream |
 | **Anizle** | Veritabanı, arama, bölüm, URL pattern, translator, video pipeline |
 | **TRAnimeİzle** | Cookie, harf/fuzzy/doğrudan arama, anime/bölüm detay, fansub, iframe |
+| **AnimeDepo** | Dizin yükleme, arama, sıralama (tam eşleşme), bölüm listesi, stream |
 
 > **Not:** TRAnimeİzle doğrudan arama ve stream testleri geçerli bir cookie gerektirir. Cookie süresi dolmuşsa bu testler beklenen şekilde başarısız olur.
 

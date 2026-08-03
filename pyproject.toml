@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "turkanime-gui"
-version = "9.4.9.3"
+version = "9.4.12.2"
 description = "Türkanime video oynatıcı ve indirici"
 authors = ["barkeser2002 <bariskeser@bariskeser.com>", "Junicchi <junicchi@waifu.club>"]
 readme = "README.md"
@@ -40,15 +40,17 @@ rich = ">=13.0.0"
 easygui = ">=0.98.2"
 beautifulsoup4 = "*"
 requests = "*"
-# PyQt6 bazı Linux/musl ve yeni Python kombinasyonlarında tekerlek yayınlamayabilir.
-# Bu nedenle opsiyonel yapıyoruz; GUI isteyenler extras ile kurabilir.
-# PyQt6 = { version = ">=6.5", optional = true }
+# Yeni Qt GUI'si PySide6 (LGPL) üzerine kuruluyor; QtWebEngine cookie/CF akışı
+# için gerekli. Opsiyonel tutuluyor, GUI isteyenler extras ile kurar.
+pyside6 = { version = ">=6.7", optional = true }
+# NOT: customtkinter + selenium, CTk->Qt geçişi tamamlanana kadar korunuyor
+# (eski GUI çalışır kalsın). Geçiş bittiğinde (A5) kaldırılacak.
 customtkinter = { version = ">=5.2.0", optional = true }
 
 selenium = { version = ">=4.11.0", optional = true }
 
 [tool.poetry.extras]
-gui = ["customtkinter", "selenium"]
+gui = ["pyside6", "customtkinter", "selenium"]
 
 [tool.poetry.group.dev.dependencies]
 toml = "*"
@@ -57,6 +59,21 @@ toml = "*"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.pylint.main]
+# PySide6 derlenmiş bir C++ eklentisi; pylint onu statik olarak inceleyemediği
+# için her Qt importuna "No name 'QWidget' in module" (E0611) yanlış pozitifi
+# üretiyordu. CI `pylint -E` koştuğundan bu, gerçek hataları gürültüde boğuyor.
+# Allow-list, pylint'in modülü gerçekten yükleyip incelemesini sağlar.
+extension-pkg-allow-list = ["PySide6"]
+ignored-modules = ["py7zr"]
+
+[tool.pylint.typecheck]
+# Qt sinyalleri (clicked, textChanged, özel Signal'ler) metaclass tarafından
+# üretildiği için pylint bunlarda `.connect/.emit/.disconnect` üyesini göremiyor
+# ve E1101 yanlış pozitifi veriyor. Yalnızca bu üç üye adı muaf tutuluyor —
+# gerçek `no-member` hataları yakalanmaya devam eder.
+generated-members = ["connect", "emit", "disconnect"]
+
 [tool.poetry.scripts]
 # Publish sırasında yapılması gerekenler:
 #   turkanime_api/version.py dosyasındaki build, pip olarak değişmeli.
@@ -64,4 +81,9 @@ build-backend = "poetry.core.masonry.api"
 
 turkanime = 'turkanime_api.cli.__main__:main'
 turkanime-cli = 'turkanime_api.cli.__main__:main'
-turkanime-gui = 'turkanime_api.gui.main:run'
+# Geçiş dönemi yönlendiricisi: varsayılan eski CustomTkinter GUI'si,
+# `TURKANIME_QT=1` ile yeni Qt GUI'si. Geçiş tamamlanınca (Faz 9) doğrudan
+# `turkanime_api.gui.qt:run`'a bağlanacak.
+turkanime-gui = 'turkanime_api.gui.boot:main'
+# Yeni PySide6 + QtWebEngine GUI'si (doğrudan giriş)
+turkanime-qt = 'turkanime_api.gui.qt:run'

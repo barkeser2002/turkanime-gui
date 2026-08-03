@@ -110,6 +110,25 @@ _suite = TestSuite()
 _verbose = False
 
 
+def _ensure_utf8_stdout():
+    """Çıktıyı UTF-8'e sabitle.
+
+    Test paketi kutu çizgileri (═) ve emoji kullanıyor; Windows'ta varsayılan
+    konsol kod sayfası (Türkçe kurulumda cp1254) bunları kodlayamadığı için
+    süreç `UnicodeEncodeError` ile çöküyordu — yani testler o makinelerde hiç
+    çalışmıyordu. `errors="replace"` ile kodlanamayan karakter çıktıyı düşürmek
+    yerine yerine bir yer tutucu basar.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+_ensure_utf8_stdout()
+
+
 def _log(msg: str, color: str = ""):
     """Renkli log."""
     if color:
@@ -792,6 +811,109 @@ def test_curl_cffi_available():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ANIMEDEPO TESTLERİ
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_animedepo_index():
+    """AnimeDepo dizin (dizin.json) yükleme testi."""
+    from turkanime_api.sources.animedepo import get_anime_listesi
+
+    liste = get_anime_listesi()
+    if not liste:
+        return False, "Dizin boş", ""
+    slug, title = liste[0]
+    if not slug or not title:
+        return False, "Dizin girdisi eksik (slug/title)", str(liste[:2])
+    details = f"Toplam anime: {len(liste)}\nÖrnek: {liste[:3]}"
+    _log_verbose(details)
+    return True, f"{len(liste)} anime yüklendi", details
+
+
+def test_animedepo_search():
+    """AnimeDepo yerel fuzzy arama testi."""
+    from turkanime_api.sources.animedepo import search_animedepo
+
+    results = search_animedepo("one piece", limit=10)
+    if not results:
+        return False, "Arama sonucu boş", ""
+    names = [t for _, t in results]
+    details = f"Sonuç: {len(results)}\nİlk 5: {names[:5]}"
+    _log_verbose(details)
+    if any("one piece" in n.lower() for n in names):
+        return True, f"{len(results)} sonuç bulundu", details
+    return False, "Sonuç var ama 'one piece' eşleşmesi yok", details
+
+
+def test_animedepo_search_ranking():
+    """AnimeDepo sıralama testi.
+
+    GUI/CLI otomatik aramada `limit=1` kullandığı için sıralama kritik:
+    tam eşleşme, alt-dize eşleşmelerinin önüne geçmeli.
+    """
+    from turkanime_api.sources.animedepo import search_animedepo
+
+    results = search_animedepo("naruto", limit=5)
+    if not results:
+        return False, "Naruto araması boş", ""
+    first_title = results[0][1].lower()
+    details = f"İlk 5: {[t for _, t in results]}"
+    _log_verbose(details)
+    if first_title == "naruto":
+        return True, "Tam eşleşme ilk sırada", details
+    return False, f"İlk sonuç tam eşleşme değil: {results[0][1]!r}", details
+
+
+def test_animedepo_episodes():
+    """AnimeDepo bölüm listesi testi."""
+    from turkanime_api.sources.animedepo import search_animedepo, get_anime_episodes
+
+    found = search_animedepo("one piece", limit=1)
+    if not found:
+        return False, "Arama sonucu yok", ""
+    slug, name = found[0]
+    eps = get_anime_episodes(slug)
+    if not eps:
+        return False, f"'{name}' için bölüm bulunamadı", ""
+    ep_id, ep_title = eps[0]
+    # Bölüm kimliği "anime_slug/bolum_slug" bileşik biçiminde olmalı
+    if "/" not in ep_id:
+        return False, f"Bölüm kimliği bileşik değil: {ep_id!r}", str(eps[:2])
+    details = f"{name}: {len(eps)} bölüm\nİlk: {ep_id} — {ep_title}"
+    _log_verbose(details)
+    return True, f"{len(eps)} bölüm bulundu", details
+
+
+def test_animedepo_streams():
+    """AnimeDepo stream testi — çözülemeyen mask'ler elenmiş olmalı."""
+    from turkanime_api.sources.animedepo import (
+        search_animedepo, get_anime_episodes, get_episode_streams)
+
+    found = search_animedepo("one piece", limit=1)
+    if not found:
+        return False, "Arama sonucu yok", ""
+    eps = get_anime_episodes(found[0][0])
+    if not eps:
+        return False, "Bölüm yok", ""
+
+    streams = get_episode_streams(eps[0][0])
+    if not streams:
+        return False, "Stream bulunamadı", ""
+
+    # Çözülmemiş turkanime player mask'i stream sayılmamalı (bozuk indirme üretir)
+    unresolved = [s for s in streams if "/player/" in str(s.get("url", ""))]
+    if unresolved:
+        return False, f"{len(unresolved)} çözülmemiş mask URL'si döndü", str(unresolved[:2])
+
+    invalid = [s for s in streams if not str(s.get("url", "")).startswith("http")]
+    if invalid:
+        return False, f"{len(invalid)} geçersiz URL", str(invalid[:2])
+
+    details = f"{len(streams)} stream\nÖrnek: {streams[0].get('label')} — {str(streams[0].get('url'))[:70]}"
+    _log_verbose(details)
+    return True, f"{len(streams)} geçerli stream", details
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TEST RUNNER
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -828,6 +950,14 @@ TRANIME_TESTS = [
     ("TRAnime search_tranime Alias", test_tranime_search_alias),
 ]
 
+ANIMEDEPO_TESTS = [
+    ("AnimeDepo Dizin Yükleme", test_animedepo_index),
+    ("AnimeDepo Arama", test_animedepo_search),
+    ("AnimeDepo Sıralama (tam eşleşme)", test_animedepo_search_ranking),
+    ("AnimeDepo Bölüm Listesi", test_animedepo_episodes),
+    ("AnimeDepo Stream Listesi", test_animedepo_streams),
+]
+
 GENERAL_TESTS = [
     ("Import Kontrolü", test_imports),
     ("curl_cffi Kontrolü", test_curl_cffi_available),
@@ -839,6 +969,7 @@ STREAM_TESTS = {
     "Anizle Tam Stream Pipeline",
     "TRAnime Video iFrame",
     "TRAnime Fansub Kaynakları",
+    "AnimeDepo Stream Listesi",
 }
 
 
@@ -910,7 +1041,8 @@ def main():
     global _verbose, _suite
 
     parser = argparse.ArgumentParser(description="TürkAnime Kaynak Adaptör Testleri")
-    parser.add_argument("--source", "-s", choices=["animecix", "anizle", "tranime", "all"],
+    parser.add_argument("--source", "-s",
+                        choices=["animecix", "anizle", "tranime", "animedepo", "all"],
                         default="all", help="Test edilecek kaynak (varsayılan: all)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Detaylı çıktı")
     parser.add_argument("--skip-streams", action="store_true", help="Stream testlerini atla")
@@ -945,6 +1077,9 @@ def main():
 
     if source in ("all", "tranime"):
         run_source_tests("TRAnimeİzle", TRANIME_TESTS, args.skip_streams)
+
+    if source in ("all", "animedepo"):
+        run_source_tests("AnimeDepo", ANIMEDEPO_TESTS, args.skip_streams)
 
     _suite.end_time = time.time()
 

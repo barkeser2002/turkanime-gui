@@ -1,16 +1,34 @@
-name: Build and Release GUI/CLI
+name: Release (tag → build, publish, PyPI)
 
+# Tetikleyici: bir tag pushlandığında. Örnekler:
+#   git tag v9.4.12.2 && git push origin v9.4.12.2
+#   git tag 9.4.12.2  && git push origin 9.4.12.2
+#
+# Workflow:
+#   1) Tüm platformlar için GUI + CLI + Simple GUI exe'lerini paralel derle
+#   2) Tag adında bir GitHub Release oluştur (release notlarını docs/V<tag>.md'den çek)
+#   3) Eski release'leri otomatik temizle (en son 5'i koru)
+#   4) PyPI'a poetry ile yayınla
 on:
   push:
     tags:
-      - '*v*'
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Build matrix — Windows / Linux / macOS
+  # ─────────────────────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
@@ -22,12 +40,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Python deps
         shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-gui.txt
-          pip install pyinstaller
+          pip install pyinstaller rapidfuzz
 
       - name: Prepare embedded runtime (Windows only)
         if: matrix.os == 'windows-latest'
@@ -35,20 +53,16 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
           Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "7zr.exe"
-          # yt-dlp
           curl.exe -L -o bin/yt-dlp.exe "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-          # aria2c
           curl.exe -L -o aria2.zip "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip"
           Expand-Archive -LiteralPath aria2.zip -DestinationPath tmp_aria2
           $aria2Dir = Get-ChildItem -Recurse -Path tmp_aria2 -Filter aria2c.exe | Select-Object -First 1 | Split-Path -Parent
           Copy-Item -Recurse -Force "$aria2Dir\*" "bin\"
-          # mpv
           $mpvUrl = "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20231231-git-abc2a74.7z/download"
           curl.exe -L -o mpv.7z $mpvUrl
           ./7zr.exe x mpv.7z -obin -y | Out-Null
           $mpvExe = Get-ChildItem -Recurse -Path bin -Filter mpv.exe | Select-Object -First 1
           if (-not $mpvExe) { throw "mpv.exe not found after extraction" }
-          # ffmpeg
           curl.exe -L -o ffmpeg.zip "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
           Expand-Archive -LiteralPath ffmpeg.zip -DestinationPath tmp_ffmpeg
           $ffmpegExe = Get-ChildItem -Recurse -Path tmp_ffmpeg -Filter ffmpeg.exe | Select-Object -First 1
@@ -57,39 +71,62 @@ jobs:
           Copy-Item -Force $ffmpegExe.FullName bin/
           if ($ffprobeExe) { Copy-Item -Force $ffprobeExe.FullName bin/ }
 
-      - name: Build with PyInstaller (spec)
+      - name: Build GUI (main)
+        shell: bash
+        run: python -m PyInstaller pyinstaller.spec --noconfirm
+
+      # PySide6 + QtWebEngine GUI'si. onedir üretir (QtWebEngine ile onefile
+      # kırılgan: QtWebEngineProcess çalışma anında bulunamıyor), bu yüzden
+      # klasör zip'lenerek dağıtılır (~269 MB zip / ~684 MB açılmış).
+      - name: Build Qt GUI (PySide6 + QtWebEngine)
         shell: bash
         run: |
-          python -m PyInstaller pyinstaller.spec
+          pip install "PySide6>=6.7"
+          python -m PyInstaller turkanime-qt.spec --noconfirm
+
+      - name: Package Qt GUI (zip)
+        shell: bash
+        run: |
+          OS="${{ matrix.os }}"
+          case "$OS" in
+            windows-latest) SUFFIX=windows ;;
+            ubuntu-latest)  SUFFIX=linux ;;
+            macos-latest)   SUFFIX=macos ;;
+          esac
+          if [[ -d dist/turkanime-qt ]]; then
+            python -c "import shutil,sys; shutil.make_archive(f'dist/turkanime-qt-{sys.argv[1]}','zip','dist/turkanime-qt')" "$SUFFIX"
+          fi
 
       - name: Build CLI (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller pyinstaller_versionfile
+          pip install pyinstaller_versionfile
 
           Remove-Item -Force version_generator.py -ErrorAction Ignore
-          Add-Content -Path version_generator.py -Value "import pyinstaller_versionfile"
-          Add-Content -Path version_generator.py -Value "from turkanime_api.cli.version import __version__"
-          Add-Content -Path version_generator.py -Value ""
-          Add-Content -Path version_generator.py -Value "pyinstaller_versionfile.create_versionfile("
-          Add-Content -Path version_generator.py -Value "    output_file='versionfile.txt',"
-          Add-Content -Path version_generator.py -Value "    version=__version__,"
-          Add-Content -Path version_generator.py -Value "    company_name='TurkAnime Dev',"
-          Add-Content -Path version_generator.py -Value "    file_description='Anime İndirici & Oynatıcı',"
-          Add-Content -Path version_generator.py -Value "    internal_name='TurkAnime',"
-          Add-Content -Path version_generator.py -Value "    legal_copyright='© Barkeser2002, All rights reserved.',"
-          Add-Content -Path version_generator.py -Value "    original_filename='TurkAnime.exe',"
-          Add-Content -Path version_generator.py -Value "    product_name='TurkAnime İndirici'"
-          Add-Content -Path version_generator.py -Value ")"
+          @"
+          import pyinstaller_versionfile
+          from turkanime_api.cli.version import __version__
+
+          pyinstaller_versionfile.create_versionfile(
+              output_file='versionfile.txt',
+              version=__version__,
+              company_name='TurkAnime Dev',
+              file_description='Anime İndirici & Oynatıcı',
+              internal_name='TurkAnime',
+              legal_copyright='© Barkeser2002, All rights reserved.',
+              original_filename='TurkAnime.exe',
+              product_name='TurkAnime İndirici'
+          )
+          "@ | Set-Content -Encoding utf8 version_generator.py
           python version_generator.py
 
-          Remove-Item -Force compiled.py -ErrorAction Ignore
-          Add-Content -Path compiled.py -Value 'from turkanime_api.cli.__main__ import main'
-          Add-Content -Path compiled.py -Value 'if __name__ == "__main__":'
-          Add-Content -Path compiled.py -Value '    main()'
+          @"
+          from turkanime_api.cli.__main__ import main
+          if __name__ == "__main__":
+              main()
+          "@ | Set-Content -Encoding utf8 compiled.py
 
           pyinstaller --noconfirm --onefile --console `
             --icon "docs\TurkAnime.ico" `
@@ -106,108 +143,183 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          python -m pip install pyinstaller
           printf '%s\n' \
             'from turkanime_api.cli.__main__ import main' \
             'if __name__ == "__main__":' \
             '    main()' > compiled.py
           python -m PyInstaller \
-            --noconfirm \
-            --name turkanime-cli \
-            --onefile \
-            --console \
-            --hidden-import yt_dlp \
-            --hidden-import curl_cffi \
-            --hidden-import Crypto \
-            --hidden-import selenium \
-            --add-data "gereksinimler.json:." \
-            compiled.py
+            --noconfirm --name turkanime-cli --onefile --console \
+            --hidden-import yt_dlp --hidden-import curl_cffi \
+            --hidden-import Crypto --hidden-import selenium \
+            --add-data "gereksinimler.json:." compiled.py
 
-      - name: Rename artifact per OS
+      - name: Rename artifacts per OS
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            mv dist/turkanime-gui.exe dist/turkanime-gui-windows.exe
-            certutil -hashfile dist/turkanime-gui-windows.exe MD5 > dist/turkanime-gui-windows.exe.md5 || echo "md5 skipped"
-            if [[ -f dist/TurkAnime.exe ]]; then mv dist/TurkAnime.exe dist/turkanime-cli-windows.exe; elif [[ -f dist/turkanime-cli.exe ]]; then mv dist/turkanime-cli.exe dist/turkanime-cli-windows.exe; fi
-            if [[ -f dist/turkanime-cli-windows.exe ]]; then certutil -hashfile dist/turkanime-cli-windows.exe MD5 > dist/turkanime-cli-windows.exe.md5 || echo "md5 skipped"; fi
-          elif [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            mv dist/turkanime-gui dist/turkanime-gui-linux
-            md5sum dist/turkanime-gui-linux > dist/turkanime-gui-linux.md5 || echo "md5 skipped"
-            if [[ -f dist/turkanime-cli ]]; then mv dist/turkanime-cli dist/turkanime-cli-linux; fi
-            if [[ -f dist/turkanime-cli-linux ]]; then md5sum dist/turkanime-cli-linux > dist/turkanime-cli-linux.md5 || echo "md5 skipped"; fi
-          else
-            mv dist/turkanime-gui dist/turkanime-gui-macos
-            md5 -r dist/turkanime-gui-macos > dist/turkanime-gui-macos.md5 || echo "md5 skipped"
-            if [[ -f dist/turkanime-cli ]]; then mv dist/turkanime-cli dist/turkanime-cli-macos; fi
-            if [[ -f dist/turkanime-cli-macos ]]; then md5 -r dist/turkanime-cli-macos > dist/turkanime-cli-macos.md5 || echo "md5 skipped"; fi
-          fi
+          OS="${{ matrix.os }}"
+          case "$OS" in
+            windows-latest)
+              mv dist/turkanime-gui.exe          dist/turkanime-gui-windows.exe          2>/dev/null || true
+              if   [[ -f dist/TurkAnime.exe ]];     then mv dist/TurkAnime.exe          dist/turkanime-cli-windows.exe
+              elif [[ -f dist/turkanime-cli.exe ]]; then mv dist/turkanime-cli.exe      dist/turkanime-cli-windows.exe
+              fi
+              for f in turkanime-gui-windows.exe turkanime-qt-windows.zip turkanime-cli-windows.exe; do
+                [[ -f dist/$f ]] && certutil -hashfile dist/$f MD5 > dist/$f.md5 || true
+              done
+              ;;
+            ubuntu-latest)
+              mv dist/turkanime-gui     dist/turkanime-gui-linux     2>/dev/null || true
+              mv dist/turkanime-cli     dist/turkanime-cli-linux     2>/dev/null || true
+              for f in turkanime-gui-linux turkanime-qt-linux.zip turkanime-cli-linux; do
+                [[ -f dist/$f ]] && md5sum dist/$f > dist/$f.md5 || true
+              done
+              ;;
+            macos-latest)
+              mv dist/turkanime-gui     dist/turkanime-gui-macos     2>/dev/null || true
+              mv dist/turkanime-cli     dist/turkanime-cli-macos     2>/dev/null || true
+              for f in turkanime-gui-macos turkanime-qt-macos.zip turkanime-cli-macos; do
+                [[ -f dist/$f ]] && md5 -r dist/$f > dist/$f.md5 || true
+              done
+              ;;
+          esac
 
-      - name: Create version.json
+      - name: Create version.json (Linux only — tek üretim)
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          python -c "
-          import json
-          import datetime
-          import os
-          os.chdir('turkanime_api/cli')
-          from version import __version__
-          tag_name = os.environ.get('GITHUB_REF_NAME', 'latest')
-          version_data = {
-              'version': __version__,
-              'release_date': datetime.datetime.now().isoformat(),
-              'changelog': 'Otomatik güncelleme',
-              'platforms': {
-                  'windows': {
-                      'url': f'https://github.com/barkeser2002/turkanime-gui/releases/download/{tag_name}/turkanime-gui-windows.exe',
-                      'checksum': ''
-                  },
-                  'linux': {
-                      'url': f'https://github.com/barkeser2002/turkanime-gui/releases/download/{tag_name}/turkanime-gui-linux',
-                      'checksum': ''
-                  },
-                  'macos': {
-                      'url': f'https://github.com/barkeser2002/turkanime-gui/releases/download/{tag_name}/turkanime-gui-macos',
-                      'checksum': ''
-                  }
+          python - <<'PY'
+          import json, datetime, os
+          from turkanime_api.cli.version import __version__
+          tag = os.environ.get("GITHUB_REF_NAME", "latest")
+          base = f"https://github.com/${{ github.repository }}/releases/download/{tag}"
+          payload = {
+              "version": __version__,
+              "release_date": datetime.datetime.utcnow().isoformat() + "Z",
+              "platforms": {
+                  os_: {
+                      "gui":    f"{base}/turkanime-gui-{os_}{ext}",
+                      "qt":     f"{base}/turkanime-qt-{os_}.zip",
+                      "cli":    f"{base}/turkanime-cli-{os_}{ext}",
+                  } for os_, ext in (("windows", ".exe"), ("linux", ""), ("macos", ""))
               }
           }
-          with open('../../docs/version.json', 'w') as f:
-              json.dump(version_data, f, indent=2)
-          "
+          os.makedirs("docs", exist_ok=True)
+          with open("docs/version.json", "w") as fp:
+              json.dump(payload, fp, indent=2)
+          PY
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: turkanime-gui-${{ matrix.os }}
+          name: turkanime-${{ matrix.os }}
           path: |
-            dist/turkanime-gui-windows.exe
-            dist/turkanime-gui-linux
-            dist/turkanime-gui-macos
-            dist/turkanime-cli-windows.exe
-            dist/turkanime-cli-linux
-            dist/turkanime-cli-macos
+            dist/turkanime-gui-*
+            dist/turkanime-qt-*.zip
+            dist/turkanime-cli-*
             docs/version.json
           if-no-files-found: ignore
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # Release: GitHub Release oluştur + eski release'leri temizle
+  # ─────────────────────────────────────────────────────────────────────────
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (release notlarına erişmek için)
+        uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: turkanime-gui-*
+          pattern: turkanime-*
           path: dist
           merge-multiple: true
 
-      - name: Create Release
+      - name: Resolve release notes path
+        id: notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # vX.Y.Z → docs/VX.Y.Z.md, X.Y.Z → docs/VX.Y.Z.md
+          NORM="${TAG#v}"
+          CANDIDATES=("docs/V${NORM}.md" "docs/v${NORM}.md" "docs/V${TAG}.md")
+          for c in "${CANDIDATES[@]}"; do
+            if [[ -f "$c" ]]; then
+              echo "notes_path=$c" >> "$GITHUB_OUTPUT"
+              echo "Found release notes: $c"
+              exit 0
+            fi
+          done
+          echo "Release notes file not found for $TAG; falling back to auto-generated."
+          echo "notes_path=" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          generate_release_notes: ${{ steps.notes.outputs.notes_path == '' }}
           files: |
-            dist/**
-            docs/version.json
+            dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prune old releases (en son 5'i koru)
+        uses: dev-drprasad/delete-older-releases@v0.3.4
+        with:
+          keep_latest: 5
+          delete_tags: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PyPI publish
+  # ─────────────────────────────────────────────────────────────────────────
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/turkanime-gui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry==1.8.3
+
+      - name: Configure poetry
+        run: |
+          poetry config virtualenvs.create false
+
+      - name: Sync pyproject version with tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          poetry version "$TAG"
+          # version.py'ler de güncel kalsın (commit'lemiyoruz, sadece build için)
+          sed -i "s/__version__ = .*/__version__ = \"$TAG\"/" turkanime_api/version.py
+          sed -i "s/__version__ = .*/__version__ = \"$TAG\"/" turkanime_api/cli/version.py
+
+      - name: Build (sdist + wheel)
+        run: poetry build
+
+      - name: Publish to PyPI
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [[ -z "${POETRY_PYPI_TOKEN_PYPI}" ]]; then
+            echo "::warning::PYPI_API_TOKEN sırrı tanımlı değil — PyPI yüklemesi atlanıyor."
+            exit 0
+          fi
+          poetry publish --no-interaction
