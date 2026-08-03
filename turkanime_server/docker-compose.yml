@@ -48,6 +48,46 @@ services:
     networks:
       - turkanime-net
 
+  # Arşiv yayıncısı (Faz 12). Tarayıcıyla aynı birimi okur, arşivi git'e işler.
+  # Ayrı servis, çünkü ayrı ritim: tarama saatler sürer, yayın saniyeler. Tipik
+  # akış tek satır — önce tara, sonra yayınla:
+  #   docker compose --profile crawler run --rm turkanime-crawler \
+  #     && docker compose --profile yayin run --rm turkanime-yayinci
+  # Sırlar `.env` dosyasından gelir (bkz. .env.example); compose dosyasına
+  # token yazılmaz.
+  turkanime-yayinci:
+    build:
+      context: ..
+      dockerfile: turkanime_server/Dockerfile
+    container_name: turkanime-yayinci
+    command: >
+      python -m turkanime_server.yayinci
+      --arsiv /veri/arsiv
+    working_dir: /app
+    # Değerler compose'un kendiliğinden okuduğu `.env` dosyasından gelir;
+    # `env_file:` kullanılmıyor çünkü dosya yoksa compose hata verir ve
+    # `--kuru-calistir` denemesi bile mümkün olmaz.
+    environment:
+      PYTHONUNBUFFERED: "1"
+      TURKANIME_ARSIV_UZAK: "${TURKANIME_ARSIV_UZAK:-}"
+      TURKANIME_ARSIV_DAL: "${TURKANIME_ARSIV_DAL:-master}"
+      TURKANIME_ARSIV_TOKEN: "${TURKANIME_ARSIV_TOKEN:-}"
+      TURKANIME_ARSIV_KULLANICI: "${TURKANIME_ARSIV_KULLANICI:-oauth2}"
+      TURKANIME_ARSIV_SSH_ANAHTAR: "${TURKANIME_ARSIV_SSH_ANAHTAR:-}"
+      TURKANIME_ARSIV_AD: "${TURKANIME_ARSIV_AD:-turkanime-arsiv}"
+      TURKANIME_ARSIV_EPOSTA: "${TURKANIME_ARSIV_EPOSTA:-turkanime-arsiv@users.noreply.localhost}"
+      TURKANIME_ARSIV_AZAMI_GECMIS: "${TURKANIME_ARSIV_AZAMI_GECMIS:-200}"
+      TURKANIME_ARSIV_BAKIM_ARALIGI: "${TURKANIME_ARSIV_BAKIM_ARALIGI:-25}"
+    volumes:
+      - turkanime-arsiv:/veri
+      # SSH ile itiliyorsa anahtarı salt-okunur bağlayın ve .env içinde
+      # TURKANIME_ARSIV_SSH_ANAHTAR=/sirlar/arsiv_ed25519 verin.
+      #- ./sirlar:/sirlar:ro
+    restart: "no"
+    profiles: ["yayin"]
+    networks:
+      - turkanime-net
+
 volumes:
   turkanime-arsiv:
 

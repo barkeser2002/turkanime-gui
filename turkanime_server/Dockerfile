@@ -12,11 +12,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Sistem bağımlılıkları — curl_cffi'ın libcurl-impersonate için minimum + curl (healthcheck için)
+# Sistem bağımlılıkları — curl_cffi'ın libcurl-impersonate için minimum + curl
+# (healthcheck) + git & openssh-client (Faz 12 arşiv yayıncısı; `git push`
+# ikiliyi doğrudan çağırır, SSH anahtarıyla itme seçeneği için ssh de gerekli).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
+        git \
+        openssh-client \
         libssl3 \
         libffi8 \
     && rm -rf /var/lib/apt/lists/*

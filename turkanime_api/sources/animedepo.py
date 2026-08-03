@@ -14,11 +14,19 @@ Dizin yapısı (GitLab raw):
 
 Bölüm kimliği bu modülde "anime_slug/bolum_slug" bileşik biçiminde taşınır;
 böylece `get_episode_streams` doğru JSON yolunu kurabilir.
+
+Arşiv adresi yapılandırılabilir (Faz 12): `turkanime_server/yayinci` kendi
+arşivini başka bir depoya yayınlayabildiği için istemci de oraya
+yönlendirilebilmeli. Öncelik sırası ortam değişkeni → `ayarlar.json` →
+`BASE_URL`; hiçbiri yoksa davranış birebir eskisi gibidir.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 from difflib import SequenceMatcher
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,10 +39,59 @@ except ImportError:  # pragma: no cover - kütüphane yoksa düz requests'e dü�
 
 
 BASE_URL = "https://gitlab.com/AnimeDepo/animedepo/-/raw/master"
+ORTAM_ANAHTARI = "TURKANIME_ARSIV_URL"
+AYAR_ANAHTARI = "animedepo_url"
 HTTP_TIMEOUT = 10
 
 _dizin_lock = Lock()
 _dizin_cache: Optional[Dict[str, Any]] = None
+# path → ETag. Koşullu istek için: dizin.json arşivin en çok indirilen dosyası
+# ve turların çoğunda değişmiyor.
+_etag_defteri: Dict[str, str] = {}
+_taban_cache: Optional[str] = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Arşiv adresi
+# ─────────────────────────────────────────────────────────────────────────────
+def _ayar_dosyasi() -> Optional[Path]:
+    """`ayarlar.json`'ın yolu — `Dosyalar` ile aynı kural, ama salt okunur.
+
+    `Dosyalar()` örneklemiyoruz: yapıcısı dosya yaratıyor, eksik ayarları
+    yazıyor ve gerekirse `user_id` üretiyor. Bir URL okumak için kullanıcının
+    ayar dosyasına yazmak yanlış olurdu (sunucu/CI ortamında da istenmez).
+    """
+    kok = Path.cwd() if (Path.cwd() / ".git").is_dir() else Path.home() / "Turkanime"
+    yol = kok / "ayarlar.json"
+    return yol if yol.is_file() else None
+
+
+def taban_url() -> str:
+    """Kullanılacak arşiv kök adresi (süreç boyunca bir kez çözülür)."""
+    global _taban_cache
+    if _taban_cache:
+        return _taban_cache
+
+    aday = (os.environ.get(ORTAM_ANAHTARI) or "").strip()
+    if not aday:
+        yol = _ayar_dosyasi()
+        if yol is not None:
+            try:
+                deger = json.loads(yol.read_text(encoding="utf-8")).get(AYAR_ANAHTARI)
+                aday = (deger or "").strip() if isinstance(deger, str) else ""
+            except Exception:
+                aday = ""       # bozuk/okunamayan ayar varsayılanı bozmasın
+    _taban_cache = (aday or BASE_URL).rstrip("/")
+    return _taban_cache
+
+
+def taban_url_sifirla() -> None:
+    """Çözülmüş adresi ve ona bağlı cache'leri unut (ayar değişince)."""
+    global _taban_cache, _dizin_cache
+    with _dizin_lock:
+        _taban_cache = None
+        _dizin_cache = None
+        _etag_defteri.clear()
 
 
 def _session():
@@ -48,15 +105,41 @@ def _session():
 
 
 def fetch_json(path: str) -> Any:
-    """AnimeDepo JSON dosyasını getir."""
-    url = BASE_URL + "/" + path.lstrip("/")
+    """AnimeDepo JSON dosyasını getir (yanıtın ETag'ini not eder)."""
+    url = taban_url() + "/" + path.lstrip("/")
     r = _session().get(url, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
+    etag = r.headers.get("ETag")
+    if etag:
+        _etag_defteri[path] = etag
     return r.json()
 
 
-def dizin() -> Dict[str, Any]:
+def _kosullu_getir(path: str) -> Tuple[Any, bool]:
+    """``(veri, degismedi)`` — ETag biliniyorsa `If-None-Match` ile ister.
+
+    Bilinen ETag yoksa düz `fetch_json`'a düşer; böylece `fetch_json`'ı
+    sahteleyen çağrı yolları (testler, yerel arşiv) bozulmaz.
+    """
+    etag = _etag_defteri.get(path)
+    if not etag:
+        return fetch_json(path), False
+    url = taban_url() + "/" + path.lstrip("/")
+    r = _session().get(url, timeout=HTTP_TIMEOUT, headers={"If-None-Match": etag})
+    if r.status_code == 304:
+        return None, True
+    r.raise_for_status()
+    yeni = r.headers.get("ETag")
+    if yeni:
+        _etag_defteri[path] = yeni
+    return r.json(), False
+
+
+def dizin(tazele: bool = False) -> Dict[str, Any]:
     """AnimeDepo dizin.json dosyasını cache'li döndür.
+
+    ``tazele=True`` cache'i koşullu istekle doğrular: sunucu 304 döndürürse
+    (arşiv commit'i değişmemişse) megabaytlık dizin yeniden indirilmez.
 
     NOT: Başarısızlık cache'lenmez. Aksi hâlde tek bir geçici ağ hatası
     AnimeDepo'yu süreç boyunca sessizce devre dışı bırakır (her arama 0 sonuç,
@@ -64,12 +147,17 @@ def dizin() -> Dict[str, Any]:
     """
     global _dizin_cache
     with _dizin_lock:
-        if _dizin_cache:
+        if _dizin_cache and not tazele:
             return _dizin_cache
         try:
-            data = fetch_json("dizin.json")
+            if _dizin_cache and tazele:
+                data, degismedi = _kosullu_getir("dizin.json")
+                if degismedi:
+                    return _dizin_cache
+            else:
+                data = fetch_json("dizin.json")
         except Exception:
-            return {}            # cache'leme: sonraki çağrı tekrar dener
+            return _dizin_cache or {}    # cache'leme: sonraki çağrı tekrar dener
         if data:
             _dizin_cache = data
         return data or {}
@@ -224,5 +312,10 @@ __all__ = [
     "get_anime_episodes",
     "get_episode_streams",
     "get_anime_listesi",
+    "dizin",
+    "taban_url",
+    "taban_url_sifirla",
     "BASE_URL",
+    "ORTAM_ANAHTARI",
+    "AYAR_ANAHTARI",
 ]
