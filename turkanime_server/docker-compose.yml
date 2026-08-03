@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  turkanime-api:
+    build:
+      context: ..               # repo köküyle build et — turkanime_api da gerekli
+      dockerfile: turkanime_server/Dockerfile
+    container_name: turkanime-api
+    ports:
+      - "34665:34665"
+    environment:
+      PORT: "34665"
+      DEBUG: "false"
+      DB_HOST: "${DB_HOST:-ip.bariskeser.com}"
+      DB_USER: "${DB_USER:-turkanime-gui}"
+      DB_PASSWORD: "${DB_PASSWORD:-}"
+      DB_NAME: "${DB_NAME:-turkanime-gui}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:34665/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - turkanime-net
+
+  # Arka plan arşiv tarayıcısı (Faz 11). API ile aynı imajı kullanır; tek farkı
+  # komutu. Bilerek `restart: on-failure` değil `no`: her tur kuyrukta hazır ne
+  # varsa işleyip çıkar, tekrar başlatmayı cron/systemd'ye bırakır. Sonsuz
+  # döngüde çalıştırmak nezaket tavanlarını anlamsızlaştırırdı.
+  turkanime-crawler:
+    build:
+      context: ..
+      dockerfile: turkanime_server/Dockerfile
+    container_name: turkanime-crawler
+    command: >
+      python -m turkanime_server.crawler
+      --cikti /veri/arsiv
+      --durum /veri/durum/tarayici.sqlite3
+    working_dir: /app
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - turkanime-arsiv:/veri
+    restart: "no"
+    profiles: ["crawler"]
+    networks:
+      - turkanime-net
+
+volumes:
+  turkanime-arsiv:
+
+networks:
+  turkanime-net:
+    driver: bridge

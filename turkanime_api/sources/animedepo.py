@@ -200,9 +200,20 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
         if not url:
             continue
 
-        stream: Dict[str, str] = {"url": url, "label": label, "type": "direct"}
-        # Doğrudan .mp4/.m3u8 dosyaları için turkanime referer'ı yardımcı olabilir
-        if re.search(r"\.(mp4|m3u8)(\?|$)", url):
+        stream: Dict[str, str] = {
+            "url": url,
+            "label": label,
+            "type": item.get("type") or "direct",
+        }
+        # Arşiv kendi referer'ını veriyorsa ona uyulur: sunucu tarayıcısının
+        # (turkanime_server/crawler) ürettiği kayıtlarda link tranimaci/openani
+        # gibi kaynakların CDN'inden gelir ve turkanime referer'ı ile 403 döner.
+        # Referer yoksa eski davranış korunur (GitLab arşivindeki linkler
+        # turkanime maskesinden çözülüyordu).
+        referer = item.get("referer")
+        if referer:
+            stream["referer"] = referer
+        elif re.search(r"\.(mp4|m3u8)(\?|$)", url):
             stream["referer"] = "https://www.turkanime.co/"
         streams.append(stream)
     return streams

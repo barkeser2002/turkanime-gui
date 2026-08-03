@@ -77,7 +77,10 @@ markers = [
 # üretiyordu. CI `pylint -E` koştuğundan bu, gerçek hataları gürültüde boğuyor.
 # Allow-list, pylint'in modülü gerçekten yükleyip incelemesini sağlar.
 extension-pkg-allow-list = ["PySide6"]
-ignored-modules = ["py7zr"]
+# `flask_cors` yalnızca `turkanime_server/requirements.txt` içinde; istemci
+# geliştirme ortamına kurulmuyor. Kurulu olmayan modül pylint'te E0401 üretir
+# ve `pylint -E` çıktısını gerçek hataların yanında gürültüye boğar.
+ignored-modules = ["py7zr", "flask_cors"]
 
 [tool.pylint.typecheck]
 # Qt sinyalleri (clicked, textChanged, özel Signal'ler) metaclass tarafından

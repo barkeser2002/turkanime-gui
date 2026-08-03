@@ -1,0 +1,7 @@
+Flask==3.0.3
+Flask-CORS==4.0.1
+mysql-connector-python==9.0.0
+requests==2.32.3
+curl_cffi==0.7.4
+beautifulsoup4==4.12.3
+rapidfuzz==3.9.7

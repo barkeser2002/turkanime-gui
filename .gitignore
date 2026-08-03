@@ -27,7 +27,16 @@ build-qt/
 # ── Araç / editör ───────────────────────────────────────────────────────────
 .vscode/*
 .claude
-turkanime_server/
+
+# ── Sunucu tarafı üretilen veri ─────────────────────────────────────────────
+# `turkanime_server/` Faz 11'de takibe alındı (kod artık commit ediliyor);
+# yalnızca tarayıcının ürettiği çıktı ve yerel sırlar hariç tutulur.
+turkanime_server/arsiv/
+turkanime_server/durum/
+turkanime_server/.env
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
 # graphify bilgi grafiği (üretilen; `graphify update .` ile yenilenir)
 graphify-out/
