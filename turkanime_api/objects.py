@@ -5,7 +5,6 @@
 >>> vid1.oynat()
 """
 from os import remove
-from os.path import join
 from tempfile import NamedTemporaryFile
 from html import unescape
 import subprocess as sp
@@ -17,6 +16,7 @@ try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
 except ImportError:
     ImpersonateTarget = None
+from .common.dosya_adi import guvenli_alt_yol
 from .common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 from .bypass import get_real_url, unmask_real_url, fetch, get_m3u8_stream
@@ -504,7 +504,11 @@ class Video:
         """ info.json'u kullanarak videoyu indir """
         assert self.is_working, "Video çalışmıyor."
         seri_slug = self.bolum.anime.slug if self.bolum.anime else ""
-        output = join(output, seri_slug, self.bolum.slug)
+        # Hem seri hem bölüm slug'ı sitenin HTML'inden regex ile çekiliyor ve
+        # `/` ile `..` içerebiliyor; temizlenmezse dosya indirme klasörünün
+        # dışına düşer (bkz. common.dosya_adi).
+        output = guvenli_alt_yol(output, seri_slug, self.bolum.slug,
+                                 yedek="bolum")
         opts = self.ydl_opts.copy()
         if callback:
             opts['progress_hooks'] = [callback]

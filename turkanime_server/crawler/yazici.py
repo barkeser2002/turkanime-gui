@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+from turkanime_api.common.dosya_adi import guvenli_alt_yol
+
 
 def _simdi_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -86,11 +88,26 @@ class ArsivYazici:
         self.planlanan: List[str] = []
 
     # ── Alt seviye ──────────────────────────────────────────────────────────
+    def yol(self, goreli: str) -> Path:
+        """Göreli arşiv yolunu köke bağla — **kökün dışına çıkamaz**.
+
+        Slug'lar `eslestirme.slugla`dan geliyor ve bugün zaten `[a-z0-9-]`;
+        ama yazıcı genel bir API (`__all__`) ve slug üretimi tek bir regex
+        değişikliğiyle gevşeyebilir. Kaynaktan gelen bir `"../.."`nin arşiv
+        kökünün dışına — yayıncı git deposunun dışına — yazmasını dosya adı
+        temizliği + `commonpath` denetimi birlikte engelliyor.
+        """
+        return Path(guvenli_alt_yol(self.kok, *str(goreli).split("/")))
+
     def _yaz(self, goreli: str, veri: Any) -> None:
+        yol = self.yol(goreli)
         if self.kuru:
-            self.planlanan.append(goreli)
+            # Planlanan liste de temizlenmiş yolu göstermeli: kuru koşu neyin
+            # yazılacağını bildirir, "ne istendiğini" değil.
+            self.planlanan.append(
+                os.path.relpath(yol, os.path.abspath(str(self.kok))).replace(os.sep, "/"))
             return
-        if json_yaz(self.kok / goreli, veri):
+        if json_yaz(yol, veri):
             self.yazilan += 1
         else:
             self.atlanan += 1
@@ -119,7 +136,7 @@ class ArsivYazici:
         })
 
     def _mevcut_index(self) -> Any:
-        yol = self.kok / "dizin.json"
+        yol = self.yol("dizin.json")
         try:
             return json.loads(yol.read_text(encoding="utf-8")).get("index")
         except (OSError, json.JSONDecodeError, AttributeError):
@@ -145,7 +162,7 @@ class ArsivYazici:
         """
         goreli = f"animeler/{slug}/{bolum_slug}.json"
         kayitlar = list(akislar)
-        if not kayitlar and not (self.kok / goreli).exists():
+        if not kayitlar and not self.yol(goreli).exists():
             self.atlanan += 1
             return
         self._yaz(goreli, kayitlar)

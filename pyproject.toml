@@ -56,6 +56,9 @@ gui = ["pyside6", "pypresence"]
 toml = "*"
 pytest = ">=8.0"
 pytest-qt = ">=4.4"
+# `tests/test_release_workflow.py` release.yml'i ayrıştırıyor — yalnızca test
+# bağımlılığı, çalışma zamanında hiçbir yerde kullanılmıyor.
+pyyaml = "*"
 
 [build-system]
 requires = ["poetry-core"]

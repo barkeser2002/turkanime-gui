@@ -5,7 +5,6 @@ from typing import List, Optional, Any, Dict, Callable
 import json
 from tempfile import NamedTemporaryFile
 from os import remove
-from os.path import join
 import subprocess as sp
 import re
 import unicodedata
@@ -13,6 +12,7 @@ import unicodedata
 from yt_dlp import YoutubeDL
 
 from .animecix import _video_streams
+from ..common.dosya_adi import guvenli_alt_yol
 from ..common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 
@@ -114,7 +114,10 @@ class AdapterVideo:
     def indir(self, callback=None, output=""):
         assert self.is_working, "Video çalışmıyor."
         seri_slug = self.bolum.anime.slug if getattr(self.bolum, 'anime', None) else ""
-        out_tmpl_dir = join(output, seri_slug, self.bolum.slug)
+        # Slug kaynağın verisi: arşivin dizin.json'ına `"../../../evil"` konursa
+        # yt-dlp dosyayı indirme klasörünün DIŞINA yazar. Bkz. common.dosya_adi.
+        out_tmpl_dir = guvenli_alt_yol(output, seri_slug, self.bolum.slug,
+                                       yedek="bolum")
         opts = self.ydl_opts.copy()
         if callback:
             opts['progress_hooks'] = [callback]

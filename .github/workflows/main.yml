@@ -50,7 +50,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           grep -v py7zr requirements.txt > req2.txt && pip install -r req2.txt
-          pip install PySide6 pytest pytest-qt
+          # PyYAML: test_release_workflow.py release.yml'i ayrıştırıyor;
+          # kurulu değilse o testler sessizce atlanır ve denetim körleşir.
+          pip install PySide6 pytest pytest-qt PyYAML
       - name: pytest (ağ testleri hariç)
         env:
           QT_QPA_PLATFORM: offscreen
