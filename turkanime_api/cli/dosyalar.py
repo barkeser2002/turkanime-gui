@@ -1,24 +1,24 @@
-﻿"""
+"""
 DosyaManager()
-    - Config ve izlenenler geÃ§miÅŸi dosyalarÄ±nÄ± yaratÄ±r & dÃ¼zenler
+    - Config ve izlenenler geçmişi dosyalarını yaratır & düzenler
 DownloadGereksinimler()
-    - Gereksinimlerin indirilmesini ve paketten Ã§Ä±karÄ±lmasÄ±nÄ± saÄŸlar.
+    - Gereksinimlerin indirilmesini ve paketten çıkarılmasını sağlar.
 
-Bu modÃ¼ldeki JSON dosyalarÄ± (`ayarlar.json`, `gecmis.json`) Ã¼Ã§ kuralla yazÄ±lÄ±r:
+Bu modüldeki JSON dosyaları (`ayarlar.json`, `gecmis.json`) üç kuralla yazılır:
 
-1. **SÃ¼reÃ§-iÃ§i kilit.** Oku-deÄŸiÅŸtir-yaz bÃ¶lÃ¼nÃ¼rse kayÄ±t kaybolur: Ã¼Ã§ indirme
-   aynÄ± anda bitince Ã¼Ã§Ã¼ de geÃ§miÅŸin eski hÃ¢lini okuyup kendi tek eklemesiyle
-   geri yazÄ±yordu, yalnÄ±zca sonuncusu kalÄ±yordu.
-2. **Atomik yazÄ±m.** Yerinde `open(...,"w")` dosyayÄ± Ã¶nce sÄ±fÄ±rlar; yazÄ±mÄ±n
-   ortasÄ±nda Ã§Ã¶ken bir sÃ¼reÃ§ geriye yarÄ±m JSON bÄ±rakÄ±r. GeÃ§ici dosya + fsync +
-   `os.replace` ile okuyucu ya eski ya yeni dosyayÄ± gÃ¶rÃ¼r, arasÄ± yoktur.
-3. **Bozuk dosyadan kurtarma.** Yine de bozuk bir dosyayla karÅŸÄ±laÅŸÄ±lÄ±rsa
-   (eski sÃ¼rÃ¼mÃ¼n bÄ±raktÄ±ÄŸÄ±, elle dÃ¼zenlenmiÅŸ, disk hatasÄ±) `JSONDecodeError`
-   ile Ã§Ã¶kmek yerine dosya yedeÄŸe alÄ±nÄ±r ve varsayÄ±lana dÃ¶nÃ¼lÃ¼r.
+1. **Süreç-içi kilit.** Oku-değiştir-yaz bölünürse kayıt kaybolur: üç indirme
+   aynı anda bitince üçü de geçmişin eski hâlini okuyup kendi tek eklemesiyle
+   geri yazıyordu, yalnızca sonuncusu kalıyordu.
+2. **Atomik yazım.** Yerinde `open(...,"w")` dosyayı önce sıfırlar; yazımın
+   ortasında çöken bir süreç geriye yarım JSON bırakır. Geçici dosya + fsync +
+   `os.replace` ile okuyucu ya eski ya yeni dosyayı görür, arası yoktur.
+3. **Bozuk dosyadan kurtarma.** Yine de bozuk bir dosyayla karşılaşılırsa
+   (eski sürümün bıraktığı, elle düzenlenmiş, disk hatası) `JSONDecodeError`
+   ile çökmek yerine dosya yedeğe alınır ve varsayılana dönülür.
 
-Kilit sÃ¼reÃ§-iÃ§idir: aynÄ± anda aÃ§Ä±k bir CLI ile bir GUI birbirini hÃ¢lÃ¢ ezebilir.
-Bu bilinÃ§li â€” taÅŸÄ±nabilir dosya kilidi (msvcrt/fcntl) ayrÄ± bir iÅŸ; atomik yazÄ±m
-sayesinde en kÃ¶tÃ¼ senaryo "son yazan kazanÄ±r", "dosya bozuldu" deÄŸil.
+Kilit süreç-içidir: aynı anda açık bir CLI ile bir GUI birbirini hâlâ ezebilir.
+Bu bilinçli — taşınabilir dosya kilidi (msvcrt/fcntl) ayrı bir iş; atomik yazım
+sayesinde en kötü senaryo "son yazan kazanır", "dosya bozuldu" değil.
 """
 from os import path,mkdir,getcwd
 import json
@@ -27,10 +27,10 @@ import threading
 import time
 import uuid
 
-# yt-dlp, mpv gibi gereksinimlerin indirme linklerinin bulunduÄŸu dosya.
+# yt-dlp, mpv gibi gereksinimlerin indirme linklerinin bulunduğu dosya.
 DL_URL="https://raw.githubusercontent.com/KebabLord/turkanime-indirici/master/gereksinimler.json"
 
-# GeÃ§miÅŸin boÅŸ hÃ¢li â€” bozuk dosyadan dÃ¶nÃ¼lecek nokta.
+# Geçmişin boş hâli — bozuk dosyadan dönülecek nokta.
 VARSAYILAN_GECMIS = {"izlendi": {}, "indirildi": {}}
 
 _KILIT_DEFTERI = {}
@@ -38,11 +38,11 @@ _DEFTER_KILIDI = threading.Lock()
 
 
 def _kilit(yol):
-    """Dosya yoluna baÄŸlÄ± sÃ¼reÃ§-iÃ§i kilit.
+    """Dosya yoluna bağlı süreç-içi kilit.
 
-    Kilit Ã¶rnekte DEÄÄ°L modÃ¼lde tutulur: `Dosyalar` her Ã§aÄŸrÄ±da yeniden
-    Ã¶rnekleniyor (bkz. `gui.qt.prefs._dosya`), Ã¶rnek baÅŸÄ±na kilit olsaydÄ± Ã¼Ã§
-    indirme Ã¼Ã§ ayrÄ± kilit alÄ±r ve hiÃ§biri diÄŸerini beklemezdi.
+    Kilit örnekte DEĞİL modülde tutulur: `Dosyalar` her çağrıda yeniden
+    örnekleniyor (bkz. `gui.qt.prefs._dosya`), örnek başına kilit olsaydı üç
+    indirme üç ayrı kilit alır ve hiçbiri diğerini beklemezdi.
     """
     anahtar = os.path.normcase(os.path.abspath(yol))
     with _DEFTER_KILIDI:
@@ -53,11 +53,11 @@ def _kilit(yol):
 
 
 def atomik_json_yaz(yol, veri):
-    """JSON'u geÃ§ici dosya + `os.replace` ile yaz.
+    """JSON'u geçici dosya + `os.replace` ile yaz.
 
-    GeÃ§ici dosya HEDEFLE AYNI dizinde olmalÄ±: `os.replace` yalnÄ±zca aynÄ± dosya
-    sisteminde atomik, `tempfile` varsayÄ±lanÄ± (/tmp) baÅŸka bir mount olabilir â€”
-    eski kod oradan `shutil.move` ediyordu, yani aslÄ±nda kopyalÄ±yordu.
+    Geçici dosya HEDEFLE AYNI dizinde olmalı: `os.replace` yalnızca aynı dosya
+    sisteminde atomik, `tempfile` varsayılanı (/tmp) başka bir mount olabilir —
+    eski kod oradan `shutil.move` ediyordu, yani aslında kopyalıyordu.
     """
     dizin = os.path.dirname(os.path.abspath(yol)) or "."
     os.makedirs(dizin, exist_ok=True)
@@ -70,7 +70,7 @@ def atomik_json_yaz(yol, veri):
             os.fsync(fp.fileno())
         os.replace(gecici, yol)
     except BaseException:
-        # YarÄ±m geÃ§ici dosya bÄ±rakma; hedef dosyaya hiÃ§ dokunulmadÄ±.
+        # Yarım geçici dosya bırakma; hedef dosyaya hiç dokunulmadı.
         try:
             os.remove(gecici)
         except OSError:
@@ -79,27 +79,27 @@ def atomik_json_yaz(yol, veri):
 
 
 def _bozugu_ayir(yol, sebep):
-    """Okunamayan dosyayÄ± yedeÄŸe al ve kullanÄ±cÄ±ya bildir.
+    """Okunamayan dosyayı yedeğe al ve kullanıcıya bildir.
 
-    Silinmiyor: iÃ§inde kurtarÄ±labilir ayar (AniList jetonu, indirme klasÃ¶rÃ¼)
-    olabilir ve kullanÄ±cÄ± ne olduÄŸunu gÃ¶remeden veri kaybetmemeli.
+    Silinmiyor: içinde kurtarılabilir ayar (AniList jetonu, indirme klasörü)
+    olabilir ve kullanıcı ne olduğunu göremeden veri kaybetmemeli.
     """
     yedek = f"{yol}.bozuk-{time.strftime('%Y%m%d-%H%M%S')}"
     try:
         os.replace(yol, yedek)
     except OSError:
         yedek = None
-    print(f"UYARI: {os.path.basename(yol)} okunamadÄ± ({sebep}). "
-          + (f"Bozuk dosya {os.path.basename(yedek)} adÄ±yla saklandÄ±; "
+    print(f"UYARI: {os.path.basename(yol)} okunamadı ({sebep}). "
+          + (f"Bozuk dosya {os.path.basename(yedek)} adıyla saklandı; "
              if yedek else "")
-          + "varsayÄ±lan deÄŸerlerle devam ediliyor.")
+          + "varsayılan değerlerle devam ediliyor.")
 
 
 def _json_oku(yol, varsayilan):
-    """SÃ¶zlÃ¼k bekleyen JSON okuma; dosya yoksa/bozuksa varsayÄ±lana dÃ¶ner.
+    """Sözlük bekleyen JSON okuma; dosya yoksa/bozuksa varsayılana döner.
 
-    VarsayÄ±lan yeni bir kopya olarak dÃ¶ner: Ã§aÄŸÄ±ran taraf sonucu deÄŸiÅŸtirip
-    geri yazÄ±yor, paylaÅŸÄ±lan sÃ¶zlÃ¼k dÃ¶nseydi modÃ¼l sabiti kirlenirdi.
+    Varsayılan yeni bir kopya olarak döner: çağıran taraf sonucu değiştirip
+    geri yazıyor, paylaşılan sözlük dönseydi modül sabiti kirlenirdi.
     """
     try:
         with open(yol, encoding="utf-8") as fp:
@@ -110,32 +110,32 @@ def _json_oku(yol, varsayilan):
         _bozugu_ayir(yol, hata)
         return json.loads(json.dumps(varsayilan))
     if not isinstance(veri, dict):
-        _bozugu_ayir(yol, "JSON nesnesi deÄŸil")
+        _bozugu_ayir(yol, "JSON nesnesi değil")
         return json.loads(json.dumps(varsayilan))
     return veri
 
 
 class Dosyalar:
-    """ YazÄ±lÄ±mÄ±n konfigÃ¼rasyon ve indirilenler klasÃ¶rÃ¼nÃ¼ yÃ¶net
-    - Windows'ta varsayÄ±lan dizin: $USER/Turkanime
-    - Linux'ta varsayÄ±lan dizin: /home/$USER/Turkanime
+    """ Yazılımın konfigürasyon ve indirilenler klasörünü yönet
+    - Windows'ta varsayılan dizin: $USER/Turkanime
+    - Linux'ta varsayılan dizin: /home/$USER/Turkanime
 
-    Ã–znitelikler:
-        ayar_path: Turkanime config dosyasÄ±nÄ±n dizini
-        Dosyalar.gecmis_path: Ä°zlenme ve indirme log'unun dizini
+    Öznitelikler:
+        ayar_path: Turkanime config dosyasının dizini
+        Dosyalar.gecmis_path: İzlenme ve indirme log'unun dizini
     """
     # Defaults to C:/User/xxx/Turkanime veya ~/Turkanime dizini.
 
     def __init__(self):
         self.ta_path = path.join(path.expanduser("~"), "Turkanime" )
-        if path.isdir(".git"): # Git reposundan Ã§alÄ±ÅŸtÄ±rÄ±lÄ±yorsa.
+        if path.isdir(".git"): # Git reposundan çalıştırılıyorsa.
             self.ta_path = getcwd()
         self.ayar_path = path.join(self.ta_path, "ayarlar.json")
         self.gecmis_path = path.join(self.ta_path, "gecmis.json")
-        # Platforma gÃ¶re indirilenler klasÃ¶rÃ¼
+        # Platforma göre indirilenler klasörü
         downloads_dir = path.join(path.expanduser("~"), "Downloads")
 
-        # Ayar isimleri ascii karakterlerden oluÅŸmalÄ±.
+        # Ayar isimleri ascii karakterlerden oluşmalı.
         default_ayarlar = {
             "manuel fansub" : False,
             "izlerken kaydet" : False,
@@ -151,40 +151,40 @@ class Dosyalar:
             "flaresolverr_url": "http://node-kyb.bariskeser.com:8191",
             "cookie_tutorial_dismissed": False
         }
-        # Gerekli dosyalar eÄŸer daha Ã¶nce yaratÄ±lmadÄ±ysa yarat.
+        # Gerekli dosyalar eğer daha önce yaratılmadıysa yarat.
         if not path.isdir(".git") and not path.isdir(self.ta_path):
             mkdir(self.ta_path)
         # Yeni ayarlar varsa sistemdekine ekle.
         if path.isfile(self.ayar_path):
-            # `.ayarlar` bozuk dosyayÄ± yedeÄŸe alÄ±p {} dÃ¶ndÃ¼rÃ¼r; eksik anahtarlar
-            # aÅŸaÄŸÄ±da zaten tamamlandÄ±ÄŸÄ± iÃ§in kurtarma kendiliÄŸinden tamamlanÄ±r.
+            # `.ayarlar` bozuk dosyayı yedeğe alıp {} döndürür; eksik anahtarlar
+            # aşağıda zaten tamamlandığı için kurtarma kendiliğinden tamamlanır.
             ayarlar = self.ayarlar
             eksikler = {a: v for a, v in default_ayarlar.items() if a not in ayarlar}
             if eksikler:
                 self.set_ayar(ayar_list=eksikler)
-            # User ID kontrolÃ¼ - eÄŸer yoksa oluÅŸtur
+            # User ID kontrolü - eğer yoksa oluştur
             if not ayarlar.get('user_id'):
                 user_id = str(uuid.uuid4())
                 self.set_ayar('user_id', user_id)
-                print(f"Yeni kullanÄ±cÄ± kimliÄŸi oluÅŸturuldu: {user_id}")
+                print(f"Yeni kullanıcı kimliği oluşturuldu: {user_id}")
         else:
             atomik_json_yaz(self.ayar_path, {})
             self.set_ayar(ayar_list=default_ayarlar)
-            # Ä°lk Ã§alÄ±ÅŸtÄ±rmada user_id oluÅŸtur
+            # İlk çalıştırmada user_id oluştur
             user_id = str(uuid.uuid4())
             self.set_ayar('user_id', user_id)
-            print(f"Ä°lk Ã§alÄ±ÅŸtÄ±rma - kullanÄ±cÄ± kimliÄŸi oluÅŸturuldu: {user_id}")
+            print(f"İlk çalıştırma - kullanıcı kimliği oluşturuldu: {user_id}")
         if not path.isfile(self.gecmis_path):
             atomik_json_yaz(self.gecmis_path, dict(VARSAYILAN_GECMIS))
 
     def _gecmis_yaz(self, gecmis):
-        """GeÃ§miÅŸ dosyasÄ±nÄ± atomik yaz (geÃ§ici dosya + `os.replace`)."""
+        """Geçmiş dosyasını atomik yaz (geçici dosya + `os.replace`)."""
         atomik_json_yaz(self.gecmis_path, gecmis)
 
     def _gecmis_guncelle(self, degistir):
-        """Oku-deÄŸiÅŸtir-yaz'Ä± kilit altÄ±nda tek parÃ§a Ã§alÄ±ÅŸtÄ±r.
+        """Oku-değiştir-yaz'ı kilit altında tek parça çalıştır.
 
-        `degistir(gecmis)` False dÃ¶nerse yazÄ±m atlanÄ±r (deÄŸiÅŸiklik yok).
+        `degistir(gecmis)` False dönerse yazım atlanır (değişiklik yok).
         """
         with _kilit(self.gecmis_path):
             gecmis = _json_oku(self.gecmis_path, VARSAYILAN_GECMIS)
@@ -194,7 +194,7 @@ class Dosyalar:
 
     def set_gecmis(self, seri,bolum,islem):
         def degistir(gecmis):
-            # setdefault: eski sÃ¼rÃ¼mlerden kalma gecmis.json'da bÃ¶lÃ¼m anahtarÄ±
+            # setdefault: eski sürümlerden kalma gecmis.json'da bölüm anahtarı
             # eksik olabiliyor; KeyError yerine sessizce tamamla.
             bolumler = gecmis.setdefault(islem,{})
             if seri not in bolumler:
@@ -206,11 +206,11 @@ class Dosyalar:
         self._gecmis_guncelle(degistir)
 
     def set_ilerleme(self, seri, bolum_no):
-        """Serinin yerel izleme ilerlemesi: son tamamlanan bÃ¶lÃ¼m numarasÄ±.
+        """Serinin yerel izleme ilerlemesi: son tamamlanan bölüm numarası.
 
-        Ä°zlendi listesi bÃ¶lÃ¼m slug'Ä± tutuyor; kullanÄ±cÄ±nÄ±n "kaÃ§Ä±ncÄ± bÃ¶lÃ¼mdeyim"
-        beyanÄ± ise bir sayÄ± ve slug'lardan tÃ¼retilemez (kaynaklar bÃ¶lÃ¼mÃ¼ farklÄ±
-        adlandÄ±rÄ±yor). Bu yÃ¼zden ayrÄ± bir alanda duruyor.
+        İzlendi listesi bölüm slug'ı tutuyor; kullanıcının "kaçıncı bölümdeyim"
+        beyanı ise bir sayı ve slug'lardan türetilemez (kaynaklar bölümü farklı
+        adlandırıyor). Bu yüzden ayrı bir alanda duruyor.
         """
         def degistir(gecmis):
             gecmis.setdefault("ilerleme",{})[seri] = int(bolum_no)
@@ -219,8 +219,8 @@ class Dosyalar:
 
     def set_ayar(self, ayar = None, deger = None, ayar_list = None):
         assert (ayar != None and deger != None) or ayar_list != None
-        # Ayar yazÄ±mÄ± da kilit altÄ±nda: ayar sayfasÄ± ile arka plan servisleri
-        # (AniList jetonu, gereksinim kurulumu) aynÄ± dosyaya yazabiliyor.
+        # Ayar yazımı da kilit altında: ayar sayfası ile arka plan servisleri
+        # (AniList jetonu, gereksinim kurulumu) aynı dosyaya yazabiliyor.
         with _kilit(self.ayar_path):
             ayarlar = self.ayarlar
             if ayar_list:
