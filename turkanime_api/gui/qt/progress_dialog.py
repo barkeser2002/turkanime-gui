@@ -44,9 +44,14 @@ class ProgressDialog(QDialog):
 
         self.seri, bolum_slug = prefs.bolum_kimligi(bolum)
         bolum_adi = title or bolum_slug
+        # Okunabilir seri adı öznitelikte: AniList araması slug ("naruto-test")
+        # yerine bununla yapılır, aksi hâlde eşleşme çok daha zayıf olur.
+        self.anime_adi = anime_adi(bolum, self.seri)
         # Numara başlıktan çıkarılır; kullanıcı yine de düzeltebilsin diye
         # alan salt-okunur değil (kaynaklar bölümü sık sık yanlış adlandırıyor).
-        _, self.bolum_no = extract_episode_info(bolum_adi)
+        # Anime adı da veriliyor: başlık adı içerdiği için ("86 2nd Season 5.
+        # Bölüm") addaki rakam bölüm sanılıyor ve AniList'e 86 yazılıyordu.
+        _, self.bolum_no = extract_episode_info(bolum_adi, self.anime_adi)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
@@ -55,10 +60,6 @@ class ProgressDialog(QDialog):
         head = QLabel("İzleme İlerlemesi Kaydet")
         head.setObjectName("Subtitle")
         layout.addWidget(head)
-
-        # Okunabilir seri adı öznitelikte: AniList araması slug ("naruto-test")
-        # yerine bununla yapılır, aksi hâlde eşleşme çok daha zayıf olur.
-        self.anime_adi = anime_adi(bolum, self.seri)
 
         info = QLabel(f"{self.anime_adi}\n{bolum_adi}")
         info.setObjectName("Muted")

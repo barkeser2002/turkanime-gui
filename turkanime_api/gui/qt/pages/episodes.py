@@ -185,8 +185,7 @@ class EpisodeRow(QFrame):
         self.setObjectName("Card")
         self.episode = episode
         self.sources: Dict[str, Dict[str, Any]] = dict(episode.get("sources") or {})
-        self.key: Tuple[int, int] = (int(episode.get("season") or 1),
-                                     int(episode.get("number") or 0))
+        self.key: Tuple[int, int, int] = _key_of(episode)
         # Filtre durumunu AÇIKÇA tut: `isVisible()` ata widget'ların görünürlüğüne
         # bağlı olduğu için seçim/filtre mantığının kaynağı olamaz.
         self.filtered_out = False
@@ -478,7 +477,10 @@ class EpisodePage(QWidget):
         self._busy = False
         source, _slug, title = self._context
         self._sources = as_sources_data(source, episodes)
-        self._all = merge_episodes(self._sources)
+        # Anime adı birleştiriciye veriliyor: kaynaklar başlığa adı da yazıyor
+        # ("86 2nd Season 5. Bölüm") ve addaki rakamlar bölüm/sezon sanılırsa
+        # aynı bölüm kaynak başına ayrı satır olur.
+        self._all = merge_episodes(self._sources, title)
         self._selected.clear()
 
         names = active_sources(self._sources)
@@ -654,8 +656,14 @@ class EpisodePage(QWidget):
         return None
 
 
-def _key_of(episode: Dict[str, Any]) -> Tuple[int, int]:
-    return (int(episode.get("season") or 1), int(episode.get("number") or 0))
+def _key_of(episode: Dict[str, Any]) -> Tuple[int, int, int]:
+    """Satır kimliği: ``(sezon, bölüm, ara bölüm)``.
+
+    Ara bölüm anahtarın parçası; "5. Bölüm" ile "5.5. Bölüm" iki ayrı satır ve
+    biri işaretlenince diğeri de işaretlenmiş sayılmamalı.
+    """
+    return (int(episode.get("season") or 1), int(episode.get("number") or 0),
+            int(episode.get("sub") or 0))
 
 
 __all__ = ["EpisodePage", "EpisodeRow", "SourceSelectDialog", "as_sources_data",

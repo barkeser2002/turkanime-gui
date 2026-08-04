@@ -163,6 +163,26 @@ def test_ilerleme_dialogu_yerel_ilerlemeye_yaziyor(qtbot, preserved_gecmis):
     assert Dosyalar().gecmis["ilerleme"]["naruto-test"] == 13
 
 
+@pytest.mark.parametrize("anime_baslik, anime_slug, bolum_adi, beklenen", [
+    ("86 2nd Season", "86-2nd-season", "86 2nd Season 5. Bölüm", 5),
+    ("3x3 Eyes", "3x3-eyes", "3x3 Eyes 1. Bölüm", 1),
+    ("5-toubun no Hanayome", "5-toubun-no-hanayome", "5-toubun no Hanayome 3. Bölüm", 3),
+])
+def test_ilerleme_dialogu_addaki_rakami_bolum_sanmiyor(
+        qtbot, anime_baslik, anime_slug, bolum_adi, beklenen):
+    """Başlık anime adını da taşıyor; addaki rakam AniList'e ilerleme yazılıyordu.
+
+    12 bölümlük "86 2nd Season"da diyalog 86 öneriyordu; kullanıcı "Kaydet"e
+    basınca hesaba o numara işleniyordu.
+    """
+    bolum = SahteBolum(slug=f"{anime_slug}-bolum")
+    bolum.anime = SahteAnime(slug=anime_slug, title=anime_baslik)
+
+    dialog = ProgressDialog(bolum, bolum_adi)
+    qtbot.addWidget(dialog)
+    assert dialog.spnEpisode.value() == beklenen
+
+
 def test_ilerleme_dialogu_seri_kimligi_yoksa_kaydetmiyor(qtbot):
     class KimliksizBolum:
         slug = "bilinmeyen-1-bolum"

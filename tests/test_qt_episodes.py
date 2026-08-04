@@ -119,6 +119,38 @@ def test_cok_kaynak_tek_satirda_birlesiyor(page):
     assert "3 kaynak" in page.lblStatus.text()
 
 
+def test_addaki_rakam_kaynaklari_ayirmiyor(page):
+    """Sayfa anime adını birleştiriciye veriyor mu?
+
+    Vermezse "86 2nd Season 5. Bölüm" (2,5), Anizle'nin "5. Bölüm"ü (1,5)
+    anahtarına düşüyor: 12 bölüm 24 satır oluyor, "Tümünü Seç" 24 seçiyor ve
+    indirmede yarısı "bu kaynakta yok" diye atlanıyor.
+    """
+    ad = "86 2nd Season"
+    page.load("AnimeDepo", "86-2nd-season", ad, episodes={
+        "AnimeDepo": [ep(f"{ad} {n}. Bölüm") for n in range(1, 13)],
+        "Anizle": [ep(f"{n}. Bölüm") for n in range(1, 13)],
+    })
+
+    assert len(page._all) == 12
+    assert [e["number"] for e in page._all] == list(range(1, 13))
+    assert all(len(e["sources"]) == 2 for e in page._all)
+    page._toggle_all(True)
+    assert len(page.selected_episodes()) == 12
+
+
+def test_ara_bolum_ayri_satirda_secilebiliyor(page):
+    """"5. Bölüm" ile "5.5. Bölüm" aynı satır anahtarını paylaşmamalı."""
+    page.load("AnimeDepo", "ggo", "GGO", episodes={
+        "AnimeDepo": [ep("GGO 5. Bölüm"), ep("GGO 5.5. Bölüm"), ep("GGO 6. Bölüm")],
+    })
+
+    assert [e["title"] for e in page._all] == ["5. Bölüm", "5.5. Bölüm", "6. Bölüm"]
+    page._rows[1].set_checked(True)
+    page._on_row_toggled(page._rows[1].key, True)
+    assert [e["title"] for e in page.selected_episodes()] == ["5.5. Bölüm"]
+
+
 def test_satir_dugmesi_kendi_kaynagini_yayiyor(qtbot, page):
     animecix = ep("1. Bölüm")
     page.load("TürkAnime", "cb", "Cowboy Bebop", episodes={

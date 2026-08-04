@@ -335,7 +335,8 @@ class Tarayici:
             akis_haritasi = {
                 (a["kaynak"], a["ep_id"]): a["veri"] for a in self.depo.akislar(slug)
             }
-            bolumler, akislar = self._bolumleri_birlestir(bolum_satirlari, akis_haritasi)
+            bolumler, akislar = self._bolumleri_birlestir(
+                bolum_satirlari, akis_haritasi, baslik)
             if not bolumler:
                 continue
 
@@ -360,12 +361,17 @@ class Tarayici:
         self,
         satirlar: Sequence[Dict[str, Any]],
         akis_haritasi: Dict[Tuple[str, str], List[Dict[str, Any]]],
+        anime_basligi: str = "",
     ) -> Tuple[List[Tuple[str, str]], Dict[str, List[Dict[str, Any]]]]:
         """Kaynak bölüm listelerini tek sıralı listeye indir + akışları topla.
 
         Birleştirme anahtarı başlık değil ``(sezon, bölüm)``; bunu
         `common.episode_parser.merge_episodes` yapıyor — istemcideki çoklu
         kaynak birleştirmesiyle birebir aynı mantık.
+
+        Küme başlığı da veriliyor: kaynaklar bölüm başlığına anime adını da
+        yazıyor ve addaki rakamlar ("3x3 Eyes", "86 2nd Season") bölüm sanılıp
+        bölümlerin üstüne yazılıyordu — yayınlanan arşiv de o hâlde çıkıyordu.
         """
         kaynak_verisi: Dict[str, List[Dict[str, Any]]] = {}
         for r in satirlar:
@@ -376,10 +382,14 @@ class Tarayici:
         akislar: Dict[str, List[Dict[str, Any]]] = {}
         kullanilan: Dict[str, int] = {}
 
-        for satir in merge_episodes(kaynak_verisi):
+        for satir in merge_episodes(kaynak_verisi, anime_basligi):
             slug = bolum_slugu(satir["title"]) or f"e{satir['number']:02d}"
             if satir.get("season") and satir.get("number"):
                 slug = f"s{int(satir['season']):02d}e{int(satir['number']):02d}"
+            # Ara bölüm ("5.5. Bölüm") slug'a girmezse 5. bölümle çakışır ve
+            # arşivde "-2" ekiyle anlamsız bir ada düşer.
+            if satir.get("sub"):
+                slug = f"{slug}-{int(satir['sub'])}"
             if slug in kullanilan:
                 kullanilan[slug] += 1
                 slug = f"{slug}-{kullanilan[slug]}"

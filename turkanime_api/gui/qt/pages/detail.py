@@ -830,7 +830,7 @@ class DetailPage(QWidget):
         if isinstance(episodes, dict) and len(episodes) > 1:
             loaded = [s for s, items in episodes.items() if items]
             failed = [s for s, items in episodes.items() if not items]
-            message = (f"{len(merge_episodes(episodes))} bölüm • "
+            message = (f"{len(merge_episodes(episodes, title))} bölüm • "
                        f"{len(episodes)} kaynaktan {len(loaded)} tanesi yüklendi.")
             if failed:
                 message += f" Yüklenemeyen: {', '.join(failed)}."

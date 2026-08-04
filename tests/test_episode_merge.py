@@ -46,6 +46,69 @@ def test_extract_episode_info_formats(title, expected):
     assert extract_episode_info(title) == expected
 
 
+# ── Anime adı başlığın içinde ───────────────────────────────────────────────
+# Kaynaklar başlığa anime adını da yazıyor ("3x3 Eyes 1. Bölüm"). Addaki
+# rakamlar bölüm/sezon sanılınca bölümler aynı anahtara düşüp birbirini yiyordu.
+@pytest.mark.parametrize("title, expected", [
+    ("3x3 Eyes 1. Bölüm", (1, 1)),
+    ("3x3 Eyes 4. Bölüm Final", (1, 4)),
+    ("3x3 Eyes: Seima Densetsu 2. Bölüm", (1, 2)),
+    ("5-toubun no Hanayome 3. Bölüm", (1, 3)),
+    ("100-man no Inochi no Ue ni Ore wa Tatteiru 7. Bölüm", (1, 7)),
+    ("12-sai: Chicchana Mune no Tokimeki 2. Bölüm", (1, 2)),
+    ("7 Seeds Bölüm 9", (1, 9)),
+    ("Ranma 1/2 10. Bölüm", (1, 10)),
+])
+def test_addaki_rakam_bolum_sanilmiyor(title, expected):
+    assert extract_episode_info(title) == expected
+
+
+@pytest.mark.parametrize("title, expected", [
+    ("86 2nd Season 5. Bölüm", (2, 5)),
+    ("Re:Zero kara Hajimeru Isekai Seikatsu 2nd Season 4. Bölüm", (2, 4)),
+    ("Aggressive Retsuko (ONA) 3rd Season 6. Bölüm", (3, 6)),
+    ("Shingeki no Kyojin 4th Season Bölüm 11", (4, 11)),
+    ("Arcane Season 2 - 3. Bölüm", (2, 3)),
+    ("1st Season 8. Bölüm", (1, 8)),
+])
+def test_ingilizce_sira_sayili_sezon(title, expected):
+    """"2nd/3rd/4th Season" hiçbir kalıpta yoktu; sezon yerine bölüm okunuyordu."""
+    assert extract_episode_info(title) == expected
+
+
+def test_anime_adi_verilince_ayikliniyor():
+    """Ad biliniyorsa sezon da anime kimliğinin parçası: anahtar (1, 5) olur.
+
+    Aksi hâlde "86 2nd Season 5. Bölüm" (2,5), çıplak "5. Bölüm" (1,5) anahtarına
+    düşer ve aynı bölüm iki kaynakta iki ayrı satır olur.
+    """
+    assert extract_episode_info("86 2nd Season 5. Bölüm", "86 2nd Season") == (1, 5)
+    assert extract_episode_info("3x3 Eyes 1. Bölüm", "3x3 Eyes") == (1, 1)
+    # Slug da kabul: sözcükler arası noktalama esnek eşleşiyor
+    assert extract_episode_info("3x3 Eyes 1. Bölüm", "3x3-eyes") == (1, 1)
+    assert extract_episode_info(
+        "Sword Art Online Alternative: Gun Gale Online 12. Bölüm Final",
+        "sword-art-online-alternative-gun-gale-online") == (1, 12)
+
+
+def test_anime_adi_bolum_isaretini_yemiyor():
+    """Ad ile işaret aynı metin olabilir: "86" animesinin "86. Bölüm"ü."""
+    assert extract_episode_info("86. Bölüm", "86") == (1, 86)
+    assert extract_episode_info("Bölüm 3", "Bölüm") == (1, 3)
+
+
+def test_alakasiz_ad_baslige_dokunmuyor():
+    assert extract_episode_info("12. Bölüm", "Cowboy Bebop") == (1, 12)
+
+
+# ── Ara bölüm ("5.5. Bölüm") ────────────────────────────────────────────────
+def test_ara_bolum_parse_ediliyor():
+    bilgi = parse_episode("12.5. Bölüm")
+    assert (bilgi.episode, bilgi.sub) == (12, 5)
+    assert parse_episode("Bölüm 5.5").sub == 5
+    assert parse_episode("5. Bölüm").sub is None
+
+
 def test_sezonsuz_basliklar_birinci_sezona_dusuyor():
     """Sezon bilgisi yoksa 1 varsayılır; aksi hâlde anahtar hiç oluşmazdı."""
     assert extract_episode_info("Bölüm 3")[0] == 1
@@ -81,6 +144,14 @@ def test_normalize_episode_title():
     assert normalize_episode_title("Bölüm 5", 5, 1) == "Bölüm 5"
     assert normalize_episode_title("2. Sezon 5. Bölüm", 5, 2) == "S02E05"
     assert normalize_episode_title("", 3, 1) == "3. Bölüm"
+    assert normalize_episode_title("3x3 Eyes 4. Bölüm Final", 4, 1) == "4. Bölüm Final"
+
+
+def test_normalize_episode_title_ara_bolum_kesri_koruyor():
+    """Etiket "5. Bölüm" olursa kullanıcı iki satırı birbirinden ayıramaz."""
+    assert normalize_episode_title("GGO 5.5. Bölüm", 5, 1, 5) == "5.5. Bölüm"
+    assert normalize_episode_title("", 5, 1, 5) == "5.5. Bölüm"
+    assert normalize_episode_title("2. Sezon 5.5. Bölüm", 5, 2, 5) == "S02E05.5"
 
 
 def test_episode_key_alan_degerine_guveniyor():
@@ -89,6 +160,11 @@ def test_episode_key_alan_degerine_guveniyor():
     assert episode_key({"title": "x", "episode_number": 3, "season_number": 2}) == (2, 3)
     # Numara alanı var ama sezon yok: sezon başlıktan tamamlanmalı
     assert episode_key({"title": "2. Sezon 4. Bölüm", "number": 4}) == (2, 4)
+
+
+def test_episode_key_anime_adini_kabul_ediyor():
+    assert episode_key({"title": "86 2nd Season 5. Bölüm"}, 0, "86 2nd Season") == (1, 5)
+    assert episode_key({"title": "86 2nd Season 5. Bölüm"}) == (2, 5)
 
 
 # ── Birleştirme ─────────────────────────────────────────────────────────────
@@ -155,6 +231,57 @@ def test_ayni_kaynakta_cakisan_anahtarda_ilk_kayit_korunur():
     })
     assert len(merged) == 1
     assert merged[0]["sources"]["TürkAnime"]["title"] == "5. Bölüm"
+
+
+# ── Anime adı başlıkta: veri kaybı regresyonları ────────────────────────────
+def test_addaki_rakam_bolumleri_yemiyor():
+    """AnimeDepo "3x3-eyes": dört bölümün dördü de (3,3) anahtarına düşüyordu.
+
+    Hayatta kalan tek satır "S03E03" etiketliydi ve 1. bölümü oynatıyordu.
+    """
+    basliklar = ["3x3 Eyes 1. Bölüm", "3x3 Eyes 2. Bölüm",
+                 "3x3 Eyes 3. Bölüm", "3x3 Eyes 4. Bölüm Final"]
+    kayitlar = [ep(t) for t in basliklar]
+
+    merged = merge_episodes({"AnimeDepo": kayitlar}, "3x3 Eyes")
+    assert [(m["season"], m["number"]) for m in merged] == [(1, n) for n in range(1, 5)]
+    assert [m["sources"]["AnimeDepo"]["title"] for m in merged] == basliklar
+    # Anime adı bilinmese de kayıp olmamalı: kalıp tablosu işaret sözcüğünü
+    # addaki rakamlardan önce sayıyor.
+    assert len(merge_episodes({"AnimeDepo": kayitlar})) == 4
+
+
+def test_ingilizce_sezonlu_ad_kaynaklari_ayirmiyor():
+    """AnimeDepo "86 2nd Season …" + Anizle "…" → 24 değil 12 satır olmalı."""
+    ad = "86 2nd Season"
+    merged = merge_episodes({
+        "AnimeDepo": [ep(f"{ad} {n}. Bölüm") for n in range(1, 13)],
+        "Anizle": [ep(f"{n}. Bölüm") for n in range(1, 13)],
+        "TürkAnime": [ep(f"Bölüm {n}") for n in range(1, 13)],
+    }, ad)
+    assert len(merged) == 12
+    assert [m["number"] for m in merged] == list(range(1, 13))
+    assert all(len(m["sources"]) == 3 for m in merged)
+
+
+def test_ara_bolum_kendi_satirinda_kaliyor():
+    """"5.5. Bölüm" 5. bölümün anahtarına düşüp sessizce siliniyordu."""
+    ad = "Sword Art Online Alternative: Gun Gale Online"
+    basliklar = [f"{ad} 5. Bölüm", f"{ad} 5.5. Bölüm", f"{ad} 6. Bölüm"]
+    merged = merge_episodes({"AnimeDepo": [ep(t) for t in basliklar]}, ad)
+
+    assert [(m["number"], m["sub"]) for m in merged] == [(5, 0), (5, 5), (6, 0)]
+    assert merged[1]["title"] == "5.5. Bölüm"
+    assert merged[1]["sources"]["AnimeDepo"]["title"] == f"{ad} 5.5. Bölüm"
+
+
+def test_ara_bolum_kaynaklar_arasi_birlesiyor():
+    merged = merge_episodes({
+        "AnimeDepo": [ep("GGO 5.5. Bölüm")],
+        "Anizle": [ep("5.5. Bölüm")],
+    }, "GGO")
+    assert len(merged) == 1
+    assert len(merged[0]["sources"]) == 2
 
 
 def test_bos_ve_bozuk_girdiler_yutuluyor():

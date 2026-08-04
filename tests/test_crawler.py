@@ -650,6 +650,49 @@ def test_iki_kaynaktaki_ayni_anime_tek_kayda_bagleniyor(tmp_path, animedepo_yere
     assert any("720p" in e for e in etiketler)
 
 
+def test_addaki_rakamlar_arsivde_bolum_yemiyor(tmp_path, animedepo_yerel):
+    """Anime adındaki rakam bölüm sanılınca yayınlanan arşiv de bozuk çıkıyordu.
+
+    "3x3 Eyes 1..4. Bölüm" başlıklarının dördü de aynı (sezon, bölüm)
+    anahtarına düşüyor, arşive tek bölüm yazılıyordu.
+    """
+    kaynak = SahteKaynak(_katalog("3x3 Eyes", "x3", bolum_sayisi=4,
+                                  ep_bicim="3x3 Eyes {n}. Bölüm"))
+    ayarlar = _ayarlar(tmp_path, tohumlar=("3x3",))
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=kaynak))
+    tarayici.calistir()
+    tarayici.kapat()
+
+    depo = animedepo_yerel(ayarlar.cikti)
+    slug = slugla("3x3 Eyes")
+    bolumler = depo.get_anime_episodes(slug)
+    assert [b[0] for b in bolumler] == [f"{slug}/s01e0{n}" for n in range(1, 5)]
+    # Her bölümün kendi akışı arşivde: satırlar birbirinin üstüne yazılmamalı
+    for ep_id, _ in bolumler:
+        assert depo.get_episode_streams(ep_id)
+
+
+def test_ara_bolum_arsivde_kendi_dosyasinda(tmp_path, animedepo_yerel):
+    """"5.5. Bölüm" 5. bölümün anahtarına düşüp arşivden siliniyordu."""
+    katalog = _katalog("Gun Gale Online", "g1", bolum_sayisi=2,
+                       ep_bicim="Gun Gale Online {n}. Bölüm")
+    kayit = katalog["g1"]
+    kayit["bolumler"].append(("g1-ep55", "Gun Gale Online 1.5. Bölüm"))
+    kayit["akislar"]["g1-ep55"] = [
+        {"url": "https://ornek.test/g1-ep55.mp4", "label": "720p", "type": "direct"}]
+
+    ayarlar = _ayarlar(tmp_path, tohumlar=("gun",))
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=SahteKaynak(katalog)))
+    tarayici.calistir()
+    tarayici.kapat()
+
+    depo = animedepo_yerel(ayarlar.cikti)
+    slug = slugla("Gun Gale Online")
+    bolumler = depo.get_anime_episodes(slug)
+    assert [b[0] for b in bolumler] == [
+        f"{slug}/s01e01", f"{slug}/s01e01-5", f"{slug}/s01e02"]
+
+
 def test_alakasiz_animeler_ayri_kaliyor(tmp_path):
     a = SahteKaynak(_katalog("Naruto", "a1"))
     b = SahteKaynak(_katalog("Nanatsu no Taizai", "b1"))
