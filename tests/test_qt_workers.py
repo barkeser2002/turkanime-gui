@@ -107,3 +107,64 @@ def test_long_tasks_use_separate_pool():
     pool = long_task_pool()
     assert pool is not QThreadPool.globalInstance()
     assert pool.maxThreadCount() >= 1
+
+
+# ── Havuz ayrımı: oynatma vs indirme ─────────────────────────────────────────
+def test_oynatma_indirme_havuzunu_paylasmiyor():
+    """Oynatma, indirme kuyruğunun arkasına düşmemeli."""
+    from PySide6.QtCore import QThreadPool
+    from turkanime_api.gui.qt.workers import playback_pool
+
+    assert playback_pool() is not long_task_pool()
+    assert playback_pool() is not QThreadPool.globalInstance()
+
+
+def test_dolu_indirme_kuyrugu_oynatmayi_engellemiyor(qtbot):
+    """Ölçüldü: 3 uzun indirme havuzu doldurunca "Oynat" hiç başlamıyordu.
+
+    Kullanıcı 30 bölümü kuyruğa alınca havuz baştan sona dolu kalıyor; oynatma
+    aynı havuza gönderildiği için sıraya giriyor ve `MainWindow._playing`
+    bayrağı açık kaldığından ikinci deneme de reddediliyordu.
+    """
+    from turkanime_api.gui.qt.workers import (
+        VARSAYILAN_UZUN_IS, set_long_task_limit,
+    )
+
+    birak = threading.Event()
+    oynadi = threading.Event()
+    set_long_task_limit(1)              # havuzu tek işle doldurmak yeter
+    try:
+        run_bg(lambda: birak.wait(20), long_running=True)
+        qtbot.waitUntil(lambda: long_task_pool().activeThreadCount() == 1,
+                        timeout=5000)
+
+        run_bg(oynadi.set, playback=True)
+        # İndirme HÂLÂ sürerken oynatma başlamış olmalı.
+        qtbot.waitUntil(oynadi.is_set, timeout=5000)
+        assert not birak.is_set(), "ölçüm geçersiz: indirme erken bitti"
+    finally:
+        birak.set()
+        long_task_pool().waitForDone(5000)
+        set_long_task_limit(VARSAYILAN_UZUN_IS)
+
+
+# ── Kapanış ──────────────────────────────────────────────────────────────────
+def test_shutdown_pools_bitmeyen_isi_bildiriyor(qtbot):
+    """`shutdown_pools` iş bitmediyse False dönmeli.
+
+    Dönüş değeri olmadan çağıran taraf "her şey durdu" sanıyor ve süreci normal
+    yoldan kapatıyordu; `~QThreadPool` yıkıcısı ise zaman aşımsız
+    `waitForDone()` çağırdığı için süreç indirme bitene kadar askıda kalıyordu.
+    """
+    from turkanime_api.gui.qt.workers import shutdown_pools
+
+    birak = threading.Event()
+    basladi = threading.Event()
+    try:
+        run_bg(lambda: (basladi.set(), birak.wait(20)), long_running=True)
+        qtbot.waitUntil(basladi.is_set, timeout=5000)
+        assert shutdown_pools(200) is False
+    finally:
+        birak.set()
+        long_task_pool().waitForDone(5000)
+    assert shutdown_pools(2000) is True

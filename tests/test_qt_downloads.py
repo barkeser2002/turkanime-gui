@@ -93,11 +93,12 @@ def _entry(bolum, title="Naruto Test 1. Bölüm"):
 
 
 @pytest.fixture
-def manager(qtbot, preserved_gecmis):
+def manager(qtbot, izole_ev):
     """Her test kendi yöneticisiyle çalışsın; işler testler arasında sızmasın.
 
-    `preserved_gecmis` şart: başarılı indirme gerçek `gecmis.json`'a yazıyor,
-    izole edilmezse testler kullanıcının geçmişini kirletir.
+    `izole_ev` şart: indirme gerçek `gecmis.json`'a yazıyor VE okuyor. Yalnızca
+    yazımı geri almak yetmiyordu — "geçmişe yazılmadı" iddiaları kullanıcının
+    dosyasında aynı bölüm zaten varsa yalancı kırmızı veriyordu.
     """
     mgr = DownloadManager()
     yield mgr
@@ -440,3 +441,30 @@ def test_satir_dugmeleri_yoneticiye_bagli(qtbot, manager, monkeypatch, ayarla,
     page._rows[task_id].btnCancel.click()
     assert manager.durum(task_id) == DURUM_IPTAL
     assert page._rows[task_id].btnRetry.isVisibleTo(page._rows[task_id])
+
+
+# ── Yok edilmiş pencere ──────────────────────────────────────────────────────
+def test_yok_edilmis_yonetici_sinyal_yayinca_cokmuyor(qtbot, izole_ev, capfd):
+    """Pencere kapandıktan sonra koşmaya devam eden indirme sessizce bırakılmalı.
+
+    Ölçüldü: `_run` ilk `state.emit`'inde
+    `RuntimeError: Internal C++ object (DownloadManager) already deleted`
+    fırlatıyor, `_Task` bunu yakalayıp konsola traceback basıyor ve iş
+    "indiriliyor" durumunda takılı kalıyordu.
+    """
+    import shiboken6
+    from PySide6.QtWidgets import QWidget
+
+    pencere = QWidget()
+    mgr = DownloadManager(pencere)
+    mgr._basla = lambda job: None            # işi elle tetikleyeceğiz
+    task_id = mgr.enqueue(_entry(SahteBolum(slug="naruto-test-5-bolum")),
+                          output=str(izole_ev))
+
+    shiboken6.delete(pencere)                # pencere gerçekten yıkıldı
+    capfd.readouterr()                       # önceki gürültüyü at
+
+    mgr._run(task_id)                        # istisna DIŞARI sızmamalı
+
+    cikti = capfd.readouterr()
+    assert "RuntimeError" not in (cikti.out + cikti.err)

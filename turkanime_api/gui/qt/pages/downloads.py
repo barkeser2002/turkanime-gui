@@ -92,6 +92,23 @@ class DownloadManager(QObject):
         self._seq = 0
         self._jobs: Dict[str, _Is] = {}
 
+    # ── Sinyal yayma (alıcı silinmiş olabilir) ──────────────────────────────
+    def _yay(self, ad: str, *args) -> bool:
+        """Sinyali yay; alıcı yok edildiyse `False` dön.
+
+        Pencere kapanınca bu QObject'in C++ tarafı yıkılır ama arka plandaki
+        indirme hâlâ koşuyordur. Korumasız `emit`, işçi thread'inde
+        `RuntimeError: Internal C++ object already deleted` fırlatıyor,
+        `_Task` bunu yakalayıp konsola traceback basıyor ve indirme daha ilk
+        ilerleme bildiriminde sessizce ölüyordu. Alıcı gittiyse raporlanacak
+        kimse de yok; işi düzgünce bırakmak için `False` yeterli.
+        """
+        try:
+            getattr(self, ad).emit(*args)
+            return True
+        except RuntimeError:
+            return False
+
     # ── Kuyruk ──────────────────────────────────────────────────────────────
     def enqueue(self, entry: Dict[str, Any], output: str = "") -> Optional[str]:
         bolum = (entry or {}).get("obj")
@@ -107,7 +124,7 @@ class DownloadManager(QObject):
         title = entry.get("title") or "Bölüm"
         job = _Is(task_id, entry, title, output or prefs.indirme_dizini(tercih))
         self._jobs[task_id] = job
-        self.added.emit(task_id, title)
+        self._yay("added", task_id, title)
         self._basla(job)
         return task_id
 
@@ -149,7 +166,7 @@ class DownloadManager(QObject):
         job.iptal.clear()
         with job.kilit:
             job.durum = DURUM_BEKLIYOR
-        self.state.emit(job.task_id, DURUM_BEKLIYOR)
+        self._yay("state", job.task_id, DURUM_BEKLIYOR)
         # long_running: indirme, işi bitene kadar thread'i tutar; UI görevlerinin
         # (arama, bölüm listesi) havuzunu tüketmemesi için ayrı havuza gider.
         run_bg(self._run, job.task_id, long_running=True)
@@ -161,13 +178,19 @@ class DownloadManager(QObject):
             if job.durum in BITMIS_DURUMLAR:
                 return False
             job.durum = durum
-        self.state.emit(job.task_id, durum)
-        self.finished.emit(job.task_id, ok, mesaj or durum)
+        self._yay("state", job.task_id, durum)
+        self._yay("finished", job.task_id, ok, mesaj or durum)
         return True
 
     def _hook_uret(self, job: _Is):
         """`progress_hooks` için iptal farkındalıklı ilerleme hook'u."""
         task_id = job.task_id
+
+        def yay(pct: int, detail: str) -> None:
+            # Alıcı yok edildiyse (pencere kapandı) indirmeyi sürdürmenin
+            # anlamı yok: iptal yolunu kullanarak yt-dlp'yi düzgünce durdur.
+            if not self._yay("progress", task_id, pct, detail):
+                raise IndirmeIptal(task_id)
 
         def hook(d: Dict[str, Any]) -> None:
             if job.iptal.is_set():
@@ -181,14 +204,14 @@ class DownloadManager(QObject):
                 detail = f"{_fmt_size(done)} / {_fmt_size(total)}"
                 if speed:
                     detail += f" · {_fmt_size(speed)}/s"
-                self.progress.emit(task_id, pct, detail)
+                yay(pct, detail)
             elif durum == "finished":
-                self.progress.emit(task_id, 100, "birleştiriliyor…")
+                yay(100, "birleştiriliyor…")
             elif durum == "error":
                 # aria2c fallback'i bu yolla haber veriyor; iş henüz bitmedi.
                 mesaj = d.get("message")
                 if mesaj:
-                    self.progress.emit(task_id, 0, f"hata: {mesaj}")
+                    yay(0, f"hata: {mesaj}")
 
         return hook
 
@@ -207,8 +230,10 @@ class DownloadManager(QObject):
 
         with job.kilit:
             job.durum = DURUM_INDIRILIYOR
-        self.state.emit(task_id, DURUM_INDIRILIYOR)
-        self.progress.emit(task_id, 0, "video aranıyor…")
+        if not self._yay("state", task_id, DURUM_INDIRILIYOR):
+            # Pencere yok edilmiş: kimse dinlemiyor, indirmeye hiç başlama.
+            return
+        self._yay("progress", task_id, 0, "video aranıyor…")
 
         try:
             video = bolum.best_video(by_res=tercih.max_res,
@@ -226,7 +251,7 @@ class DownloadManager(QObject):
             if job.iptal.is_set():
                 break
             if deneme > 1:
-                self.progress.emit(task_id, 0, f"{deneme}. deneme…")
+                self._yay("progress", task_id, 0, f"{deneme}. deneme…")
             try:
                 prefs.indir(video, hook, job.output, tercih)
             except IndirmeIptal:

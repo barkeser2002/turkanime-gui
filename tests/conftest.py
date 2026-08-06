@@ -38,6 +38,64 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+# ── Ağ mandalı ───────────────────────────────────────────────────────────────
+class AgEngellendi(RuntimeError):
+    """Test paketi dışarı bağlanmaya çalıştı."""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ag_mandali(pytestconfig):
+    """Loopback dışına çıkan her soket çağrısını kes.
+
+    Sahteleme tek başına yetmiyor: açılış denetimi (`MainWindow` →
+    `UpdateService.kontrol_et`) işi ARKA PLAN havuzuna atıyor ve o thread
+    fonksiyona, testin `monkeypatch`'i çoktan geri alındıktan sonra ulaşıyor —
+    yani sahtenin yanından dolaşıp gerçekten `raw.githubusercontent.com`'a
+    çıkıyordu. Ölçüldü: paket başına 3 dış istek. Süreç genelinde kurulan bu
+    mandal, hangi yoldan gelirse gelsin sızıntıyı yakalar.
+
+    `--network` verildiğinde kurulmaz; işaretli testler gerçekten ağa çıkmalı.
+    """
+    if pytestconfig.getoption("--network"):
+        yield
+        return
+
+    import socket
+
+    yerel = {"127.0.0.1", "::1", "localhost", "0.0.0.0", ""}
+    ozgun = (socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo)
+
+    def _yerel_mi(adres):
+        try:
+            return str(adres[0]) in yerel
+        except Exception:
+            return True
+
+    def _connect(self, adres):
+        if not _yerel_mi(adres):
+            raise AgEngellendi(f"testler ağa çıkamaz: {adres}")
+        return ozgun[0](self, adres)
+
+    def _connect_ex(self, adres):
+        if not _yerel_mi(adres):
+            raise AgEngellendi(f"testler ağa çıkamaz: {adres}")
+        return ozgun[1](self, adres)
+
+    def _getaddrinfo(host, *a, **k):
+        if str(host) not in yerel:
+            raise AgEngellendi(f"testler DNS sorgulayamaz: {host}")
+        return ozgun[2](host, *a, **k)
+
+    socket.socket.connect = _connect
+    socket.socket.connect_ex = _connect_ex
+    socket.getaddrinfo = _getaddrinfo
+    try:
+        yield
+    finally:
+        socket.socket.connect, socket.socket.connect_ex = ozgun[0], ozgun[1]
+        socket.getaddrinfo = ozgun[2]
+
+
 # ── Qt ───────────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session", autouse=True)
 def _qt_env():
@@ -71,6 +129,30 @@ def _stub_discover_sources(request, monkeypatch):
                       ("update_anime_progress", False)):
         monkeypatch.setattr(anilist_mod.anilist_client, uc,
                             lambda *a, _s=sonuc, **k: _s)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cevresel_taban(pytestconfig):
+    """Ağ uçlarının OTURUM BOYU tabanını sahteye çek.
+
+    Fonksiyon kapsamlı `monkeypatch` teardown'da *eski* değeri geri koyuyor;
+    açılış denetiminin arka plan thread'i tam o aralığa denk geldiğinde gerçek
+    fonksiyonu buluyor ve ağa çıkıyordu. Taban da sahte olunca geri koyulan
+    değer yine sahtedir — yarış ortadan kalkar.
+    """
+    if pytestconfig.getoption("--network"):
+        yield
+        return
+    from turkanime_api.common import requirements as req_mod
+    from turkanime_api.common import updater as upd_mod
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(upd_mod, "surum_bilgisi_getir", lambda *a, **k: {})
+    mp.setattr(req_mod, "eksik_araclar", lambda *a, **k: [])
+    try:
+        yield
+    finally:
+        mp.undo()
 
 
 @pytest.fixture(autouse=True)
@@ -188,6 +270,28 @@ def preserved_gecmis():
     """
     from turkanime_api.cli.dosyalar import Dosyalar
     yield from _yedekli_dosya(Dosyalar().gecmis_path)
+
+
+@pytest.fixture
+def izole_ev(tmp_path, monkeypatch):
+    """`Dosyalar()`'ı geçici bir dizine bağla — gerçek dosyalara hiç dokunma.
+
+    `preserved_*` yalnızca YAZIMI geri alıyor; test kullanıcının gerçek
+    `gecmis.json`'unu OKUMAYA devam ettiği için sonucu oradaki kayıtlara
+    bağlıydı. Ölçüldü: `naruto-test-1-bolum` zaten "indirildi" listesindeyse
+    `test_liste_gercek_gecmisi_okuyor` düşüyor — yani test başka bir makinede
+    farklı davranıyor.
+
+    `Dosyalar`, çalışma dizininde `.git` görürse orayı kök sayar; mandal bu
+    daldan geçiyor. Ayrı bir alt dizin kullanılıyor ki `tmp_path`'i indirme
+    hedefi olarak kullanan testler ayar/geçmiş dosyalarıyla karışmasın.
+    """
+    ev = tmp_path / "ev"
+    (ev / ".git").mkdir(parents=True)
+    monkeypatch.chdir(ev)
+    from turkanime_api.cli.dosyalar import Dosyalar
+    Dosyalar()                       # varsayılan ayarlar + boş geçmiş üret
+    return ev
 
 
 @pytest.fixture

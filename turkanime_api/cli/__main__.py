@@ -14,6 +14,7 @@ from rich import print as rprint
 import questionary as qa
 
 from ..bypass import fetch
+from ..common.cf_qt_solver import SOLVER_FLAG
 from ..objects import Anime
 from ..sources import search_animecix, search_anizle
 from ..sources.animecix import CixAnime
@@ -632,6 +633,15 @@ def menu_loop():
 
 
 def main():
+    # Donmuş (PyInstaller) CLI exe'si de CF çözücüsünün giriş noktasıdır:
+    # `cf_bypass._get_qt_solver`, donmuş modda `sys.executable --cf-qt-solver`
+    # ile UYGULAMANIN KENDİSİNİ çağırıyor. CLI bu bayrağı tanımadığı sürece o
+    # çağrı etkileşimli menüyü açıyor, çözücü el sıkışması bozuk çıkıyor ve
+    # açılan süreç yetim kalıyordu — her CF challenge'ında bir tane.
+    if SOLVER_FLAG in sys.argv:
+        from ..common.cf_qt_solver import main as solver_main
+        return solver_main()
+
     # Güncelleme kontrolü
     try:
         with CliStatus("Güncelleme kontrol ediliyor.."):

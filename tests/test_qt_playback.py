@@ -242,11 +242,16 @@ def test_ikon_ayari_kapaliyken_gecmis_okunmuyor(qtbot, ayarla):
     assert not page._rows[0].lblHistory.isVisibleTo(page._rows[0])
 
 
-def test_liste_gercek_gecmisi_okuyor(qtbot, ayarla, preserved_gecmis):
-    """`gecmis.json`'daki kayıt satır rozetine yansımalı."""
+def test_liste_gercek_gecmisi_okuyor(qtbot, izole_ev):
+    """`gecmis.json`'daki kayıt satır rozetine yansımalı.
+
+    `izole_ev` şart: aşağıdaki "indirildi False" iddiası dosyanın BOŞ
+    başlamasına dayanıyor, kullanıcının gerçek geçmişinde aynı bölüm varsa
+    test yalancı kırmızı veriyordu.
+    """
     from turkanime_api.cli.dosyalar import Dosyalar
 
-    ayarla(**{"izlendi ikonu": True})
+    Dosyalar().set_ayar("izlendi ikonu", True)
     Dosyalar().set_gecmis("naruto-test", "naruto-test-1-bolum", "izlendi")
 
     page = EpisodePage()

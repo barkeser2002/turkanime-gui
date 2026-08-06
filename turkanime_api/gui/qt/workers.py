@@ -123,7 +123,7 @@ class _Task(QRunnable):
             pass
 
 
-# Uzun süren işler (indirme, mpv ile oynatma) için AYRI havuz.
+# Uzun süren işler (indirme) için AYRI havuz.
 #
 # Neden: `video.oynat()` mpv süreci bitene kadar, `video.indir()` de indirme
 # bitene kadar çalıştığı thread'i tutar. Bunlar global havuza konursa 30 bölüm
@@ -132,19 +132,40 @@ class _Task(QRunnable):
 # "aranıyor…" durumunda kilitlenir.
 _long_pool: QThreadPool | None = None
 
+# Oynatma da uzun bir iş ama indirmeyle AYNI havuzu paylaşamaz: havuzun sınırı
+# kullanıcının "paralel indirme sayisi" ayarı ve 30 bölüm kuyruğa alındığında
+# havuz baştan sona doludur. Oynatma o kuyruğun sonuna eklenince mpv dakikalarca
+# açılmaz; üstelik `MainWindow._playing` bayrağı iş başlayana kadar açık kaldığı
+# için kullanıcının ikinci denemesi de "zaten bir bölüm açılıyor" diye reddedilir
+# — yani indirme kuyruğu bitene kadar oynatma tamamen ölür.
+_play_pool: QThreadPool | None = None
+
 # Yalnızca YEDEK değer: gerçek sınır "paralel indirme sayisi" ayarından gelir
 # (bkz. `set_long_task_limit`). Sabit tutulduğu sürece kullanıcının ayarı
 # hiçbir işe yaramıyordu.
 VARSAYILAN_UZUN_IS = 3
 
+# `MainWindow._playing` zaten tek oynatmaya izin veriyor; ikinci slot yalnızca
+# biten mpv'nin thread'i havuza dönerken yeni isteğin beklememesi için.
+ES_ZAMANLI_OYNATMA = 2
+
 
 def long_task_pool() -> QThreadPool:
-    """İndirme/oynatma gibi uzun işler için ayrılmış havuz."""
+    """İndirme gibi uzun işler için ayrılmış havuz."""
     global _long_pool
     if _long_pool is None:
         _long_pool = QThreadPool()
         _long_pool.setMaxThreadCount(VARSAYILAN_UZUN_IS)
     return _long_pool
+
+
+def playback_pool() -> QThreadPool:
+    """Oynatma (mpv) için ayrılmış havuz — indirme kuyruğundan bağımsız."""
+    global _play_pool
+    if _play_pool is None:
+        _play_pool = QThreadPool()
+        _play_pool.setMaxThreadCount(ES_ZAMANLI_OYNATMA)
+    return _play_pool
 
 
 def set_long_task_limit(sayi: int | None) -> int:
@@ -166,25 +187,40 @@ def set_long_task_limit(sayi: int | None) -> int:
 
 
 def run_bg(fn: Callable[..., Any], *args, signals: WorkerSignals | None = None,
-           long_running: bool = False, **kwargs) -> None:
+           long_running: bool = False, playback: bool = False, **kwargs) -> None:
     """`fn`'i arka planda çalıştır (eski `threading.Thread(daemon=True)` yerine).
 
     `long_running=True` verilirse iş, kısa UI görevlerini aç bırakmamak için
-    ayrı havuza gönderilir.
+    indirme havuzuna gönderilir. `playback=True` ise oynatmaya ayrılmış havuza:
+    mpv, kullanıcının indirme kuyruğu yüzünden beklemek zorunda kalmamalı.
 
     Hata olursa `signals.error` yayılır; sinyal verilmemişse traceback basılır.
     """
-    pool = long_task_pool() if long_running else QThreadPool.globalInstance()
+    if playback:
+        pool = playback_pool()
+    elif long_running:
+        pool = long_task_pool()
+    else:
+        pool = QThreadPool.globalInstance()
     pool.start(_Task(fn, args, kwargs, signals))
 
 
-def shutdown_pools(msecs: int = 3000) -> None:
-    """Kapanışta havuzları boşalt; çalışanların bitmesini kısa süre bekle."""
-    for pool in (QThreadPool.globalInstance(), _long_pool):
+def shutdown_pools(msecs: int = 3000) -> bool:
+    """Kapanışta havuzları boşalt; çalışanların bitmesini kısa süre bekle.
+
+    Dönüş: hepsi durduysa `True`. Çağıranın bunu YOK SAYMAMASI gerekir —
+    `~QThreadPool` yıkıcısı zaman aşımsız `waitForDone()` çağırdığı için,
+    burada `False` dönüldüğünde süreç normal yoldan çıkmaya çalışırsa iş
+    (ör. yarım kalmış bir indirme) bitene kadar askıda kalır.
+    """
+    tamam = True
+    for pool in (QThreadPool.globalInstance(), _long_pool, _play_pool):
         if pool is None:
             continue
-        pool.clear()                 # henüz başlamamışları at
-        pool.waitForDone(msecs)      # çalışanlara kısa mühlet
+        pool.clear()                      # henüz başlamamışları at
+        if not pool.waitForDone(msecs):   # çalışanlara kısa mühlet
+            tamam = False
+    return tamam
 
 
 class UiBridge(QObject):
@@ -214,4 +250,5 @@ class UiBridge(QObject):
 
 
 __all__ = ["WorkerSignals", "run_bg", "UiBridge", "long_task_pool",
-           "set_long_task_limit", "shutdown_pools", "VARSAYILAN_UZUN_IS"]
+           "playback_pool", "set_long_task_limit", "shutdown_pools",
+           "VARSAYILAN_UZUN_IS", "ES_ZAMANLI_OYNATMA"]

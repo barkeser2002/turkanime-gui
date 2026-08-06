@@ -45,6 +45,13 @@ DEFAULT_TIMEOUT = 60
 POLL_MS = 700
 PROFILE_NAME = "cfsolver"
 
+# Donmuş (PyInstaller) build'de `sys.executable -m paket.modul` çalışmaz; çözücü
+# uygulamanın KENDİSİNİ bu bayrakla yeniden çağırır. Bayrağı burada tutuyoruz ki
+# hem GUI hem CLI giriş noktası aynı dizgeyi görsün — CLI'ninki bayraktan
+# habersizdi ve her CF challenge'ında etkileşimli bir CLI süreci açılıp yetim
+# kalıyordu (bkz. `cf_bypass._get_qt_solver`).
+SOLVER_FLAG = "--cf-qt-solver"
+
 
 def _looks_like_challenge(html: str) -> bool:
     head = html[:6000]

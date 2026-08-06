@@ -67,3 +67,55 @@ def test_download_dir_falls_back_when_settings_broken(monkeypatch):
     d = MainWindow._download_dir()
     assert os.path.isdir(d)
     assert os.path.abspath(d) != os.path.abspath(os.getcwd())
+
+
+# ── Kapanış: süreç gerçekten çıkmalı ─────────────────────────────────────────
+COCUK_KAPANIS = """
+import os, sys, time
+sys.path.insert(0, {repo!r})
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+from turkanime_api.gui.qt import app as app_mod
+from turkanime_api.gui.qt.workers import run_bg
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QMainWindow
+
+
+class SahtePencere(QMainWindow):
+    # Gerçek MainWindow'un yerine: uzun bir indirme başlatıp kendini kapatır.
+    def __init__(self):
+        super().__init__()
+        run_bg(lambda: time.sleep(25), long_running=True)
+        QTimer.singleShot(600, self.close)
+
+
+app_mod.MainWindow = SahtePencere
+sys.exit(app_mod.run())
+"""
+
+
+def test_uzun_is_surerken_surec_asili_kalmiyor(tmp_path):
+    """Ölçüldü: pencere kapansa da süreç indirme bitene kadar çıkmıyordu.
+
+    `~QThreadPool` yıkıcısı zaman aşımsız `waitForDone()` çağırıyor; 20 sn'lik
+    sahte bir indirmeyle süreç 20,7 sn sonra çıkıyordu (beklenen ~3,7 sn).
+    """
+    import subprocess
+    import sys
+    import time
+
+    kok = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    betik = tmp_path / "kapanis_cocugu.py"
+    betik.write_text(COCUK_KAPANIS.format(repo=kok), encoding="utf-8")
+
+    t0 = time.time()
+    proc = subprocess.Popen([sys.executable, str(betik)],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        proc.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        pytest.fail("süreç 20 sn içinde çıkmadı: uzun iş kapanışı kilitliyor")
+    sure = time.time() - t0
+    assert sure < 15, f"kapanış {sure:.1f} sn sürdü — uzun işi bekliyor"

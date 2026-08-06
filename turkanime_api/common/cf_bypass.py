@@ -238,13 +238,17 @@ class CFSession:
 
         import subprocess
         import sys as _sys
+        from .cf_qt_solver import SOLVER_FLAG
+
+        proc = None
         try:
             env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8")
             if getattr(_sys, "frozen", False):
                 # Paketlenmiş EXE'de `-m modul` çalışmaz (sys.executable uygulamanın
                 # kendisi). Uygulamayı özel bayrakla yeniden çağırıyoruz; giriş
-                # noktası (gui/qt/__main__.py) bunu yakalayıp çözücüyü başlatır.
-                cmd = [_sys.executable, "--cf-qt-solver"]
+                # noktaları (gui/qt/__main__.py ve cli/__main__.py) bunu yakalayıp
+                # çözücüyü başlatır.
+                cmd = [_sys.executable, SOLVER_FLAG]
             else:
                 cmd = [_sys.executable, "-m", "turkanime_api.common.cf_qt_solver"]
             proc = subprocess.Popen(
@@ -259,6 +263,14 @@ class CFSession:
             self._qt_solver = proc
             return proc
         except Exception as e:
+            # Süreç KESİNLİKLE öldürülmeli: el sıkışma bozuk çıktığında (ör.
+            # bayrağı tanımayan bir giriş noktası cevap yerine menü basarsa)
+            # `json.loads` burada patlıyor ve alt-süreç yetim kalıyordu.
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             print(f"[CF Bypass] QtWebEngine çözücü başlatılamadı: {e}")
             return None
 

@@ -6,10 +6,15 @@ Bu dosya o bayrağı yakalayıp GUI yerine çözücüyü çalıştırır.
 
     python -m turkanime_api.gui.qt                 -> GUI
     <app.exe> --cf-qt-solver                       -> CF çözücü alt-süreci
+
+Release iş akışı ayrı bir donmuş CLI de üretiyor; aynı karşılama
+`cli/__main__.py` içinde de var, yoksa CLI exe'sinde her challenge bir yetim
+süreç bırakıyordu.
 """
 import sys
 
-SOLVER_FLAG = "--cf-qt-solver"
+# Bayrağın tek kaynağı çözücü modülü; CLI giriş noktası da aynısını kullanıyor.
+from turkanime_api.common.cf_qt_solver import SOLVER_FLAG
 
 
 def main() -> int:

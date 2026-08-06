@@ -45,6 +45,10 @@ APP_TITLE = "TürkAnime İndirici"
 # ilk kareyi ağ isteği ve `--version` çağrılarıyla geciktirmenin anlamı yok.
 ACILIS_DENETIM_GECIKMESI = 1500
 
+# Kapanışta çalışan işlere tanınan mühlet. Bittiğinde bekleyen iş kalmışsa
+# süreç zorla sonlandırılır (bkz. `run`).
+KAPANIS_MUHLETI = 3000
+
 # Sol menü: (anahtar, etiket). Sonraki fazlarda her biri gerçek sayfayla dolacak.
 NAV_ITEMS = [
     ("home", "Ana Sayfa"),
@@ -398,9 +402,11 @@ class MainWindow(QMainWindow):
         self._playing = True
         self._status(f"{entry.get('title')} — video aranıyor…")
         self.discord.izliyor(anime_adi(bolum, ""), entry.get("title") or "")
-        # long_running: oynatma, mpv kapanana kadar thread'i tutar.
+        # playback: oynatma mpv kapanana kadar thread'i tutar ama İNDİRME
+        # havuzuna girmemeli — kuyrukta 30 bölüm varsa mpv hiç açılmaz ve
+        # `_playing` açık kaldığı için kullanıcı yeniden de deneyemez.
         run_bg(self._play_blocking, bolum, entry.get("title") or "",
-               long_running=True)
+               playback=True)
 
     def _play_blocking(self, bolum, title: str) -> None:
         # NOT: Bu gövde arka plan thread'inde; hata yutulursa kullanıcı sonsuza
@@ -559,16 +565,24 @@ class MainWindow(QMainWindow):
 
         `clear()` tek başına yetmez: yalnızca HENÜZ BAŞLAMAMIŞ görevleri atar.
         Çalışan bir indirme, biz pencereyi yok ettikten sonra sinyal yaymaya
-        devam eder ve silinmiş C++ nesnesine çarpar (çökme). Bu yüzden kısa bir
-        süre bitmelerini bekliyoruz.
+        devam eder ve silinmiş C++ nesnesine çarpar (çökme). Bu yüzden önce
+        işleri iptal ediyor, sonra kısa süre bitmelerini bekliyoruz.
         """
         try:
             self.discord.durdur()
         except Exception:
             pass
         try:
+            # İptal ŞART: yalnızca beklemek yetmez, yt-dlp indirmeyi sonuna
+            # kadar sürdürür ve süreç dakikalarca kapanmaz. `cancel_all` iptal
+            # bayrağını kaldırır, ilerleme hook'u bir sonraki parçada görüp
+            # indirmeyi bırakır.
+            self.downloads.cancel_all()
+        except Exception:
+            pass
+        try:
             from .workers import shutdown_pools
-            shutdown_pools(3000)
+            shutdown_pools(KAPANIS_MUHLETI)
         except Exception:
             pass
         super().closeEvent(event)
@@ -591,7 +605,20 @@ def run() -> int:
 
     window = MainWindow()
     window.show()
-    return app.exec()
+    kod = app.exec()
+
+    # `~QThreadPool` yıkıcısı ZAMAN AŞIMSIZ `waitForDone()` çağırır: havuzda
+    # hâlâ koşan bir iş varsa normal dönüş süreci bitirmez, yorumlayıcı kapanışta
+    # o iş (ör. yarım kalmış bir indirme) tamamlanana kadar askıda kalır —
+    # kullanıcı pencereyi kapatmış olmasına rağmen süreç dakikalarca ayakta
+    # kalıyordu. `closeEvent` zaten iptal edip mühlet tanıdı; buraya gelindiğinde
+    # beklenecek bir şey kalmamıştır.
+    from .workers import shutdown_pools
+    if not shutdown_pools(0):
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(kod)
+    return kod
 
 
 if __name__ == "__main__":
