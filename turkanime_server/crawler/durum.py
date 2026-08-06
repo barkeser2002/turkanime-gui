@@ -213,6 +213,25 @@ class DurumDeposu:
                 deneme=satir["deneme"],
             )
 
+    def bekleyen_var_mi(
+        self,
+        kaynaklar: Optional[Sequence[str]] = None,
+        simdi: Optional[float] = None,
+    ) -> bool:
+        """Zamanı gelmiş bekleyen görev var mı — kuyruktan **almadan**.
+
+        `sirada_bekleyen` görevi 'işlemde' işaretlediği için "iş kaldı mı?"
+        sorusuna onunla bakmak görevi sahiplenmek olurdu.
+        """
+        ts = self._simdi() if simdi is None else simdi
+        with self._kilit:
+            sorgu = "SELECT 1 FROM kuyruk WHERE durum='bekliyor' AND hazir_ts<=?"
+            par: List[Any] = [ts]
+            if kaynaklar:
+                sorgu += " AND kaynak IN (%s)" % ",".join("?" * len(kaynaklar))
+                par.extend(kaynaklar)
+            return self._db.execute(sorgu + " LIMIT 1", par).fetchone() is not None
+
     def gorev_bitti(self, gorev: Gorev) -> None:
         with self._kilit:
             self._db.execute("UPDATE kuyruk SET durum='bitti' WHERE id=?", (gorev.id,))

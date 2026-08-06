@@ -34,6 +34,11 @@ class NezaketAyarlari:
     # ısrar etmek karşı tarafta ban, bizde de boş kuyruk turu demek.
     ardisik_hata_siniri: int = 5
     gunluk_tavan: int = 400
+    # Bir koşuda geri çekilme beklemelerine ayrılan **toplam** bütçe. Tek tek
+    # beklemeleri sınırlamak yetmezdi: üst üste binen kısa dinlenmeler de turu
+    # yiyebilir. Bütçe dolunca kaynak bu tura kapatılır ve kalan iş bir sonraki
+    # tetiğe devredilir — cron zaten 30 dakikada bir çağırıyor.
+    dinlenme_butcesi: float = 300.0
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,15 @@ class TarayiciAyarlari:
 
     eslesme_esigi: float = 0.90
     nezaket: NezaketAyarlari = field(default_factory=NezaketAyarlari)
+
+    @property
+    def kilit(self) -> Path:
+        """Koşu kilidinin yolu — durum dosyasının yanında.
+
+        Kilit çıktı ağacında değil durumun yanında duruyor: arşiv dizini git
+        çalışma ağacı ve oraya konan her dosya yayınlanan arşive sızardı.
+        """
+        return self.durum.with_name(self.durum.name + ".kilit")
 
     def cozulmus(self, kok: Path) -> "TarayiciAyarlari":
         """Göreli yolları ``kok`` altına sabitlenmiş bir kopya döndür."""

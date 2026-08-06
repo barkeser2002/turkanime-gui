@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Tuple
 import pytest
 
 from turkanime_server.yayinci.ayarlar import YayinAyarlari, ortamdan
-from turkanime_server.yayinci.depo import GitDepo, gizle
+from turkanime_server.yayinci.depo import ZORLA_BAYRAGI, GitDepo, GitHatasi, gizle
 from turkanime_server.yayinci.mesaj import Degisim, mesaj_uret
 from turkanime_server.yayinci.yayinci import Yayinci
 
@@ -296,6 +296,88 @@ def test_gecmis_azami_asilinca_tek_koke_indiriliyor(tmp_path):
     devam = Yayinci(ayarlar).yayinla()
     assert devam.yayinlandi and not devam.budandi
     assert int(git("rev-list", "--count", "HEAD", cwd=arsiv)) == 2
+
+
+def test_budama_turunda_itme_coktuyse_sonraki_tur_toparliyor(tmp_path):
+    """Budama + başarısız itme, uzak arşivi kalıcı olarak dondurmamalı.
+
+    Senaryo: `azami_gecmis=4`, 5. turda geçmiş tek köke indirildi ve tam o
+    turda uzak erişilemez oldu. Yerel geçmiş yeniden yazıldığı için 6. turdaki
+    düz itme "! [rejected]" alır; bilgi yalnızca bellekte tutulursa yayıncı bir
+    daha asla itemez — yerel commit sayısı artarken uzak son yayınlanan hâlde
+    donar.
+    """
+    arsiv = arsiv_kur(tmp_path / "arsiv", {"naruto": [("s01e01", "https://x.test/1.mp4")]})
+    uzak = bare_depo(tmp_path)
+    ayarlar = _ayarlar(arsiv, uzak, azami_gecmis=4)
+
+    def tur(n: int):
+        _yaz(arsiv / "animeler" / "naruto" / "s01e01.json",
+             [{"url": f"https://x.test/{n}.mp4", "alive": True}])
+
+    for n in range(1, 5):
+        tur(n)
+        assert Yayinci(ayarlar).yayinla().yayinlandi, f"{n}. tur commit atmadı"
+    assert int(git("rev-list", "--count", "HEAD", cwd=arsiv)) == 4
+
+    # 5. tur: budama tetiklenir, ama uzak tam o anda erişilemez
+    tur(5)
+    kopuk = _ayarlar(arsiv, tmp_path / "erisilemez.git", azami_gecmis=4)
+    with pytest.raises(GitHatasi):
+        Yayinci(kopuk).yayinla()
+    assert int(git("rev-list", "--count", "HEAD", cwd=arsiv)) == 1, \
+        "budama gerçekleşmiş olmalı (senaryo bunu gerektiriyor)"
+    assert git("rev-parse", "master", cwd=uzak).strip() \
+        != git("rev-parse", "HEAD", cwd=arsiv).strip()
+
+    # 6. tur: uzak geri geldi. Yayıncı geçmişi kendisinin yeniden yazdığını
+    # hatırlamalı ve uzağı toparlamalı.
+    tur(6)
+    sonuc = Yayinci(ayarlar).yayinla()
+    assert sonuc.yayinlandi and sonuc.itildi
+    assert git("rev-parse", "master", cwd=uzak).strip() \
+        == git("rev-parse", "HEAD", cwd=arsiv).strip(), \
+        "uzak arşiv donmuş durumda kaldı"
+    icerik = json.loads(git("show", "master:animeler/naruto/s01e01.json", cwd=uzak))
+    assert icerik[0]["url"] == "https://x.test/6.mp4"
+
+    # 7. tur normale dönmeli: bayrak temizlendiği için zorla itme denenmez
+    tur(7)
+    yedinci = Yayinci(ayarlar).yayinla()
+    assert yedinci.itildi and not yedinci.budandi
+    assert not (arsiv / ".git" / ZORLA_BAYRAGI).exists(), \
+        "başarılı itmeden sonra zorla itme bayrağı kalmamalı"
+
+
+def test_uzaktaki_yabanci_commit_zorla_itilip_silinmiyor(tmp_path):
+    """Ayrışmanın sebebi biz değilsek zorla itme veri kaybettirir.
+
+    Uzağa başkası (elle düzeltme, ikinci bir sunucu) commit atmışsa yayıncı
+    onun üstüne yeniden işlemeli; `--force` o commit'i uçururdu.
+    """
+    arsiv = arsiv_kur(tmp_path / "arsiv", {"naruto": [("s01e01", "https://x.test/1.mp4")]})
+    uzak = bare_depo(tmp_path)
+    ayarlar = _ayarlar(arsiv, uzak)                 # azami_gecmis=0 → budama yok
+    assert Yayinci(ayarlar).yayinla().itildi
+
+    klon = tmp_path / "klon"
+    subprocess.run(["git", "clone", "--quiet", str(uzak), str(klon)], check=True)
+    (klon / "NOTLAR.md").write_text("elle eklendi\n", encoding="utf-8")
+    git("add", "-A", cwd=klon)
+    git("-c", "user.name=biri", "-c", "user.email=biri@ornek.test",
+        "commit", "--quiet", "-m", "yabanci commit", cwd=klon)
+    yabanci = git("rev-parse", "HEAD", cwd=klon).strip()
+    git("push", "--quiet", "origin", "HEAD:refs/heads/master", cwd=klon)
+
+    _yaz(arsiv / "animeler" / "naruto" / "s01e01.json",
+         [{"url": "https://x.test/2.mp4", "alive": True}])
+    sonuc = Yayinci(ayarlar).yayinla()
+
+    assert sonuc.yayinlandi and sonuc.itildi
+    assert yabanci in git("rev-list", "master", cwd=uzak).split(), \
+        "uzaktaki yabancı commit zorla itmeyle silindi"
+    icerik = json.loads(git("show", "master:animeler/naruto/s01e01.json", cwd=uzak))
+    assert icerik[0]["url"] == "https://x.test/2.mp4", "arşiv güncellenmedi"
 
 
 def test_gitattributes_satir_sonu_donusumunu_kapatiyor(tmp_path):

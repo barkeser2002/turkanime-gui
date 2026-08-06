@@ -31,6 +31,7 @@ from turkanime_server.crawler.ayarlar import (      # noqa: E402
     VARSAYILAN_TOHUMLAR, NezaketAyarlari, TarayiciAyarlari,
 )
 from turkanime_server.crawler.kaynaklar import KAYNAKLAR  # noqa: E402
+from turkanime_server.crawler.nezaket import KosuZatenSuruyor  # noqa: E402
 from turkanime_server.crawler.tarayici import Tarayici    # noqa: E402
 
 # Varsayılan veri yolları `turkanime_server/` altında: cwd nerede olursa olsun
@@ -111,6 +112,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     tarayici = Tarayici(ayarlar)
     try:
         ozet = tarayici.calistir(arsiv_yaz=not ns.arsiv_yazma)
+    except KosuZatenSuruyor as e:
+        # Sessizce beklemek yanlış olurdu: cron 30 dakikada bir çağırıyor,
+        # kuyruk kalıcı ve bir sonraki tur kaldığı yerden devam ediyor.
+        print(f"Koşu atlandı: {e}", file=sys.stderr)
+        return 3
     except KeyboardInterrupt:
         # Kalıcı kuyruk sayesinde yarıda kesmek güvenli: bir sonraki koşu
         # kaldığı yerden devam eder.
@@ -121,6 +127,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         tarayici.kapat()
 
     print(json.dumps(ozet.sozluk(), ensure_ascii=False, indent=2))
+    if ozet.yarim_kaldi:
+        # Yarım kalan tur sessizce 0 döndürmemeli: cron log'unda tek fark
+        # bu koddur ve "kotanın %99'u kullanılmadı" bilgisi buradan görünür.
+        print("Koşu yarım kaldı: "
+              f"{', '.join(sorted(set(ozet.engellenen))) or 'kaynak yok'} bu turda "
+              "kapandı, kuyrukta hazır iş kaldı.", file=sys.stderr)
+        return 4
     return 0
 
 

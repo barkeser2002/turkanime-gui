@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .ayarlar import YayinAyarlari
-from .depo import GitDepo, gizle
+from .depo import GitDepo, ItmeReddedildi, gizle
 from .mesaj import DIZIN, Degisim, mesaj_uret
 
 log = logging.getLogger("turkanime.yayinci")
@@ -161,7 +161,7 @@ class Yayinci:
         log.info("commit %s — %s", sha[:8], mesaj.splitlines()[0])
 
         budandi = self._bakim()
-        itildi = self._it(zorla=budandi)
+        itildi = self._it(mesaj, zorla=budandi)
         return YayinSonucu(yayinlandi=True, sebep="yayinlandi",
                            sha=self.depo.son_sha(), mesaj=mesaj,
                            itildi=itildi, budandi=budandi, degisim=degisim)
@@ -181,10 +181,37 @@ class Yayinci:
                      and sayi % self.ayarlar.bakim_araligi == 0)
         return False
 
-    def _it(self, zorla: bool = False) -> bool:
+    def _it(self, mesaj: str, zorla: bool = False) -> bool:
+        """Uzağa it; reddedilirse **veri kaybettirmeden** toparlan.
+
+        İki ayrışma sebebi var ve ikisinin çaresi farklı:
+
+        1. *Geçmişi biz yeniden yazdık* (budama). Uzak ancak zorla itmeyle
+           güncellenebilir. Bu bilgi diske yazılıyor: budama turunda itme
+           başarısız olursa (uzak erişilemez) sonraki turlar düz itme dener ve
+           sonsuza dek reddedilir — uzak arşiv kalıcı olarak donardı.
+        2. *Uzakta bizim üretmediğimiz commit'ler var.* Zorla itmek onları
+           siler. Onun yerine yerel commit uzağın ucunun üstüne taşınır ve
+           itme ileri-sarım hâline gelir.
+        """
         if not (self.ayarlar.it and self.ayarlar.uzak):
             return False
-        self.depo.it(self.ayarlar.uzak, zorla=zorla)
+        if zorla:
+            self.depo.zorla_isaretle()
+        zorla = zorla or self.depo.zorla_gerekiyor()
+        try:
+            self.depo.it(self.ayarlar.uzak, zorla=zorla)
+        except ItmeReddedildi:
+            if zorla:
+                # Zorla ittik ve yine reddedildi: dal korumalı olabilir.
+                # Kendi başımıza yapabileceğimiz güvenli bir hamle kalmadı.
+                raise
+            log.warning("itme reddedildi — uzak ayrışmış, uzağın üstüne "
+                        "yeniden işleniyor")
+            if not self.depo.uzakla_esitle(self.ayarlar.uzak, mesaj):
+                raise
+            self.depo.it(self.ayarlar.uzak)
+        self.depo.zorla_temizle()
         log.info("itildi: %s (%s)", gizle(self.ayarlar.uzak, self.ayarlar.token),
                  self.ayarlar.dal)
         return True

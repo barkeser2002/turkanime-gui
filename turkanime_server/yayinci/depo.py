@@ -38,6 +38,26 @@ class GitHatasi(RuntimeError):
     """git komutu sıfırdan farklı döndü (mesaj maskelenmiştir)."""
 
 
+class ItmeReddedildi(GitHatasi):
+    """Uzak, itmeyi ileri-sarım olmadığı için reddetti.
+
+    Ağ/kimlik hatasından ayrı bir tip: ikisinin toparlanma yolu farklı. Ağ
+    hatasında beklenir, reddedilmede geçmişin neden ayrıştığına bakılır.
+    """
+
+
+# `git push` reddedildiğinde stderr'de görünen izler.
+_REDDETME_IZLERI = ("[rejected]", "non-fast-forward", "fetch first",
+                    "updates were rejected")
+
+# Geçmişi yeniden yazan budama sonrası uzak ancak zorla itmeyle güncellenebilir.
+# Bu bilgi *diske* yazılır: itme o turda başarısız olursa (uzak erişilemez,
+# token süresi dolmuş...) bilgi bellekte kalırsa sonraki turlar sonsuza dek
+# "! [rejected]" alır ve uzak arşiv kalıcı olarak donar. `.git/` altında durur:
+# çalışma ağacının parçası değil, yani yayınlanan arşive sızmaz.
+ZORLA_BAYRAGI = "turkanime-yayin-zorla-it"
+
+
 # Kimlik yardımcısı: sırrı değeriyle değil, *ortam değişkeni adıyla* taşır.
 # git bunu `sh -c` ile çalıştırır (Windows'ta git'in kendi sh'ı ile).
 KIMLIK_YARDIMCISI = (
@@ -248,12 +268,63 @@ class GitDepo:
         return self.son_sha()
 
     def it(self, uzak: str, *, zorla: bool = False) -> None:
-        """Uzağa it. Uzak adres `.git/config`'e yazılmaz."""
+        """Uzağa it. Uzak adres `.git/config`'e yazılmaz.
+
+        Raises:
+            ItmeReddedildi — ileri-sarım değil (geçmişler ayrışmış).
+            GitHatasi      — diğer her şey (ağ, kimlik, uzak yok...).
+        """
         argv: Sequence[str] = ("push", "--quiet")
         if zorla:
             argv = argv + ("--force",)
         # `HEAD:refs/heads/<dal>`: yerel dal adı ne olursa olsun hedef sabit.
-        self.calistir(*argv, uzak, f"HEAD:refs/heads/{self.dal}", kimlik=True)
+        sonuc = self.calistir(*argv, uzak, f"HEAD:refs/heads/{self.dal}",
+                              kimlik=True, kontrol=False)
+        if sonuc.returncode == 0:
+            return
+        ham = ((sonuc.stderr or "") + (sonuc.stdout or "")).strip()
+        mesaj = gizle(ham, self.token)
+        if any(iz in ham.lower() for iz in _REDDETME_IZLERI):
+            raise ItmeReddedildi("git push reddedildi: " + mesaj)
+        raise GitHatasi("git push başarısız: " + mesaj)
+
+    def uzakla_esitle(self, uzak: str, mesaj: str) -> bool:
+        """Yerel commit'i uzağın ucunun **üstüne** taşı. ``False`` = yapılamadı.
+
+        Zorla itmenin güvenli alternatifi: uzaktaki commit'ler silinmez, yalnızca
+        bizim commit'imizin atası değiştirilir. Ağaç (yani arşiv içeriği) aynen
+        korunur; `reset --soft` indeksi ve çalışma ağacını ellemez.
+        """
+        getir = self.calistir("fetch", "--quiet", uzak, f"refs/heads/{self.dal}",
+                              kimlik=True, kontrol=False)
+        if getir.returncode != 0:
+            return False
+        self.calistir("reset", "--soft", "FETCH_HEAD")
+        self.calistir("add", "-A")
+        self.commit(mesaj + "\n\nUzak depo ayrışmıştı; arşiv uzağın ucunun\n"
+                            "üstüne yeniden işlendi (zorla itme yapılmadı).\n")
+        return True
+
+    # ── Zorla itme bayrağı ──────────────────────────────────────────────────
+    def _bayrak_yolu(self) -> Path:
+        return self.yol / ".git" / ZORLA_BAYRAGI
+
+    def zorla_gerekiyor(self) -> bool:
+        """Önceki turda geçmiş yeniden yazıldı ve uzak hâlâ güncellenmedi mi?"""
+        return self._bayrak_yolu().is_file()
+
+    def zorla_isaretle(self, sebep: str = "") -> None:
+        try:
+            self._bayrak_yolu().write_text(sebep or "gecmis-budandi\n",
+                                           encoding="utf-8")
+        except OSError as e:
+            log.warning("zorla itme bayrağı yazılamadı: %s", e)
+
+    def zorla_temizle(self) -> None:
+        try:
+            self._bayrak_yolu().unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("zorla itme bayrağı silinemedi: %s", e)
 
     # ── Bakım ───────────────────────────────────────────────────────────────
     def gc(self, tam: bool = False) -> None:
@@ -281,5 +352,5 @@ class GitDepo:
         return sha
 
 
-__all__ = ["GitDepo", "GitHatasi", "GitYok", "gizle",
-           "GITATTRIBUTES", "GITIGNORE", "KIMLIK_YARDIMCISI"]
+__all__ = ["GitDepo", "GitHatasi", "GitYok", "ItmeReddedildi", "gizle",
+           "GITATTRIBUTES", "GITIGNORE", "KIMLIK_YARDIMCISI", "ZORLA_BAYRAGI"]

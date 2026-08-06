@@ -43,13 +43,43 @@ anime slug'ları çapraz kaynak eşleştirmesinden doğar.
 | Kural | Varsayılan | Bayrak |
 |---|---|---|
 | Kaynak başına eşzamanlılık | **1** (kilitle zorlanır) | — |
+| Aynı durum dosyasında koşu | **1** (dosya kilidi) | — |
 | İstekler arası gecikme | 8 sn | `--gecikme` |
 | Jitter (± dalgalanma) | %35 | `--jitter` |
 | Üstel geri çekilme | 30 sn → 30 dk | — |
+| Koşu başına dinlenme bütçesi | 300 sn | — |
 | Günlük istek tavanı | 400 / kaynak | `--gunluk-tavan` |
 | Kayıt tazeleme aralığı | 6 saat → 7 gün | `--tazelik` |
 
 Tam bir tarama bilerek **günlere yayılır**. Amaç arşiv, hız değil.
+
+**Eşzamanlı koşu yok.** Cron 30 dakikada bir tetikliyor ama tam tarama saatler
+sürebiliyor; turlar üst üste bindiğinde "kaynak başına eşzamanlılık 1" garantisi
+çöker (süreç içi kilit ikinci süreci görmez — ölçümde 2.00 sn olması gereken
+istek aralığı 0.87 sn'ye düşüyordu). Bu yüzden koşu, durum dosyasının yanındaki
+`tarayici.sqlite3.kilit` üzerinde bir **işletim sistemi kilidi** alır (POSIX
+`flock`, Windows `msvcrt`). İkinci koşu beklemez; net bir mesajla ve çıkış kodu
+`3` ile çıkar. Kilit çekirdek tarafından tutulduğu için süreç çökse bile bayat
+kilit kalmaz.
+
+### Hata sınıfları
+
+Her hata aynı şey değil; üçü ayrı ele alınır:
+
+| Sınıf | Örnek | Davranış |
+|---|---|---|
+| Geçici | 5xx, timeout, bağlantı kopması | Kaynak üstel geri çekilmeye alınır, **aynı koşuda** tekrar denenir |
+| Kalıcı | 404, 410 | Görev kapatılır, kaynak cezalandırılmaz |
+| Engellenme | 403, 429, captcha/WAF | Kaynak bu tura kapatılır, koşu diğer kaynaklarla sürer |
+
+Bilinmeyen istisna **geçici** sayılır: kalıcı sanıp görevi kapatmak arşivden
+bölüm düşürür, tersi yalnızca birkaç boş deneme maliyeti demek.
+
+Tek kaynaklı koşuda geri çekilme beklenir (koşu başına toplam 300 sn bütçeyle);
+bütçe dolarsa kaynak bu tura kapatılır. Kuyrukta hazır iş varken biten koşu
+özet içinde `yarim_kaldi: true` der ve CLI `4` döndürür — eskiden tek bir 503
+koşuyu sessizce bitiriyor, günlük kotanın neredeyse tamamı kullanılmadan
+kalıyordu.
 
 ### Koşullu istek
 
@@ -90,6 +120,11 @@ python -m turkanime_server.crawler --cikti /veri/arsiv --durum /veri/durum/taray
 Bayraklar: `--kaynak` (tekrarlanabilir), `--limit` (bu koşudaki en fazla istek),
 `--kuru-calistir`, `--cikti`, `--durum`, `--tohum`, `--gecikme`, `--jitter`,
 `--gunluk-tavan`, `--tazelik`, `--esik`, `--arsiv-yazma`, `--log`.
+
+Çıkış kodları: `0` tur tamamlandı, `3` aynı durum üzerinde başka koşu sürüyor,
+`4` tur yarım kaldı (kuyrukta hazır iş varken kaynaklar kapandı), `130` elle
+kesildi. `4` bir felaket değil — üretilmiş arşiv geçerlidir ve yayınlanabilir;
+yalnızca "bu turda kota boşa gitti" demektir.
 
 Docker (ayrı profil — API ile birlikte ayağa kalkmaz):
 
@@ -185,6 +220,12 @@ ortam değişkenleri görünmez). Örnek için `.env.example`, `.gitignore`'da o
   gömülü kimlik → `scheme://***@host`).
 - SSH tercih edilirse `TURKANIME_ARSIV_SSH_ANAHTAR` yeter; `GIT_SSH_COMMAND`
   `IdentitiesOnly=yes` ile kurulur.
+- `.env` **imaj katmanına girmez**. Yoksayma kuralları depo kökündeki
+  `.dockerignore`'da: compose her servisi `context: ..` ile build ediyor ve
+  `.dockerignore` yalnızca build context'in kökünde okunuyor. Kurallar
+  `turkanime_server/` altında dururken hiç uygulanmıyordu; `COPY turkanime_server`
+  token'ı imaja koyuyor ve `docker run --entrypoint cat <imaj>
+  turkanime_server/.env` ile okunabiliyordu.
 
 | Değişken | Ne |
 |---|---|
@@ -212,6 +253,24 @@ python -m turkanime_server.yayinci --arsiv /veri/arsiv
 Çıkış kodları: `0` yayınlandı / değişiklik yok / kuru koşu, `1` güvenlik freni,
 `2` git hatası, `3` git kurulu değil.
 
+### Reddedilen itme — ayrışmadan toparlanma
+
+`! [rejected]` iki farklı sebepten gelir ve ikisinin çaresi ayrıdır:
+
+1. **Geçmişi biz yeniden yazdık** (budama turu). Uzak ancak zorla itmeyle
+   güncellenebilir. Budama anında itme başarısız olursa (uzak erişilemez, token
+   süresi dolmuş) bu bilgi `.git/turkanime-yayin-zorla-it` dosyasına yazıldığı
+   için kaybolmaz; sonraki tur zorla iter ve başarıdan sonra bayrağı siler.
+   Bayrak olmasaydı yerel commit sayısı artarken uzak arşiv **kalıcı olarak
+   donardı**.
+2. **Uzakta bizim üretmediğimiz commit'ler var** (elle düzeltme, ikinci bir
+   yayıncı). Burada zorla itmek veri kaybettirir; onun yerine yerel commit
+   uzağın ucunun üstüne taşınır (`fetch` + `reset --soft` + yeniden commit) ve
+   itme ileri-sarım hâline gelir. Ağaç, yani arşiv içeriği, değişmez.
+
+Yani `--force` **varsayılan değil**: yalnızca kendi ürettiğimiz budamanın
+telafisi için ve yalnızca hedef arşiv dalına uygulanır.
+
 ### Zamanlama — "tara + yayınla"
 
 Tek tur = tarayıcı kuyrukta hazır olanı işler, sonra yayıncı sonucu iter. İkisi
@@ -220,8 +279,11 @@ de sonsuz döngüde koşmaz; turu zamanlayıcı başlatır (bkz. Faz 11 nezaket 
 Docker Compose:
 
 ```bash
-docker compose --profile crawler run --rm turkanime-crawler \
-  && docker compose --profile yayin run --rm turkanime-yayinci
+# `&&` DEĞİL `;`: tarayıcı yarım kalan turda 4, eşzamanlı koşuda 3 döndürür ve
+# bunların ikisinde de elde geçerli bir arşiv vardır — yayını atlamak, önceki
+# turların birikmiş çıktısını da yayınlanmamış bırakırdı.
+docker compose --profile crawler run --rm turkanime-crawler ; \
+  docker compose --profile yayin run --rm turkanime-yayinci
 ```
 
 systemd timer (`/etc/systemd/system/turkanime-arsiv.service` + `.timer`):
@@ -231,7 +293,9 @@ systemd timer (`/etc/systemd/system/turkanime-arsiv.service` + `.timer`):
 Type=oneshot
 WorkingDirectory=/opt/turkanime/turkanime_server
 EnvironmentFile=/opt/turkanime/turkanime_server/.env
-ExecStart=/usr/bin/docker compose --profile crawler run --rm turkanime-crawler
+# Baştaki "-": tarayıcı 3/4 döndürse de (eşzamanlı koşu / yarım tur) yayın
+# adımı yine çalışsın; elde geçerli bir arşiv var.
+ExecStart=-/usr/bin/docker compose --profile crawler run --rm turkanime-crawler
 ExecStart=/usr/bin/docker compose --profile yayin  run --rm turkanime-yayinci
 
 [Timer]
@@ -243,12 +307,13 @@ Persistent=true
 Cron karşılığı (`crontab -e`):
 
 ```cron
-*/30 * * * * cd /opt/turkanime/turkanime_server && docker compose --profile crawler run --rm turkanime-crawler && docker compose --profile yayin run --rm turkanime-yayinci
+*/30 * * * * cd /opt/turkanime/turkanime_server && docker compose --profile crawler run --rm turkanime-crawler ; docker compose --profile yayin run --rm turkanime-yayinci
 ```
 
 Yarım saatlik tur agresif değil: nezaket tavanları zaten kaynak başına 400
 istek/gün; turların çoğu "yapacak taze iş yok" deyip saniyeler içinde çıkar ve
-yayıncı da commit atmaz.
+yayıncı da commit atmaz. Önceki tur hâlâ koşuyorsa yeni tur kilide takılıp
+`3` ile çıkar — üst üste binme yok.
 
 ### İstemci tarafı
 

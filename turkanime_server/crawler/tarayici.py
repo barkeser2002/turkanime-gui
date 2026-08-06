@@ -27,7 +27,10 @@ from .ayarlar import TarayiciAyarlari
 from .durum import DurumDeposu, Gorev
 from .eslestirme import KumeDefteri, bolum_slugu
 from .kaynaklar import KaynakDefteri, KosulluSonuc
-from .nezaket import NezaketBekcisi, NezaketEngeli
+from .nezaket import (
+    ENGELLENME, KALICI, KaynakDinlenmede, KosuKilidi, NezaketBekcisi,
+    NezaketEngeli, hata_turu,
+)
 from .yazici import ArsivYazici
 
 log = logging.getLogger("turkanime.crawler")
@@ -43,9 +46,15 @@ class Ozet:
     basarili: int = 0
     degismeyen: int = 0
     hatali: int = 0
+    gecici_hatali: int = 0
+    kalici_hatali: int = 0
     taze_atlanan: int = 0
     engellenen: List[str] = field(default_factory=list)
     yeni_gorev: int = 0
+    # Koşu, kuyrukta hazır iş varken bittiyse ``True``. Bunu raporlamak şart:
+    # eskiden yarıda kesilen tur "hatali: 1" ile tamamen normal görünüyordu.
+    yarim_kaldi: bool = False
+    dinlenme: float = 0.0
     sure: float = 0.0
     arsiv: Dict[str, Any] = field(default_factory=dict)
 
@@ -53,9 +62,13 @@ class Ozet:
         return {
             "islenen": self.islenen, "basarili": self.basarili,
             "degismeyen": self.degismeyen, "hatali": self.hatali,
+            "gecici_hatali": self.gecici_hatali,
+            "kalici_hatali": self.kalici_hatali,
             "taze_atlanan": self.taze_atlanan,
             "engellenen": sorted(set(self.engellenen)),
             "yeni_gorev": self.yeni_gorev,
+            "yarim_kaldi": self.yarim_kaldi,
+            "dinlenme": round(self.dinlenme, 2),
             "sure": round(self.sure, 2), "arsiv": self.arsiv,
         }
 
@@ -115,6 +128,18 @@ class Tarayici:
 
     # ── Ana döngü ───────────────────────────────────────────────────────────
     def calistir(self, arsiv_yaz: bool = True) -> Ozet:
+        """Bir tur işle. Aynı durum üzerinde ikinci koşu varsa çalışmaz.
+
+        Kilit koşuyu sarmalıyor, CLI'ı değil: tarayıcı kütüphane olarak da
+        çağrılıyor ve nezaket garantisi çağrı biçimine bağlı olmamalı.
+
+        Raises:
+            KosuZatenSuruyor — aynı durum dosyasında başka koşu var.
+        """
+        with KosuKilidi(self.ayarlar.kilit):
+            return self._turu_yurut(arsiv_yaz)
+
+    def _turu_yurut(self, arsiv_yaz: bool = True) -> Ozet:
         baslangic = time.monotonic()
         ozet = Ozet()
         ozet.yeni_gorev = self.tohumla()
@@ -132,18 +157,63 @@ class Tarayici:
             uygun = [k for k in self.hedef_kaynaklar() if k not in engelli]
             if not uygun:
                 break
-            gorev = self.depo.sirada_bekleyen(uygun)
+            # Geri çekilmedeki kaynağı hiç seçme: seçip kapıda `KaynakDinlenmede`
+            # yemek, kaynağı tur boyunca engelli listesine sokuyordu. Tek
+            # seferlik bir 503 böylece koşunun tamamını düşürüyordu.
+            hazir = [k for k in uygun if self.bekci.dinlenme_kalani(k) <= 0]
+            gorev = self.depo.sirada_bekleyen(hazir) if hazir else None
             if gorev is None:
-                break
+                dinlenen = [k for k in uygun if k not in hazir]
+                if not dinlenen or not self.depo.bekleyen_var_mi(dinlenen):
+                    break
+                if not self._dinlenmeyi_bekle(dinlenen, engelli, ozet):
+                    break
+                continue
             sonuc = self._gorev_isle(gorev, ozet)
             if sonuc is not None:
                 engelli.add(sonuc)
                 ozet.engellenen.append(sonuc)
 
+        # Günlük tavanı dolan kaynak "yarım kalmış" sayılmaz: kota tam olarak
+        # kullanıldığı için kapandı, bu beklenen ve sağlıklı bir son. Yalnızca
+        # kotası dururken kapanan kaynak turun eksik bittiğini gösterir.
+        kritik = sorted(k for k in engelli if self.bekci.kalan_kota(k) > 0)
+        if kritik and self.depo.bekleyen_var_mi(kritik):
+            ozet.yarim_kaldi = True
+        if ozet.yarim_kaldi:
+            log.warning("koşu yarım kaldı — kapanan kaynaklar: %s; kalan iş "
+                        "bir sonraki tura devredildi", sorted(set(ozet.engellenen)))
+
         if arsiv_yaz:
             ozet.arsiv = self.arsivi_yaz().ozet()
         ozet.sure = time.monotonic() - baslangic
         return ozet
+
+    def _dinlenmeyi_bekle(self, dinlenen: List[str], engelli: Set[str],
+                          ozet: Ozet) -> bool:
+        """Geri çekilmedeki kaynağı bekle. ``False`` = bütçe kalmadı.
+
+        Beklemek yalnızca kısa geri çekilmelerde mantıklı; bütçe dolduğunda tur
+        zaten bir sonraki cron tetiğine yetişemez, kaynağı bu tura kapatıp
+        durumu raporlamak daha dürüst.
+        """
+        kalanlar = {k: self.bekci.dinlenme_kalani(k) for k in dinlenen}
+        kaynak = min(kalanlar, key=lambda k: kalanlar[k])
+        if ozet.dinlenme + kalanlar[kaynak] > self.ayarlar.nezaket.dinlenme_butcesi:
+            for k in dinlenen:
+                engelli.add(k)
+                ozet.engellenen.append(k)
+            log.warning("%s %.0f sn geri çekilmede; dinlenme bütçesi doldu — "
+                        "kalan iş sonraki tura", kaynak, kalanlar[kaynak])
+            return False
+        ozet.dinlenme += self.bekci.dinlenmeyi_bekle(kaynak)
+        if self.bekci.dinlenme_kalani(kaynak) > 0:
+            # Uyuduk ama saat ilerlemedi (enjekte edilmiş uyku/saat). Aynı
+            # kaynağı tekrar seçmek sonsuz döngü olurdu.
+            engelli.add(kaynak)
+            ozet.engellenen.append(kaynak)
+            return False
+        return True
 
     def _gorev_isle(self, gorev: Gorev, ozet: Ozet) -> Optional[str]:
         """Tek görevi işle. Kaynak bu koşuda engellendiyse adını döndürür."""
@@ -178,19 +248,20 @@ class Tarayici:
         try:
             with self.bekci.kapi(gorev.kaynak):
                 ham = self._getir(fn, gorev, kayit)
+        except KaynakDinlenmede as e:
+            # Döngü geri çekilmedeki kaynağı seçmemeli; buraya düşülüyorsa
+            # yarış vardır. Görevi iade et, kaynağı kapatma: dinlenme biter.
+            self.depo.gorev_birak(gorev)
+            log.debug("%s dinlenmede: %s", gorev.kaynak, e)
+            return None
         except NezaketEngeli as e:
-            # Kota/dinlenme: görev denemesi artmadan kuyruğa döner.
+            # Günlük tavan: gün dönene kadar bu kaynağa dokunulamaz, koşu
+            # boyunca kapatmak doğru.
             self.depo.gorev_birak(gorev)
             log.info("%s engellendi: %s", gorev.kaynak, e)
             return gorev.kaynak
         except Exception as e:                        # pylint: disable=broad-except
-            bekle = self.bekci.hata_bildir(gorev.kaynak)
-            self.depo.gorev_ertele(gorev, simdi + bekle)
-            ozet.hatali += 1
-            ozet.islenen += 1
-            log.warning("%s/%s/%s hata: %s (%.0f sn geri çekilme)",
-                        gorev.kaynak, gorev.tur, gorev.anahtar, e, bekle)
-            return None
+            return self._hatayi_isle(gorev, ozet, e, simdi)
 
         degismedi = isinstance(ham, KosulluSonuc) and ham.degismedi
         veri = ham.veri if isinstance(ham, KosulluSonuc) else ham
@@ -206,6 +277,7 @@ class Tarayici:
             bekle = self.bekci.hata_bildir(gorev.kaynak)
             self.depo.gorev_ertele(gorev, simdi + bekle)
             ozet.hatali += 1
+            ozet.gecici_hatali += 1
             ozet.islenen += 1
             log.warning("%s/%s/%s dolu kayıt boşaldı — hata sayıldı (%.0f sn)",
                         gorev.kaynak, gorev.tur, gorev.anahtar, bekle)
@@ -242,6 +314,37 @@ class Tarayici:
         )
         # Görev silinmiyor, ileriye erteleniyor: arşiv canlı kalmalı.
         self.depo.gorev_ertele(gorev, gecerli_ts, deneme_artir=False)
+        return None
+
+    def _hatayi_isle(self, gorev: Gorev, ozet: Ozet, e: BaseException,
+                     simdi: float) -> Optional[str]:
+        """Adaptör istisnasını sınıfına göre işle; kapatılacak kaynağı döndür."""
+        tur = hata_turu(e)
+        ozet.hatali += 1
+        ozet.islenen += 1
+
+        if tur == KALICI:
+            # 404/410: kayıt yok. Her turda yeniden denemek kotayı aynı boş
+            # cevaba harcardı; görev kapanır, kaynak sağlıklı sayılır.
+            self.depo.gorev_bitti(gorev)
+            ozet.kalici_hatali += 1
+            log.info("%s/%s/%s kalıcı hata, görev kapatıldı: %s",
+                     gorev.kaynak, gorev.tur, gorev.anahtar, e)
+            return None
+
+        bekle = self.bekci.hata_bildir(gorev.kaynak, tur)
+        if tur == ENGELLENME:
+            # Engellenme kaynağın tamamına ait; görev bizim hatamız değil,
+            # denemesi artmadan kuyrukta kalsın.
+            self.depo.gorev_birak(gorev)
+            log.warning("%s engelledi (%s) — kaynak bu turda kapatıldı",
+                        gorev.kaynak, e)
+            return gorev.kaynak
+
+        ozet.gecici_hatali += 1
+        self.depo.gorev_ertele(gorev, simdi + bekle)
+        log.warning("%s/%s/%s geçici hata: %s (%.0f sn geri çekilme)",
+                    gorev.kaynak, gorev.tur, gorev.anahtar, e, bekle)
         return None
 
     @staticmethod

@@ -10,6 +10,8 @@ gerçek `sources/animedepo.py` modülüne okutur. Şema kayarsa burası kırmız
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -333,6 +335,252 @@ def test_hata_alan_kaynak_geri_cekiliyor(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 2b) Geçici hata ≠ kalıcı hata
+# ─────────────────────────────────────────────────────────────────────────────
+class SirayaGoreHata:
+    """N. çağrıda belirli bir istisnayı atan, gerisinde boş dönen sahte kaynak."""
+
+    def __init__(self, sira: int, istisna: BaseException):
+        self.sira, self.istisna = sira, istisna
+        self.cagri = 0
+        self.sorgular: List[str] = []
+
+    def ara(self, sorgu: str) -> List[Tuple[str, str]]:
+        self.cagri += 1
+        self.sorgular.append(sorgu)
+        if self.cagri == self.sira:
+            raise self.istisna
+        return []
+
+    def uclar(self) -> KaynakUclari:
+        return KaynakUclari(self.ara, None, None)
+
+
+def _sahte_saat_bekci(depo, nezaket, saat):
+    """Uykuyu gerçekten uyumayan, sahte saati ileri sarmakla yetinen bekçi."""
+    uyunan: List[float] = []
+
+    def uyku(sn):
+        uyunan.append(sn)
+        saat.t += sn
+
+    return NezaketBekcisi(nezaket, depo, uyku=uyku, simdi=saat), uyunan
+
+
+def test_gecici_hata_kaynagi_tur_boyu_devre_disi_birakmiyor(tmp_path):
+    """Tek seferlik 503 tüm koşuyu düşürmemeli.
+
+    Eski davranış: hata → kaynak geri çekilmeye girer → bir sonraki görevde
+    kapı `KaynakDinlenmede` atar → kaynak *tur boyunca* engelli listesine
+    girer → tek kaynaklı koşu 3. istekte biter. 10 tohumun 7'si hiç denenmez,
+    günlük kotanın 997'si kullanılmaz ve özet bunu "hatali: 1" diye gösterir.
+    """
+    tohumlar = tuple(f"t{n}" for n in range(10))
+    ayarlar = _ayarlar(tmp_path, tohumlar=tohumlar,
+                       nezaket=NezaketAyarlari(gecikme=0.0, jitter=0.0,
+                                               geri_cekilme_tabani=30.0))
+    kaynak = SirayaGoreHata(3, RuntimeError("HTTP 503 Service Unavailable"))
+    depo = DurumDeposu(ayarlar.durum)
+    saat = Saat()
+    bekci, uyunan = _sahte_saat_bekci(depo, ayarlar.nezaket, saat)
+
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=kaynak),
+                        depo=depo, bekci=bekci)
+    ozet = tarayici.calistir(arsiv_yaz=False)
+    tarayici.kapat()
+
+    assert kaynak.cagri == 10, \
+        f"10 tohumun hepsi denenmeliydi, {kaynak.cagri} istek yapıldı"
+    assert ozet.engellenen == [], "geçici hata kaynağı tur boyunca kapatmamalı"
+    assert ozet.gecici_hatali == 1 and ozet.kalici_hatali == 0
+    assert ozet.yarim_kaldi is False
+    assert uyunan == [30.0], "kaynak yalnızca geri çekilme süresi kadar dinlenmeli"
+
+
+def test_kalici_hata_gorevi_kapatiyor_kaynagi_cezalandirmiyor(tmp_path):
+    """404 tekrar denemeye değmez; ama kaynağın tamamı sağlıklı."""
+    ayarlar = _ayarlar(tmp_path, tohumlar=("a", "b", "c"))
+    kaynak = SirayaGoreHata(1, RuntimeError("HTTP 404 Not Found"))
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=kaynak))
+    ozet = tarayici.calistir(arsiv_yaz=False)
+
+    assert kaynak.cagri == 3, "kalıcı hata diğer görevleri durdurmamalı"
+    assert ozet.kalici_hatali == 1 and ozet.gecici_hatali == 0
+    assert tarayici.bekci.dinlenme_kalani("anizle") == 0, \
+        "404 kaynağı geri çekilmeye sokmamalı"
+    # Görev kapandı: bir sonraki koşuda tekrar denenmiyor
+    assert tarayici.depo.kuyruk_sayimi().get("bitti") == 1
+    tarayici.kapat()
+
+
+def test_engellenme_kaynagi_kapatir_digerleri_calismaya_devam_eder(tmp_path):
+    """403/429 kaynağın tamamına ait; o kaynak kapanır, koşu sürer."""
+    ayarlar = _ayarlar(tmp_path, tohumlar=("a", "b", "c"))
+    engellenen = SirayaGoreHata(1, RuntimeError("HTTP 429 Too Many Requests"))
+    saglam = SahteKaynak(_katalog("Naruto", "n1", bolum_sayisi=1))
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=engellenen, openani=saglam))
+    ozet = tarayici.calistir(arsiv_yaz=False)
+
+    assert ozet.engellenen == ["anizle"]
+    assert engellenen.cagri == 1, "engellenen kaynağa tur boyunca dokunulmamalı"
+    assert saglam.cagri["ara"] == 3, "sağlam kaynak çalışmaya devam etmeliydi"
+    assert ozet.yarim_kaldi is True, "işi yarım kalan koşu sessiz kalmamalı"
+    tarayici.kapat()
+
+
+def test_gunluk_tavan_dolan_kosu_yarim_sayilmiyor(tmp_path):
+    """Kota tam kullanıldığı için kapanan kaynak alarm değil, sağlıklı son.
+
+    Aksi hâlde 400 istek/gün tavanına ulaşan her tur (yani günün geri kalanı)
+    cron log'unda hata gibi görünürdü.
+    """
+    ayarlar = _ayarlar(tmp_path, tohumlar=("a", "b", "c"),
+                       nezaket=NezaketAyarlari(gecikme=0.0, jitter=0.0,
+                                               gunluk_tavan=2))
+    kaynak = SahteKaynak({})
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=kaynak))
+    ozet = tarayici.calistir(arsiv_yaz=False)
+
+    assert kaynak.cagri["ara"] == 2, "günlük tavan aşılmamalı"
+    assert ozet.engellenen == ["anizle"]
+    assert ozet.yarim_kaldi is False
+    tarayici.kapat()
+
+
+def test_yarim_kalan_kosu_cli_cikis_koduyla_bildiriliyor(tmp_path, capsys, monkeypatch):
+    """Koşu yarıda kesildiyse CLI 0 döndürmemeli — cron/log sessiz kalmasın."""
+    from turkanime_server.crawler import __main__ as cli
+    from turkanime_server.crawler import tarayici as tarayici_mod
+
+    class YarimTarayici(tarayici_mod.Tarayici):
+        def calistir(self, arsiv_yaz: bool = True):
+            ozet = tarayici_mod.Ozet()
+            ozet.yarim_kaldi = True
+            ozet.engellenen = ["anizle"]
+            return ozet
+
+    monkeypatch.setattr(cli, "Tarayici", YarimTarayici)
+    kod = cli.main(["--kaynak", "anizle", "--cikti", str(tmp_path / "arsiv"),
+                    "--durum", str(tmp_path / "d.sqlite3"), "--tohum", "x"])
+    assert kod == 4, "yarım kalan koşu 0 döndürmemeli"
+    assert "yarım" in capsys.readouterr().err.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2c) Eşzamanlı koşu kilidi (süreçler arası)
+# ─────────────────────────────────────────────────────────────────────────────
+# README 30 dakikalık cron öneriyor, tam tarama ise saatler sürüyor: turlar üst
+# üste binince nezaket bekçisinin süreç *içi* kilidi hiçbir şey garanti etmiyor.
+# İki süreçte kaynağa giden ardışık istek aralığı ayarlanan 2.00 sn yerine
+# 0.87 sn'ye düşüyordu. Aşağıdaki testler kilidi gerçekten iki süreçle sınıyor.
+KILIT_TUTUCU = '''\
+import os, sys, time
+from pathlib import Path
+from turkanime_server.crawler.nezaket import KosuKilidi
+
+kilit_yolu, hazir, dur = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+with KosuKilidi(kilit_yolu):
+    hazir.write_text(str(os.getpid()), encoding="utf-8")
+    for _ in range(600):
+        if dur.exists():
+            break
+        time.sleep(0.05)
+'''
+
+
+@pytest.fixture
+def kilit_tutan_surec(tmp_path):
+    """Kilidi gerçekten başka bir *süreçte* tutan yardımcı."""
+    import subprocess
+
+    kok = Path(__file__).resolve().parents[1]
+    betik = tmp_path / "kilit_tutucu.py"
+    betik.write_text(KILIT_TUTUCU, encoding="utf-8")
+    hazir, dur = tmp_path / "hazir", tmp_path / "dur"
+    ortam = dict(os.environ, PYTHONPATH=str(kok))
+    surecler = []
+
+    def baslat(kilit_yolu: Path):
+        p = subprocess.Popen(
+            [sys.executable, str(betik), str(kilit_yolu), str(hazir), str(dur)],
+            env=ortam, cwd=str(kok))
+        surecler.append(p)
+        for _ in range(200):                  # kilit gerçekten alınana kadar
+            if hazir.exists():
+                return p
+            time.sleep(0.05)
+        raise AssertionError("yardımcı süreç kilidi alamadı")
+
+    yield baslat
+
+    dur.write_text("x", encoding="utf-8")
+    for p in surecler:
+        try:
+            p.wait(timeout=10)
+        except Exception:                     # pylint: disable=broad-except
+            p.kill()
+
+
+def test_ikinci_kosu_kilide_takiliyor(tmp_path, kilit_tutan_surec):
+    from turkanime_server.crawler.nezaket import KosuKilidi, KosuZatenSuruyor
+
+    kilit_yolu = tmp_path / "tarayici.sqlite3.kilit"
+    surec = kilit_tutan_surec(kilit_yolu)
+
+    with pytest.raises(KosuZatenSuruyor) as hata:
+        with KosuKilidi(kilit_yolu):
+            pass
+    # Mesaj net olmalı: hangi süreç, nerede
+    assert str(surec.pid) in str(hata.value)
+    assert "kilit" in str(hata.value).lower()
+
+
+def test_kilit_birakilinca_ikinci_kosu_devam_ediyor(tmp_path):
+    from turkanime_server.crawler.nezaket import KosuKilidi
+
+    kilit_yolu = tmp_path / "durum" / "tarayici.sqlite3.kilit"
+    with KosuKilidi(kilit_yolu):
+        pass
+    with KosuKilidi(kilit_yolu):              # bayat kilit kalmamalı
+        pass
+
+
+def test_esszamanli_tarama_kosusu_kilide_takilip_cikiyor(tmp_path, capsys,
+                                                         kilit_tutan_surec):
+    """İkinci koşu sessizce beklemez, net mesajla çıkar."""
+    from turkanime_server.crawler import __main__ as cli
+
+    durum = tmp_path / "durum" / "tarayici.sqlite3"
+    kilit_tutan_surec(Path(str(durum) + ".kilit"))
+
+    kod = cli.main(["--kaynak", "anizle", "--tohum", "naruto", "--kuru-calistir",
+                    "--cikti", str(tmp_path / "arsiv"), "--durum", str(durum)])
+    assert kod == 3, "eşzamanlı koşu 0 döndürmemeli"
+    assert "koşu" in capsys.readouterr().err.lower()
+
+
+def test_kilit_farkli_durum_dosyalarini_engellemiyor(tmp_path, kilit_tutan_surec):
+    """Ayrı durum dizinlerinde koşan iki tarama birbirini bloklamamalı."""
+    from turkanime_server.crawler.nezaket import KosuKilidi
+
+    kilit_tutan_surec(tmp_path / "a.kilit")
+    with KosuKilidi(tmp_path / "b.kilit"):
+        pass
+
+
+def test_kosu_kilidi_calistir_icinde_aliniyor(tmp_path, kilit_tutan_surec):
+    """Kilit CLI'a değil koşunun kendisine bağlı olmalı."""
+    from turkanime_server.crawler.nezaket import KosuZatenSuruyor
+
+    ayarlar = _ayarlar(tmp_path)
+    kilit_tutan_surec(Path(str(ayarlar.durum) + ".kilit"))
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=SahteKaynak(_katalog("N"))))
+    with pytest.raises(KosuZatenSuruyor):
+        tarayici.calistir()
+    tarayici.kapat()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 3) Koşullu istek
 # ─────────────────────────────────────────────────────────────────────────────
 def test_degismeyen_kayit_ikinci_turda_yeniden_indirilmiyor(tmp_path):
@@ -573,13 +821,20 @@ def test_dolu_kayit_bosalinca_hata_sayiliyor(tmp_path):
 
     kaynak.katalog["n1"]["bolumler"] = []          # "site çöktü"
     saat.t += 100.0
-    t2 = Tarayici(ayarlar, defter=_defter(anizle=kaynak), simdi=saat)
+    # Geri çekilme gerçekten uygulanıyor mu? Bekçinin saati/uykusu enjekte
+    # edilerek ölçülüyor; testin 30 saniye uyuması gerekmiyor.
+    depo2 = DurumDeposu(ayarlar.durum, simdi=saat)
+    bekci2, uyunan = _sahte_saat_bekci(depo2, ayarlar.nezaket, Saat())
+    t2 = Tarayici(ayarlar, defter=_defter(anizle=kaynak), simdi=saat,
+                  depo=depo2, bekci=bekci2)
     ozet = t2.calistir()
     assert ozet.hatali >= 1, "boşalan kayıt hata sayılmalıydı"
     assert t2.depo.kayit_oku("anizle", "bolumler", "n1").imza == ilk_imza, \
         "şüpheli boş sonuç kayıt defterine yazılmamalı"
     assert len(t2.depo.bolumler("naruto")) == 4, "eski bölümler silinmemeli"
-    assert t2.bekci.dinlenme_kalani("anizle") > 0
+    assert uyunan == [30.0], "boşalan kayıt kaynağı geri çekilmeye sokmalı"
+    assert t2.bekci.dinlenme_kalani("anizle") == 0, \
+        "geri çekilme bitince kaynak aynı koşuda kaldığı yerden devam etmeli"
     t2.kapat()
 
     bolumler = json.loads(
