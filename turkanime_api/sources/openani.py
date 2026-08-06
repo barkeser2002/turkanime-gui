@@ -13,6 +13,12 @@ import time
 from typing import List, Dict, Any, Optional, Tuple
 from bs4 import BeautifulSoup
 
+# Koşulsuz import: eskiden yalnızca CF bypass yoksa içe aktarılıyordu, yani
+# `HAS_CF_BYPASS` yolu dışında `requests` adı hiç tanımlı olmuyordu. Statik
+# çözümleyici de bunu "atanmadan kullanım" diye işaretliyordu; koşulsuz import
+# hem uyarıyı hem kırılganlığı bitiriyor (requests zaten zorunlu bağımlılık).
+import requests
+
 from ..objects import Anime, Bolum
 
 # CF Bypass modülünü içe aktar
@@ -21,7 +27,6 @@ try:
     HAS_CF_BYPASS = True
 except ImportError:
     HAS_CF_BYPASS = False
-    import requests
 
 # Konfigürasyon
 BASE_URL = "https://openani.me"
@@ -41,11 +46,14 @@ def _get_cf_session() -> Any:
     """CF session'ı döndür (singleton)."""
     if HAS_CF_BYPASS:
         session = CFSession(timeout=30)
-        # Authentication cookielerini doğru şekilde ekle
+        # `CFSession.cookies` bir dict property ve KOPYA döndürüyor; burada
+        # `.set(...)` çağırmak dict'te öyle bir metot olmadığı için token
+        # ayarlanır ayarlanmaz AttributeError atıyordu (ve olsaydı bile yazma
+        # kopyada kalıp kaybolurdu). Yazma yolu `set_cookie`.
         if OPENANI_TOKEN:
-            session.cookies.set("token", OPENANI_TOKEN, domain=".openani.me")
+            session.set_cookie("token", OPENANI_TOKEN)
         if OPENANI_REFRESH_TOKEN:
-            session.cookies.set("refreshToken", OPENANI_REFRESH_TOKEN, domain=".openani.me")
+            session.set_cookie("refreshToken", OPENANI_REFRESH_TOKEN)
         return session
     else:
         # Fallback: normal session oluştur ve cookieleri ekle

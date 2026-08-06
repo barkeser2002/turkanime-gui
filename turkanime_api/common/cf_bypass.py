@@ -616,8 +616,20 @@ class CFSession:
 
     @property
     def cookies(self) -> Dict[str, str]:
-        """Toplanan çerezleri döndür."""
+        """Toplanan çerezleri döndür (KOPYA — yazmak için `set_cookie`)."""
         return self._cookies.copy()
+
+    def set_cookie(self, name: str, value: str) -> None:
+        """Oturuma çerez ekle.
+
+        Yazma yolu ayrı bir metot: `cookies` bilinçli olarak kopya döndürüyor
+        (çağıran taraf iç sözlüğü kazara bozmasın diye). Kopya üzerinden yazmayı
+        denemek sessizce kaybolurdu — nitekim `sources/openani.py` yıllarca
+        `session.cookies.set(...)` çağırıyordu; dict'te böyle bir metot olmadığı
+        için token ayarlanır ayarlanmaz AttributeError atıyordu.
+        """
+        if name:
+            self._cookies[str(name)] = str(value)
 
 
 # Global session instance (lazy-load)
