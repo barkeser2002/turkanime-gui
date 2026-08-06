@@ -12,8 +12,11 @@ kullanıcının kayıtlı girişini geçersiz kılardı.
 """
 from __future__ import annotations
 
+import re
 import threading
+import unicodedata
 import webbrowser
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal
@@ -49,6 +52,16 @@ ESLESME_ESIGI = 0.55
 # Aday havuzu küçük tutulur: doğru kayıt neredeyse her zaman ilk birkaçtadır,
 # fazlası yalnızca yanlış eşleşme riskini artırır.
 ARAMA_ADAY_SAYISI = 5
+
+# İki kelimenin "aynı kelime" sayılması için gereken karakter benzerliği.
+# Kaynak siteden gelen slug'larda tek harf düşmesi olağan ("shipuden"), bunu
+# tümden farklı bir kelime saymak doğru kaydı da elerdi.
+KELIME_ESLESME_ESIGI = 0.85
+
+# Kelime örtüşmesi cezasının tabanı: örtüşme 0 olsa bile ham skorun bu oranı
+# korunur. Tabansız bir çarpım, resmî başlığı sorgudan çok daha uzun olan tek
+# kelimelik serileri de elerdi ("Frieren" → "Frieren: Beyond Journey's End").
+ORTUSME_TABANI = 0.5
 
 VARSAYILAN_PORT = 9921
 
@@ -128,22 +141,103 @@ def girisleri_duzlestir(lists: Any, durum: Optional[str] = None) -> List[Dict[st
     return sonuc
 
 
+def sadelestir(metin: str) -> str:
+    """Karşılaştırma için başlığı sadeleştir: aksansız, küçük harf, yalın kelimeler.
+
+    "Naruto: Shippuuden" ile "naruto shippuuden" aynı seridir; noktalama ve
+    büyük harf farkı eşleşmeyi düşürmemeli.
+    """
+    metin = unicodedata.normalize("NFKD", str(metin or ""))
+    metin = "".join(c for c in metin if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", metin.lower()).split())
+
+
+def _benzersiz(kelimeler: List[str]) -> List[str]:
+    """Sırayı BOZMADAN tekrarları at.
+
+    `set` kullanmak dolaşma sırasını `PYTHONHASHSEED`'e bağlardı: aşağıdaki
+    açgözlü eşleştirme sıraya duyarlı olduğu için aynı başlık çifti açılıştan
+    açılışa farklı skor alabilirdi.
+    """
+    gorulen: set = set()
+    sonuc: List[str] = []
+    for kelime in kelimeler:
+        if kelime not in gorulen:
+            gorulen.add(kelime)
+            sonuc.append(kelime)
+    return sonuc
+
+
+def _kelime_ortusmesi(a_kelimeler: List[str], b_kelimeler: List[str]) -> float:
+    """İki başlığın KELİME düzeyinde örtüşme oranı (0..1).
+
+    Uzun tarafa bölünür: "naruto" ile "naruto shippuuden" 0.5 alır. Böylece
+    fazladan kelime (sezon/alt başlık) cezalandırılır — karakter bazlı skor ise
+    bu farkı hiç görmüyor.
+    """
+    a_liste = _benzersiz(a_kelimeler)
+    kalan = _benzersiz(b_kelimeler)
+    uzun = max(len(a_liste), len(kalan))
+    if not uzun:
+        return 0.0
+    eslesen = 0
+    for kelime in a_liste:
+        for i, aday in enumerate(kalan):
+            # Kelime içi benzerlik `SequenceMatcher` ile ölçülür: `fuzzy_score`
+            # burada partial_ratio yüzünden "x" ⊂ "xxx" gibi kısa kelimelere de
+            # 1.0 verir ve cezayı tümden etkisizleştirirdi.
+            if kelime == aday or SequenceMatcher(
+                    None, kelime, aday).ratio() >= KELIME_ESLESME_ESIGI:
+                eslesen += 1
+                del kalan[i]
+                break
+    return eslesen / uzun
+
+
+def baslik_skoru(ad: str, baslik: str) -> float:
+    """`ad` ile `baslik` arasında 0..1 benzerlik. Alt-dize TAM PUAN ALMAZ.
+
+    `fuzzy_score` içindeki partial_ratio/token_set_ratio "naruto"yu
+    "Naruto: Shippuuden" içinde bulup 1.0 veriyordu; ana seri ile sezonu aynı
+    puana getirdiği için kazananı AniList listesinin sırası belirliyor, ilerleme
+    yanlış kayda yazılabiliyordu. Ham skoru kelime örtüşmesiyle ölçekleyerek
+    yalnızca gerçekten aynı olan başlıklara 1.0 bırakıyoruz.
+    """
+    a, b = sadelestir(ad), sadelestir(baslik)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    from ...common.title_match import fuzzy_score
+
+    ortusme = _kelime_ortusmesi(a.split(), b.split())
+    return fuzzy_score(ad, baslik) * (ORTUSME_TABANI
+                                      + (1.0 - ORTUSME_TABANI) * ortusme)
+
+
 def en_iyi_eslesme(adaylar: Any, ad: str,
                    esik: float = ESLESME_ESIGI) -> Optional[Dict[str, Any]]:
     """`ad`'a en yakın AniList kaydı; hiçbiri eşiği geçmezse ``None``."""
     if not ad:
         return None
-    from ...common.title_match import fuzzy_score
-
+    hedef = sadelestir(ad)
+    # Eşit skorda kazananı uzunluk farkı belirler: aksi hâlde kazanan liste
+    # sırasına kalırdı ve AniList'in döndürdüğü rastgele sıra doğru seriyi
+    # ikinci plana atabilirdi.
     en_iyi: Optional[Dict[str, Any]] = None
     en_iyi_skor = 0.0
+    en_iyi_fark = float("inf")
     for item in (adaylar or []):
         if not isinstance(item, dict):
             continue
-        skorlar = [fuzzy_score(ad, baslik) for baslik in basliklar(item)]
-        skor = max(skorlar) if skorlar else 0.0
-        if skor > en_iyi_skor:
-            en_iyi, en_iyi_skor = item, skor
+        skor, fark = 0.0, float("inf")
+        for baslik in basliklar(item):
+            s = baslik_skoru(ad, baslik)
+            f = abs(len(sadelestir(baslik)) - len(hedef))
+            if s > skor or (s == skor and f < fark):
+                skor, fark = s, f
+        if skor > en_iyi_skor or (skor == en_iyi_skor and fark < en_iyi_fark):
+            en_iyi, en_iyi_skor, en_iyi_fark = item, skor, fark
     return en_iyi if en_iyi_skor >= esik else None
 
 
@@ -166,9 +260,23 @@ def senkron_guncellemeleri(girisler: Any,
             eski = int(mevcut or 0)
         except (TypeError, ValueError):
             eski = 0
+        # AniList'te ilerleme bölüm sayısını aşamaz; aşıyorsa eşleşen kayıt bu
+        # seri DEĞİLDİR (ör. 220 bölümlük seriye 500 yazmak). Eşleştirme yine de
+        # şaşarsa yerel kaydı ezmemek için ikinci savunma hattı.
+        toplam = _bolum_sayisi(media)
+        if toplam and ilerleme > toplam:
+            continue
         if ilerleme > eski:
             guncel[str(seri)] = ilerleme
     return guncel
+
+
+def _bolum_sayisi(media: Dict[str, Any]) -> int:
+    """Kaydın bilinen bölüm sayısı; devam eden seride 0 (bilinmiyor)."""
+    try:
+        return max(0, int(media.get("episodes") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def geri_donus_portu(uri: str, varsayilan: int = VARSAYILAN_PORT) -> int:
@@ -425,4 +533,4 @@ class AniListService(QObject):
 __all__ = ["AniListService", "DURUMLAR", "DURUM_ETIKETI", "DURUM_RENGI",
            "ESLESME_ESIGI", "istemci", "giris_var_mi", "deslug", "basliklar",
            "girisleri_duzlestir", "en_iyi_eslesme", "senkron_guncellemeleri",
-           "geri_donus_portu"]
+           "geri_donus_portu", "sadelestir", "baslik_skoru"]

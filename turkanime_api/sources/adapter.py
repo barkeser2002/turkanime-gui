@@ -64,6 +64,15 @@ class AdapterVideo:
         self._is_working: Optional[bool] = None
         self._resolution: Optional[int] = None
         self.ydl_opts = get_ydl_opts()
+        # Kaynak referer verdiyse yt-dlp'nin TÜM isteklerine iliştirilir:
+        # AnimeDepo/Tranimaci/Anizle CDN'leri referer'sız istekte 403 dönüyor,
+        # bu da `info`yu boşaltıp bölümü "çalışmıyor" gösteriyordu. yt-dlp bu
+        # başlığı harici indiriciye (aria2c) de kendisi aktarır.
+        if self.referer:
+            self.ydl_opts["http_headers"] = {
+                **(self.ydl_opts.get("http_headers") or {}),
+                "Referer": self.referer,
+            }
 
     @property
     def url(self) -> str:
@@ -164,10 +173,15 @@ class AdapterVideo:
                 return None
         
         cmd = [mpv_path, self.url]
-        
+
         # User-agent ekle (HLS için gerekli olabilir)
         cmd.extend(["--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"])
-        
+
+        # Referer, user-agent ile aynı gerekçeyle: CDN'ler kaynak sayfayı
+        # görmezse 403 döner ve mpv boş ekranla kapanır.
+        if self.referer:
+            cmd.append(f"--referrer={self.referer}")
+
         # Dakika hatırlama özelliği
         if dakika_hatirla:
             cmd.append("--save-position-on-quit")
@@ -228,7 +242,8 @@ class AdapterVideo:
                 self._resolution = int(m[0]) if m else 0
             # mpv ile son çare çözünürlük tespiti
             if not self._resolution:
-                self._resolution = get_video_resolution_mpv(self.url) or 0
+                self._resolution = get_video_resolution_mpv(self.url,
+                                                            self.referer) or 0
         return self._resolution or 0
 
 
@@ -290,12 +305,8 @@ class AdapterBolum:
             m = re.findall(r"(\d{3,4})p", label or "")
             return int(m[0]) if m else default_res
 
-        picked = max(
-            streams,
-            key=lambda s: parse_res(s.get("label") or "0p")
-        ) if by_res else streams[0]
-        video_url = picked.get("url")
-        if not video_url:
+        adaylar = [s for s in streams if isinstance(s, dict) and s.get("url")]
+        if not adaylar:
             callback({
                 "current": 1,
                 "total": 1,
@@ -304,9 +315,30 @@ class AdapterBolum:
             })
             return None
 
-        vid = AdapterVideo(self, video_url, picked.get("label"), player=player_label, referer=picked.get("referer"))
-        if vid.is_working:
-            callback({"current": 1, "total": 1, "player": player_label, "status": "çalışıyor"})
-            return vid
-        callback({"current": 1, "total": 1, "player": player_label, "status": "çalışmıyor"})
+        # Kaynaklar aynı kalite için birden çok CDN yedeği döndürüyor
+        # ("1080p", "1080p (CDN2)", ...). Eskiden yalnızca en yüksek çözünürlüklü
+        # İLK aday deneniyordu; o CDN 403/504 verdiğinde çalışan yedekler varken
+        # kullanıcı "video bulunamadı" görüyordu. Sıralama kararlı olduğu için
+        # aynı kalitede kaynağın verdiği CDN sırası korunur.
+        if by_res:
+            adaylar.sort(key=lambda s: parse_res(s.get("label") or "0p"),
+                         reverse=True)
+        # `early_subset` ile aynı bütçe: her CDN'i denemek yt-dlp zaman aşımları
+        # yüzünden dakikalara mal olabilir.
+        adaylar = adaylar[:max(1, int(early_subset or 1))]
+
+        toplam = len(adaylar)
+        for sira, aday in enumerate(adaylar, start=1):
+            callback({"current": sira, "total": toplam, "player": player_label,
+                      "status": "üstbilgi çekiliyor"})
+            vid = AdapterVideo(self, aday.get("url"), aday.get("label"),
+                               player=player_label, referer=aday.get("referer"))
+            if vid.is_working:
+                callback({"current": sira, "total": toplam,
+                          "player": player_label, "status": "çalışıyor"})
+                return vid
+            callback({"current": sira, "total": toplam, "player": player_label,
+                      "status": "çalışmıyor"})
+        callback({"current": toplam, "total": toplam, "player": player_label,
+                  "status": "hiçbiri çalışmıyor"})
         return None

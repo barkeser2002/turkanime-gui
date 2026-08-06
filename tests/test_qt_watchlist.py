@@ -14,8 +14,8 @@ from PySide6.QtWidgets import QLineEdit
 
 from turkanime_api.gui.qt import prefs
 from turkanime_api.gui.qt.anilist import (
-    DURUMLAR, AniListService, deslug, en_iyi_eslesme, geri_donus_portu,
-    girisleri_duzlestir, senkron_guncellemeleri,
+    DURUMLAR, AniListService, baslik_skoru, deslug, en_iyi_eslesme,
+    geri_donus_portu, girisleri_duzlestir, senkron_guncellemeleri,
 )
 from turkanime_api.gui.qt.pages.settings import SettingsPage
 from turkanime_api.gui.qt.pages.watchlist import WatchlistPage
@@ -227,6 +227,45 @@ def test_senkron_yerel_ilerlemeyi_geri_almiyor():
     girisler = girisleri_duzlestir(lists(entry(title="Cowboy Bebop", progress=9)))
     assert senkron_guncellemeleri(girisler, {"cowboy-bebop": 12}) == {}
     assert senkron_guncellemeleri(girisler, {"cowboy-bebop": "bozuk"}) == {"cowboy-bebop": 9}
+
+
+# ── Alt-dize eşleşmesi (yanlış seriye yazma) ────────────────────────────────
+def test_alt_dizi_baslik_tam_puan_almiyor():
+    """"naruto" ⊂ "Naruto: Shippuuden" olduğu için skor 1.0 dönüyordu.
+
+    İki kayıt aynı puanı alınca kazananı AniList'in liste sırası belirliyor,
+    ilerleme sessizce sezon kaydına yazılabiliyordu.
+    """
+    assert baslik_skoru("naruto", "Naruto") == 1.0
+    assert baslik_skoru("naruto", "Naruto: Shippuuden") < 1.0
+    assert (baslik_skoru("naruto", "Naruto: Shippuuden")
+            < baslik_skoru("naruto", "Naruto"))
+
+
+def test_eslesme_sezon_kaydini_ana_serinin_onune_gecirmiyor():
+    """Sezon kaydı listede ÖNCE gelse bile "naruto" ana seriyi bulmalı."""
+    adaylar = [media("Naruto: Shippuuden", anime_id=1735, episodes=500),
+               media("Naruto", anime_id=20, episodes=220)]
+    assert en_iyi_eslesme(adaylar, "naruto")["id"] == 20
+    assert en_iyi_eslesme(adaylar, "naruto shippuuden")["id"] == 1735
+
+
+def test_senkron_sezon_ilerlemesini_ana_seriye_yazmiyor():
+    """Yerelde 7. bölümde olan "naruto", Shippuuden'in 500'ünü almamalı."""
+    girisler = girisleri_duzlestir(
+        lists(entry(title="Naruto: Shippuuden", anime_id=1735, episodes=500,
+                    progress=500),
+              entry(title="Naruto", anime_id=20, episodes=220, progress=7)))
+    assert senkron_guncellemeleri(girisler, {"naruto": 7}) == {}
+    assert senkron_guncellemeleri(girisler, {"naruto-shippuuden": 100}) == {
+        "naruto-shippuuden": 500}
+
+
+def test_senkron_bolum_sayisini_asan_ilerlemeyi_yazmiyor():
+    """26 bölümlük seride 500 ilerleme = eşleşme şaşmış; yerel kayıt korunur."""
+    girisler = girisleri_duzlestir(
+        lists(entry(title="Cowboy Bebop", episodes=26, progress=500)))
+    assert senkron_guncellemeleri(girisler, {"cowboy-bebop": 7}) == {}
 
 
 # ── Listem sayfası ──────────────────────────────────────────────────────────
@@ -498,6 +537,30 @@ def test_senkron_yerel_ilerlemeye_yaziyor(qtbot, sahte_anilist, preserved_gecmis
 
     qtbot.waitUntil(lambda: bool(bitti), timeout=5000)
     assert prefs.yerel_ilerleme()["cowboy-bebop"] == 9
+
+
+def test_senkron_yerel_ilerlemeyi_yanlis_seriyle_ezmiyor(qtbot, sahte_anilist,
+                                                         preserved_gecmis):
+    """Girişten sonraki otomatik senkron yerel 7'yi Shippuuden'in 500'ü yapıyordu.
+
+    Uçtan uca: `gecmis.json`'a yazılan değer gerçekten değişmemeli.
+    """
+    from turkanime_api.cli.dosyalar import Dosyalar
+
+    Dosyalar().set_ilerleme("naruto", 7)
+    ist = sahte_anilist()
+    ist.listeler["CURRENT"] = lists(
+        entry(title="Naruto: Shippuuden", anime_id=1735, episodes=500,
+              progress=500),
+        entry(title="Naruto", anime_id=20, episodes=220, progress=7))
+
+    servis = AniListService()
+    bitti: list = []
+    servis.sync_done.connect(bitti.append)
+    assert servis.yereli_senkronla() is True
+
+    qtbot.waitUntil(lambda: bool(bitti), timeout=5000)
+    assert prefs.yerel_ilerleme()["naruto"] == 7
 
 
 def test_senkron_giris_yokken_calismiyor(qtbot, sahte_anilist):
