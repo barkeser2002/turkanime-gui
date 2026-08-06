@@ -347,6 +347,66 @@ def test_match_dialog_rejects_group_header(qtbot, fake_engine):
     assert "seçin" in dlg.lblStatus.text()
 
 
+# ── Elle eşleştirme vs. arka plan eşleşmesi ─────────────────────────────────
+def test_elle_secim_gec_donen_otomatik_eslesmeyi_yeniyor(qtbot, page, fake_fetch):
+    """Kullanıcı yükleme sürerken doğru sezonu seçti; arka plan onu EZMEMELİ."""
+    calls = fake_fetch(result=[{"title": "1. Bölüm", "obj": object()}])
+    page.show_anime(make_anime(), source="TürkAnime", slug="yanlis-sezon")
+    rid = page.request_id
+
+    # "İstediğin anime değil mi?" → doğru sezon
+    page.apply_match("TürkAnime", "dogru-sezon", "Doğru Sezon")
+    # Arka planda süren otomatik eşleştirme ŞİMDİ dönüyor (eski anlık görüntüyle)
+    page._on_sources_resolved((rid, {"TürkAnime": "otomatik-yanlis"},
+                               False, "TürkAnime"))
+
+    qtbot.waitUntil(lambda: bool(calls), timeout=5000)
+    assert calls[0][1] == "dogru-sezon", "kullanıcının seçimi ezildi"
+    assert page._bindings["TürkAnime"] == "dogru-sezon"
+
+
+def test_otomatik_eslesme_bos_kaynaklari_doldurmaya_devam_ediyor(page, fake_fetch):
+    """Koruma yalnızca ELLE seçilen kaynağa: diğerleri yine otomatik bağlanmalı."""
+    fake_fetch(result=[])
+    page.show_anime(make_anime(), source="TürkAnime", slug="yanlis")
+    rid = page.request_id
+    page.apply_match("TürkAnime", "dogru-sezon", "Doğru Sezon")
+
+    page._on_sources_resolved((rid, {"TürkAnime": "otomatik", "AnimeDepo": "depo"},
+                               True, "TürkAnime"))
+
+    assert page._bindings["TürkAnime"] == "dogru-sezon"
+    assert page._bindings["AnimeDepo"] == "depo"
+
+
+def test_elle_secim_gercek_arka_plan_isiyle_de_korunuyor(qtbot, page, fake_fetch,
+                                                         monkeypatch):
+    """Aynı koruma gerçek thread'le: `_do_resolve` yavaş döner, seçim beklenir."""
+    import turkanime_api.common.adapters as adapters_mod
+
+    kapi = threading.Event()
+    calls = fake_fetch(result=[{"title": "1. Bölüm", "obj": object()}])
+
+    class GecikenEngine:
+        def search_all_sources_rich(self, query, limit_per_source=10):
+            kapi.wait(5)
+            return {"TürkAnime": [{"slug": "otomatik-yanlis", "title": query}]}
+
+    monkeypatch.setattr(adapters_mod, "SearchEngine", GecikenEngine)
+
+    page.show_anime(make_anime(), source="AnimeDepo", slug="depo-slug")
+    page.chkAllSources.setChecked(True)      # tüm kaynaklarda eşleşme aransın
+    page.load_episodes()                     # arka planda kapıda bekliyor
+
+    page.apply_match("TürkAnime", "dogru-sezon", "Doğru Sezon")
+    kapi.set()                               # otomatik eşleşme ŞİMDİ dönüyor
+
+    qtbot.waitUntil(lambda: len(calls) >= 2, timeout=5000)
+    slugs = {kaynak: slug for kaynak, slug, _t in calls}
+    assert slugs["TürkAnime"] == "dogru-sezon", "kullanıcının seçimi ezildi"
+    assert slugs["AnimeDepo"] == "depo-slug"
+
+
 def test_apply_match_binds_source_and_saves(page, _no_match_save):
     page.show_anime(make_anime())
     page.apply_match("AnimeDepo", "cowboy-bebop", "Cowboy Bebop (TR)")

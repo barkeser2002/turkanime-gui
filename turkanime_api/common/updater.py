@@ -184,14 +184,40 @@ def indir_ve_dogrula(url: str, hedef_dizin: str, checksum: str = "",
 
 
 # ── Kurulum sonrası ─────────────────────────────────────────────────────────
+def arsiv_mi(dosya_yolu: str) -> bool:
+    """Artefakt tek dosya değil, açılması gereken bir arşiv mi?
+
+    GUI paketi onedir olduğu için CI artık her platformda `.zip` yayımlıyor
+    (bkz. `release.yml`). Bunu bilmeyen talimat "yeni dosyayı eskisinin yerine
+    kopyalayın" diyordu — kullanıcı bir zip'i exe'nin üstüne kopyalayamaz.
+    """
+    return os.path.splitext(str(dosya_yolu or ""))[1].lower() == ".zip"
+
+
 def kurulum_talimati(dosya_yolu: str, isletim: Optional[str] = None) -> str:
-    """Platforma göre kurulum adımları — GERÇEK dosya yoluyla.
+    """Platforma ve ARTEFAKT BİÇİMİNE göre kurulum adımları — gerçek yolla.
 
     Eski metin dosyayı her zaman "Downloads/" altında gösteriyordu; kullanıcı
     indirme klasörünü değiştirdiyse orada olmayan bir dosya tarif ediliyordu.
     """
     isletim = isletim or get_os()
     dizin = os.path.dirname(dosya_yolu)
+    if arsiv_mi(dosya_yolu):
+        # Onedir paketinde çalıştırılabilir, yanındaki kütüphanelerle birlikte
+        # anlam taşır; bu yüzden dosya değil KLASÖR değiştiriliyor.
+        adimlar = ["1. Çalışan uygulamayı kapatın",
+                   f"2. İndirilen arşiv: {dosya_yolu}",
+                   "3. Arşivi bir klasöre çıkarın (sağ tık → Tümünü ayıkla)",
+                   "4. Eski uygulama klasörünü yedekleyin, sonra silin",
+                   "5. Çıkardığınız klasörü eskisinin yerine koyun"]
+        if isletim in ("linux", "macos"):
+            adimlar[2] = f"3. Arşivi çıkarın: unzip {dosya_yolu}"
+            adimlar.append("6. Çalıştırma izni verin: "
+                           "chmod +x <klasör>/turkanime-gui")
+            adimlar.append("7. Uygulamayı yeniden başlatın")
+        else:
+            adimlar.append("6. Uygulamayı yeniden başlatın")
+        return "\n".join(adimlar)
     if isletim == "windows":
         return ("1. Çalışan uygulamayı kapatın\n"
                 f"2. İndirilen dosya: {dosya_yolu}\n"
@@ -235,4 +261,4 @@ def konumu_ac(dizin: str, isletim: Optional[str] = None) -> bool:
 __all__ = ["VERSION_URL", "IndirmeHatasi", "surum_parcala", "yeni_mi",
            "mevcut_surum", "surum_bilgisi_getir", "platform_paketi",
            "guncelleme_var_mi", "dosya_ozeti", "indir_ve_dogrula",
-           "kurulum_talimati", "konumu_ac"]
+           "arsiv_mi", "kurulum_talimati", "konumu_ac"]

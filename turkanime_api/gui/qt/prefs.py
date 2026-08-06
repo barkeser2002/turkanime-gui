@@ -246,6 +246,8 @@ class AniListAyar:
     client_id: str = ""
     client_secret: str = ""
     redirect_uri: str = ""
+    # Diskte kalmış sızmış secret bu oturumda temizlendi mi (arayüz duyurur).
+    sizan_secret_temizlendi: bool = False
 
 
 def _anilist_modulu():
@@ -271,6 +273,8 @@ def anilist_oku() -> AniListAyar:
             client_id=str(getattr(ist, "client_id", "") or ""),
             client_secret=str(getattr(ist, "client_secret", "") or ""),
             redirect_uri=str(getattr(ist, "redirect_uri", "") or ""),
+            sizan_secret_temizlendi=bool(
+                getattr(ist, "sizan_secret_temizlendi", False)),
         )
     except Exception:
         return AniListAyar()

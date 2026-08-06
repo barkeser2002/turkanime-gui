@@ -334,6 +334,11 @@ class DetailPage(QWidget):
         # Kaynak → slug. Slug'lar kaynağa özgü ("cowboy-bebop" vs "17"), bu
         # yüzden çok kaynaklı yükleme tek bir slug'la yapılamaz.
         self._bindings: Dict[str, str] = {}
+        # Kullanıcının eşleşme diyaloğunda ELLE seçtiği kaynak→slug. Ayrı
+        # tutuluyor çünkü arka planda süren otomatik eşleştirme (`_do_resolve`)
+        # işe başlarken çekilmiş bir kopyayla dönüyor; bu küme olmasa geç dönen
+        # otomatik sonuç kullanıcının seçimini sessizce ezerdi.
+        self._manual: Dict[str, str] = {}
         # Süren çok kaynaklı yüklemenin toplama durumu (bkz. `_dispatch`)
         self._pending: Dict[str, Any] = {}
         # Bu istek için otomatik eşleştirme yapıldı mı (aynı aramayı tekrarlama)
@@ -526,6 +531,7 @@ class DetailPage(QWidget):
         # Bağlantılar animeye özgü: yeni animede eskisinin slug'ları kalırsa
         # başka bir animenin bölümleri listeye karışır.
         self._bindings = {source: self._slug} if (source and self._slug) else {}
+        self._manual = {}            # elle seçim de animeye özgü
         if source:
             self._select_source(source)
         self._render()
@@ -557,6 +563,9 @@ class DetailPage(QWidget):
         # elle eşleştirdiyse "Tüm kaynaklar" o eşleşmeyi de kullanabilmeli.
         if self._slug:
             self._bindings[source] = self._slug
+            # Açık seçim işaretlenir: arka planda süren otomatik eşleştirme
+            # döndüğünde bu kaynağa dokunmasın (bkz. `_on_sources_resolved`).
+            self._manual[source] = self._slug
         self._select_source(source)
         self.lblStatus.ok(f"{source} → {title} eşleştirildi.")
         save_match(source, self._slug, self._match_title)
@@ -756,16 +765,29 @@ class DetailPage(QWidget):
         self.sources_resolved.emit((rid, bindings, want_all, wanted))
 
     def _on_sources_resolved(self, payload) -> None:
-        """GUI thread'i: çözülen bağlantıları sakla ve yüklemeyi başlat."""
+        """GUI thread'i: çözülen bağlantıları sakla ve yüklemeyi başlat.
+
+        Otomatik eşleşme kullanıcının ELLE seçtiğini EZMEZ: arama saniyeler
+        sürüyor ve kullanıcı bu sırada "İstediğin anime değil mi?"den doğru
+        sezonu seçebiliyor. `request_id` yarışı animeyi değiştirmeyi korur,
+        aynı anime içindeki bu yarışı `_manual` korur.
+        """
         try:
             rid, bindings, want_all, wanted = payload
         except (TypeError, ValueError):
             return
         if rid != self._request_id:
             return
-        self._bindings.update(bindings or {})
+        for source, slug in (bindings or {}).items():
+            if source in self._manual:
+                continue               # kullanıcının seçimi üstündür
+            self._bindings[source] = slug
         if want_all:
             self._resolved_for = rid       # aynı anime için bir daha arama
+        # Tek kaynak modunda elle eşleştirme kaynağı da değiştirmiş olabilir;
+        # istek, isteği başlatan eski seçime değil kullanıcının seçtiğine gider.
+        if not want_all and self.current_source() in self._manual:
+            wanted = self.current_source()
         self._dispatch(rid, self._targets(want_all, wanted))
 
     def _do_load(self, rid: int, source: str, slug: str, title: str) -> None:

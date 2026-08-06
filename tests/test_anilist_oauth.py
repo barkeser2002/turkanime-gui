@@ -24,10 +24,16 @@ import turkanime_api.anilist_client as anilist_mod
 from turkanime_api.anilist_client import (
     AniListAuthServer, AniListClient, SECRET_ORTAM_DEGISKENI,
     VARSAYILAN_CLIENT_ID, VARSAYILAN_REDIRECT_URI, fragment_koprusu_html,
+    sizan_secret_mi,
 )
 
 # Testlerde kullanılan sahte sır. Gerçek anahtar HİÇBİR yere yazılmaz.
 SAHTE_SECRET = "TEST-SECRET-DEGERI-0123456789"
+
+# "Sızmış" sırın test ikizi. Gerçek değer bu depoya geri sokulmadığı için
+# tanıma ölçütü (uzunluk + özet öneki) bu ikize göre sahteleniyor; sınanan şey
+# değerin kendisi değil, **mekanizma**.
+SAHTE_SIZAN_SECRET = "SIZMIS-ESKI-ANAHTAR-0123456789-ABCDEFGH"
 
 PAKET_KOKU = Path(anilist_mod.__file__).resolve().parent
 
@@ -192,6 +198,85 @@ def test_secret_silinince_implicit_akisa_donuyor(izole):
     ist.set_oauth_config(VARSAYILAN_CLIENT_ID, "", VARSAYILAN_REDIRECT_URI)
     assert ist.akis_turu() == "token"
     assert izole().client_secret == ""
+
+
+# ── Diskte kalmış sızmış sır ────────────────────────────────────────────────
+@pytest.fixture
+def sizan_isareti(monkeypatch):
+    """Tanıma ölçütünü `SAHTE_SIZAN_SECRET`'e göre kur.
+
+    Gerçek sırrın değeri koda/teste yazılmadığı için mekanizma bir ikizle
+    sınanıyor; `sizan_secret_mi` sabitleri çağrı anında okuduğu için yeterli.
+    """
+    import hashlib
+    monkeypatch.setattr(anilist_mod, "SIZAN_SECRET_UZUNLUK",
+                        len(SAHTE_SIZAN_SECRET))
+    monkeypatch.setattr(
+        anilist_mod, "SIZAN_SECRET_OZET_ONEKI",
+        hashlib.sha256(SAHTE_SIZAN_SECRET.encode("utf-8")).hexdigest()[:16])
+
+
+def test_sizan_secret_diskten_temizleniyor(izole, sizan_isareti, capsys):
+    """V10 öncesinden kalan sır kullanılmamalı, dosyada da bırakılmamalı."""
+    yapilandirma_yaz(izole, client_secret=SAHTE_SIZAN_SECRET)
+    ist = izole()
+
+    assert ist.client_secret == ""
+    assert ist.akis_turu() == "token", "sızmış sırla Authorization Code denenirdi"
+    assert ist.sizan_secret_temizlendi is True
+
+    diskteki = json.loads(izole.config.read_text(encoding="utf-8"))
+    assert diskteki["client_secret"] == ""
+    assert SAHTE_SIZAN_SECRET not in izole.config.read_text(encoding="utf-8")
+    # Sessiz temizlik kullanıcıyı karanlıkta bırakırdı.
+    assert "client secret" in capsys.readouterr().out.lower()
+
+
+def test_sizan_secret_temizligi_diger_alanlari_korumali(izole, sizan_isareti):
+    izole.config.write_text(json.dumps({
+        "client_id": "31337",
+        "client_secret": SAHTE_SIZAN_SECRET,
+        "redirect_uri": "http://localhost:9999/anilist-login",
+    }), encoding="utf-8")
+    ist = izole()
+
+    assert ist.client_id == "31337"
+    assert ist.redirect_uri == "http://localhost:9999/anilist-login"
+    diskteki = json.loads(izole.config.read_text(encoding="utf-8"))
+    assert diskteki["client_id"] == "31337"
+    assert diskteki["redirect_uri"] == "http://localhost:9999/anilist-login"
+
+
+def test_kullanicinin_kendi_secreti_temizlenmiyor(izole, sizan_isareti):
+    """Kendi uygulamasını tanımlamış kullanıcı bundan etkilenmemeli."""
+    yapilandirma_yaz(izole, client_secret=SAHTE_SECRET)
+    ist = izole()
+    assert ist.client_secret == SAHTE_SECRET
+    assert ist.sizan_secret_temizlendi is False
+    assert ist.akis_turu() == "code"
+
+
+def test_sizan_secret_elle_yapistirilsa_da_kaydedilmiyor(izole, sizan_isareti):
+    ist = izole()
+    ist.set_oauth_config(VARSAYILAN_CLIENT_ID, SAHTE_SIZAN_SECRET,
+                         VARSAYILAN_REDIRECT_URI)
+    assert ist.client_secret == ""
+    assert SAHTE_SIZAN_SECRET not in izole.config.read_text(encoding="utf-8")
+
+
+def test_sizan_secret_isareti_degerin_kendisini_tasimiyor():
+    """Depoya sır geri sokulmadı: elde yalnızca uzunluk + kısa özet var."""
+    onek = anilist_mod.SIZAN_SECRET_OZET_ONEKI
+    assert anilist_mod.SIZAN_SECRET_UZUNLUK == 40
+    assert len(onek) < 24, "24+ karakterlik sabit anahtar denetimini bozar"
+    assert re.fullmatch(r"[0-9a-f]+", onek), "özet öneki onaltılık olmalı"
+
+
+def test_sizan_secret_mi_rastgele_degerleri_reddediyor():
+    assert sizan_secret_mi("") is False
+    assert sizan_secret_mi(None) is False
+    assert sizan_secret_mi(SAHTE_SECRET) is False
+    assert sizan_secret_mi("x" * anilist_mod.SIZAN_SECRET_UZUNLUK) is False
 
 
 # ── Sır sızıntısı ───────────────────────────────────────────────────────────

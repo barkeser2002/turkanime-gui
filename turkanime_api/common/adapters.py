@@ -3,14 +3,14 @@ Anime source adapters for the UI components.
 Provides unified interface for searching anime across different sources.
 """
 
-from typing import List, Tuple, Optional, Dict, Any
+from typing import Callable, List, Tuple, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 # Tüm kaynakların toplam bekleme süresi. Tarayıcı destekli kaynaklar (Tranimaci)
-# ilk çağrıda yavaş olabildiği için 12 sn yetmiyordu.
+# ilk çağrıda yavaş olabildiği için 12 sn yetmiyordu. Bu süre GERÇEK bir üst
+# sınır: dolduğunda arama elindeki sonuçlarla döner (bkz. `_paralel_ara`).
 OVERALL_SEARCH_TIMEOUT = 25
-PER_SOURCE_TIMEOUT = 15
 from ..anilist_client import anilist_client
 from ..objects import Anime
 from ..sources.animecix import search_animecix
@@ -225,18 +225,59 @@ class SearchEngine:
             "Tranimaci": TranimaciAdapter(),
         }
     
+    def _paralel_ara(self, gorev: Callable[[str], Any],
+                     timeout: Optional[float] = None) -> Dict[str, Any]:
+        """`gorev`'i her kaynak için paralel çalıştır, süre dolunca ELİNDEKİYLE dön.
+
+        `with ThreadPoolExecutor(...)` KULLANILMIYOR: bağlam çıkışında
+        `shutdown(wait=True)` çalışır ve hâlâ süren işleri bekler. Yani toplam
+        zaman aşımı hiçbir şeyi sınırlamıyordu — konsola "zaman aşımı" yazılıyor
+        ama arama, en yavaş kaynak (45 sn) bitene kadar dönmüyordu. Arayüz
+        zamanında yanıt versin diye havuz `wait=False` ile bırakılıyor;
+        yetişemeyen iş arka planda sessizce ölür, sonucu kimse okumaz.
+        """
+        # Sabit çağrı anında okunur (varsayılan argümanda değil): süre sınırını
+        # sahteleyen testler modül sabitini değiştirebilsin diye.
+        if timeout is None:
+            timeout = OVERALL_SEARCH_TIMEOUT
+        sonuc: Dict[str, Any] = {}
+        havuz = ThreadPoolExecutor(max_workers=len(self.adapters))
+        try:
+            futures = {havuz.submit(gorev, name): name for name in self.adapters}
+            # DİKKAT: `as_completed(..., timeout=)` süre dolunca KENDİSİ fırlatır
+            # ve bu, aşağıdaki try/except'in DIŞINDADIR. Sarmalanmazsa tek bir
+            # yavaş kaynak tüm aramayı çökertir (toplanan sonuçlar da kaybolur).
+            try:
+                for future in as_completed(futures, timeout=timeout):
+                    name = futures[future]
+                    try:
+                        # Future zaten tamamlandı; `result()` beklemez.
+                        _, source_results = future.result()
+                        sonuc[name] = source_results
+                    except Exception as exc:
+                        print(f"{name} arama hatası (timeout/exception): {exc}")
+                        sonuc[name] = []
+            except FuturesTimeoutError:
+                print("[Arama] Bazı kaynaklar zaman aşımına uğradı, "
+                      "mevcut sonuçlar döndürülüyor.")
+        finally:
+            # Başlamamış işler iptal, sürenler beklenmez (bkz. yukarıdaki not).
+            havuz.shutdown(wait=False, cancel_futures=True)
+
+        for name in self.adapters:          # yetişemeyenler boş
+            sonuc.setdefault(name, [])
+        return sonuc
+
     def search_all_sources(self, query: str, limit_per_source: int = 10) -> Dict[str, List[Tuple[str, str]]]:
         """Search anime across all sources in parallel.
-        
+
         Args:
             query: Search query
             limit_per_source: Maximum results per source
-            
+
         Returns:
             Dict mapping source names to list of (slug, title) tuples
         """
-        results: Dict[str, List[Tuple[str, str]]] = {}
-
         def _search_single(source_name: str):
             adapter = self.adapters[source_name]
             try:
@@ -245,27 +286,8 @@ class SearchEngine:
                 print(f"{source_name} arama hatası: {exc}")
                 return source_name, []
 
-        with ThreadPoolExecutor(max_workers=len(self.adapters)) as executor:
-            futures = {executor.submit(_search_single, name): name for name in self.adapters}
-            # DİKKAT: `as_completed(..., timeout=)` süre dolunca KENDİSİ fırlatır
-            # ve bu, aşağıdaki try/except'in DIŞINDADIR. Sarmalanmazsa tek bir
-            # yavaş kaynak tüm aramayı çökertir (toplanan sonuçlar da kaybolur).
-            try:
-                for future in as_completed(futures, timeout=OVERALL_SEARCH_TIMEOUT):
-                    try:
-                        source_name, source_results = future.result(timeout=PER_SOURCE_TIMEOUT)
-                        results[source_name] = source_results
-                    except Exception as exc:
-                        source_name = futures[future]
-                        print(f"{source_name} arama hatası (timeout/exception): {exc}")
-                        results[source_name] = []
-            except FuturesTimeoutError:
-                print("[Arama] Bazı kaynaklar zaman aşımına uğradı, mevcut sonuçlar döndürülüyor.")
+        return self._paralel_ara(_search_single)
 
-        for name in self.adapters:          # yetişemeyenler boş
-            results.setdefault(name, [])
-        return results
-    
     def get_adapter(self, source_name: str):
         """Get adapter by source name."""
         return self.adapters.get(source_name)
@@ -279,8 +301,6 @@ class SearchEngine:
         `search_anime`'in (slug, title) çıktısı `image=None` ile sarılır.
         Böylece mevcut adapterlerin hiçbiri değişmek zorunda kalmaz.
         """
-        rich: Dict[str, List[Dict[str, Any]]] = {}
-
         def _one(source_name: str):
             adapter = self.adapters[source_name]
             try:
@@ -294,21 +314,4 @@ class SearchEngine:
                 print(f"{source_name} arama hatası: {exc}")
                 return source_name, []
 
-        with ThreadPoolExecutor(max_workers=len(self.adapters)) as executor:
-            futures = {executor.submit(_one, n): n for n in self.adapters}
-            # `as_completed` timeout'u kendisi fırlatır (bkz. search_all_sources).
-            try:
-                for future in as_completed(futures, timeout=OVERALL_SEARCH_TIMEOUT):
-                    try:
-                        name, res = future.result(timeout=PER_SOURCE_TIMEOUT)
-                        rich[name] = res
-                    except Exception as exc:
-                        name = futures[future]
-                        print(f"{name} arama hatası (timeout/exception): {exc}")
-                        rich[name] = []
-            except FuturesTimeoutError:
-                print("[Arama] Bazı kaynaklar zaman aşımına uğradı, mevcut sonuçlar döndürülüyor.")
-
-        for name in self.adapters:
-            rich.setdefault(name, [])
-        return rich
+        return self._paralel_ara(_one)

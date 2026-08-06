@@ -261,6 +261,13 @@ class SettingsPage(QWidget):
         except Exception as exc:
             self.lblStatus.error(f"Kaydedilemedi: {exc}")
             return
+        # Bypass oturumu adresi kurulumda okuyor; sıfırlanmazsa değişiklik
+        # (özellikle "boşalt = kullanma") ancak yeniden başlatınca etkili olurdu.
+        try:
+            from ....common.cf_bypass import reset_cf_session
+            reset_cf_session()
+        except Exception:
+            pass
         if not self._save_anilist():
             self.lblStatus.error("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı.")
             return
@@ -371,11 +378,22 @@ class SettingsPage(QWidget):
         self.requirements.denetle(kullanici_istegi=True)
 
     # ── AniList ─────────────────────────────────────────────────────────────
+    # Sızmış secret uyarısının metni; testler de bunu arıyor.
+    SIZAN_SECRET_UYARISI = (
+        "Eski sürümlerden kalan, herkese açık depoya sızmış Client Secret "
+        "yapılandırmanızdan silindi. Giriş artık secret gerektirmeyen Implicit "
+        "akışla yapılıyor; bir şey yapmanıza gerek yok.")
+
     def _reload_anilist(self) -> None:
         ayar = prefs.anilist_oku()
         self.txtAniListId.setText(ayar.client_id)
         self.txtAniListSecret.setText(ayar.client_secret)
         self.txtAniListRedirect.setText(ayar.redirect_uri)
+        if ayar.sizan_secret_temizlendi:
+            # Sessiz temizlik kullanıcıyı "secret'ım nereye gitti?" sorusuyla
+            # baş başa bırakırdı; alanın dibinde açıkça yazıyor.
+            self.lblAniListSecretIpucu.setText(self.SIZAN_SECRET_UYARISI)
+            self.lblAniListSecretIpucu.setStyleSheet("color: #e17055;")
         self._show_anilist_state(self.servis.kullanici)
 
     def _save_anilist(self) -> bool:

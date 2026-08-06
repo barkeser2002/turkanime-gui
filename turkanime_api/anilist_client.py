@@ -10,6 +10,7 @@ Secret yoksa giriş, secret istemeyen Implicit akışa düşer.
 """
 
 import requests
+import hashlib
 import json
 import http.server
 import socketserver
@@ -30,6 +31,31 @@ SECRET_ORTAM_DEGISKENI = "ANILIST_CLIENT_SECRET"
 # fragment tarayıcıdan sunucuya HİÇ gönderilmez. Bu uç, aşağıdaki köprü
 # sayfasının hash'i okuyup jetonu geri yollaması için var.
 TOKEN_UCU = "/anilist-token"
+
+
+# Depoya bir dönem sızmış, V10'da kaynaktan çıkarılan client secret'ın PARMAK
+# İZİ. Değerin kendisi hiçbir yerde durmaz: yalnızca uzunluğu ve SHA-256
+# özetinin ilk haneleri tutuluyor. Özet bilerek kısaltıldı — bu dosyada 24+
+# karakterlik anahtar biçimli sabitler yasak (bkz.
+# `test_anilist_client_uzun_sabit_dize_icermiyor`) ve 64 bitlik bir önek, tek
+# bir bilinen değeri tanımak için fazlasıyla yeterli.
+SIZAN_SECRET_UZUNLUK = 40
+SIZAN_SECRET_OZET_ONEKI = "7168ad9f2bd03ba1"
+
+
+def sizan_secret_mi(deger: Any) -> bool:
+    """`deger`, depodan çıkarılmış sızmış secret mi?
+
+    V10 öncesi bir sürümde Ayarlar'da bir kez "Kaydet"e basmış kullanıcıların
+    `anilist_config.json`'ında bu değer duruyor. Sır AniList panelinden
+    döndürüldüğü anda Authorization Code akışı sessizce bozulur (tarayıcı
+    açılır, sonra hata) — bu yüzden diskte bulunursa temizlenir.
+    """
+    metin = str(deger or "").strip()
+    if len(metin) != SIZAN_SECRET_UZUNLUK:
+        return False
+    ozet = hashlib.sha256(metin.encode("utf-8")).hexdigest()
+    return ozet.startswith(SIZAN_SECRET_OZET_ONEKI)
 
 
 def cozumlenmis_secret() -> str:
@@ -59,6 +85,8 @@ class AniListClient:
         # değeri diske kopyalamamak için (bkz. `_save_config`).
         self._dosya_secret = ""
         self._secret_ortamdan = False
+        # Diskteki sızmış sır bu oturumda temizlendi mi (arayüz bunu duyurur).
+        self.sizan_secret_temizlendi = False
         # Try load tokens from disk
         try:
             self._load_tokens()
@@ -503,14 +531,41 @@ class AniListClient:
 
     def _load_config(self) -> None:
         path = self._config_path()
-        if os.path.exists(path):
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self.client_id = data.get('client_id', self.client_id)
-                self._dosya_secret = str(data.get('client_secret', '') or '')
-                if self._dosya_secret:
-                    self.client_secret = self._dosya_secret
-                self.redirect_uri = data.get('redirect_uri', self.redirect_uri)
+        if not os.path.exists(path):
+            return
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        self.client_id = data.get('client_id', self.client_id)
+        dosya_secret = str(data.get('client_secret', '') or '')
+        if sizan_secret_mi(dosya_secret):
+            # Sızmış sır KULLANILMAZ ve diskte de bırakılmaz: panelden
+            # döndürüldüğü an giriş sessizce bozulurdu. Implicit akış zaten
+            # secret istemiyor, kullanıcı hiçbir şey kaybetmez.
+            dosya_secret = ''
+            self.sizan_secret_temizlendi = True
+            self._sizan_secreti_diskten_sil(path, data)
+            print("[AniList] Yapılandırmanızda paylaşılmış (artık geçersiz) "
+                  "bir client secret bulundu ve silindi. Giriş bundan sonra "
+                  "secret gerektirmeyen Implicit akışla yapılacak.")
+        self._dosya_secret = dosya_secret
+        if dosya_secret:
+            self.client_secret = dosya_secret
+        self.redirect_uri = data.get('redirect_uri', self.redirect_uri)
+
+    @staticmethod
+    def _sizan_secreti_diskten_sil(path: str, data: Dict[str, Any]) -> None:
+        """Yapılandırmayı sırsız hâliyle geri yaz; diğer alanlara dokunma.
+
+        `_save_config` çağrılmıyor: o, o anki bellek durumunu yazar ve bu
+        noktada `client_secret` henüz çözümlenmemiş olabilir.
+        """
+        try:
+            temiz = dict(data)
+            temiz['client_secret'] = ''
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(temiz, f)
+        except Exception:
+            pass
 
     def _save_config(self) -> None:
         path = self._config_path()
@@ -532,6 +587,10 @@ class AniListClient:
         """
         self.client_id = client_id
         self.redirect_uri = redirect_uri
+        if sizan_secret_mi(client_secret):
+            # Sızmış sır elle yapıştırılsa da geri alınmaz; diskten temizlediğimiz
+            # değeri aynı çalıştırmada geri yazmanın anlamı yok.
+            client_secret = ""
         # Ortam değişkeni etkinken alan değişmeden kaydedildiyse (ayar sayfası
         # etkin değeri gösteriyor) secret'a dokunulmaz; kullanıcı gerçekten
         # farklı bir değer yazdıysa artık kaynak odur.

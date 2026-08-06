@@ -759,6 +759,27 @@ def test_ayarlar_bos_secret_kaydedilebiliyor(qtbot, sahte_anilist,
     assert "kaydedildi" in page.lblStatus.text()
 
 
+def test_ayarlar_sizan_secret_temizligini_duyuruyor(qtbot, sahte_anilist):
+    """Sessiz temizlik "secret'ım nereye gitti?" sorusuyla baş başa bırakırdı."""
+    ist = sahte_anilist()
+    ist.client_secret = ""
+    ist.sizan_secret_temizlendi = True
+
+    page = SettingsPage(AniListService())
+    qtbot.addWidget(page)
+
+    ipucu = page.lblAniListSecretIpucu.text().lower()
+    assert "sızmış" in ipucu and "silindi" in ipucu
+    assert "implicit" in ipucu
+
+
+def test_ayarlar_temizlik_yokken_normal_ipucu_kaliyor(qtbot, sahte_anilist):
+    sahte_anilist()
+    page = SettingsPage(AniListService())
+    qtbot.addWidget(page)
+    assert "sızmış" not in page.lblAniListSecretIpucu.text().lower()
+
+
 def test_ayarlar_cikis_durumu_gosteriyor(qtbot, sahte_anilist):
     ist = sahte_anilist()
     page = SettingsPage(AniListService())

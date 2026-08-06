@@ -74,6 +74,29 @@ class CFBypassError(Exception):
     pass
 
 
+# Zincirin ilerlemesi YALNIZCA bu durumlarda anlamlı: hepsi "sunucu seni
+# istemedi" sinyali. Diğer 4xx'ler (404/410/401…) sitenin gerçek cevabıdır ve
+# başka bir yöntemle tekrar sorulunca da aynısı gelir.
+ENGEL_DURUMLARI = frozenset({403, 429, 503})
+
+
+def flaresolverr_ayari() -> Optional[str]:
+    """Ayarlardaki FlareSolverr adresi; anahtar hiç yoksa ``None``.
+
+    Boş dize `None` DEĞİL: kullanıcı Ayarlar'da kutuyu bilerek temizlediyse bu
+    "FlareSolverr kullanma" demektir. `or` ile varsayılana düşmek, ayarın
+    yalan söylemesine yol açıyordu (kutu boş, istekler yine uzak sunucuya).
+    """
+    try:
+        from turkanime_api.cli.dosyalar import Dosyalar
+        ayarlar = Dosyalar().ayarlar or {}
+    except Exception:
+        return None
+    if "flaresolverr_url" not in ayarlar:
+        return None
+    return str(ayarlar.get("flaresolverr_url") or "").strip()
+
+
 class CFSession:
     """
     Cloudflare korumalı sitelere erişim için akıllı session yöneticisi.
@@ -101,8 +124,14 @@ class CFSession:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.flaresolverr_url = flaresolverr_url or self.DEFAULT_FLARESOLVERR_URL
-        
+        # `None` = "ayara bak", boş dize = "kullanma". İkisini `or` ile aynı
+        # kefeye koymak, ayarı sessizce ezip varsayılan sunucuya gitmek demekti.
+        if flaresolverr_url is None:
+            flaresolverr_url = flaresolverr_ayari()
+        self.flaresolverr_url = (self.DEFAULT_FLARESOLVERR_URL
+                                 if flaresolverr_url is None
+                                 else str(flaresolverr_url).strip())
+
         self._curl_session: Optional[Any] = None
         self._cloud_session: Optional[Any] = None
         self._qt_solver: Optional[Any] = None      # QtWebEngine alt-süreci
@@ -121,7 +150,8 @@ class CFSession:
             self._available_methods.append("curl_cffi")
         if HAS_CLOUDSCRAPER:
             self._available_methods.append("cloudscraper")
-        self._available_methods.append("flaresolverr")  # Her zaman denenebilir
+        if self.flaresolverr_url:
+            self._available_methods.append("flaresolverr")
         if HAS_QTWEBENGINE:
             self._available_methods.append("qtwebengine")
         self._available_methods.append("requests")  # Her zaman mevcut
@@ -152,6 +182,25 @@ class CFSession:
         except Exception:
             return False
         return any(marker in head for marker in _CHALLENGE_MARKERS)
+
+    @staticmethod
+    def _mesru_yanit(resp) -> bool:
+        """Bu, sitenin gerçek cevabı mı — zinciri sürdürmek anlamsız mı?
+
+        Eskiden yalnızca HTTP 200 "başarı" sayılıyordu; var olmayan bir bölümün
+        404'ü hiçbir basamakta kabul edilmediği için tüm zincir + 3 retry
+        dönüyor, kullanıcı basit bir "bulunamadı" yerine onlarca saniye bekleyip
+        istisna görüyordu. 404/410/401 gibi yanıtlar başka bir yöntemle tekrar
+        sorulunca da değişmez; doğrudan çağırana verilir.
+        """
+        if resp is None:
+            return False
+        kod = int(getattr(resp, "status_code", 200) or 200)
+        if kod in ENGEL_DURUMLARI:
+            return False          # CF engeli/limit — sıradaki yöntem denensin
+        if kod >= 500:
+            return False          # geçici sunucu hatası: yeniden denemeye değer
+        return not CFSession._is_challenge(resp)
 
     def _get_curl_session(self):
         """curl_cffi session'ı lazy-load et."""
@@ -297,19 +346,20 @@ class CFSession:
                 else:
                     resp = session.post(url, headers=headers, timeout=self.timeout, **kwargs)
                 
-                if resp.status_code == 200:
-                    self._last_method = f"curl_cffi ({imp})"
-                    # Çerezleri kaydet (curl_cffi dict döner)
-                    try:
-                        cookies_dict = session.cookies.get_dict() if hasattr(session.cookies, 'get_dict') else dict(session.cookies)
-                        self._cookies.update(cookies_dict)
-                    except Exception:
-                        pass
-                    return resp
-                elif resp.status_code == 403:
-                    # CF engeli, sonraki impersonate'i dene
+                if resp.status_code in ENGEL_DURUMLARI:
+                    # CF engeli/limit — parmak izini değiştirip tekrar dene
                     continue
-                    
+
+                # 200 dışındaki yanıtlar da (404/410/301…) sitenin CEVABIdır;
+                # başka impersonate ile sormak aynı sonucu verir.
+                self._last_method = f"curl_cffi ({imp})"
+                # Çerezleri kaydet (curl_cffi dict döner)
+                try:
+                    cookies_dict = session.cookies.get_dict() if hasattr(session.cookies, 'get_dict') else dict(session.cookies)
+                    self._cookies.update(cookies_dict)
+                except Exception:
+                    pass
+                return resp
             except Exception as e:
                 # Bu impersonate desteklenmiyor, sonrakini dene
                 if "not supported" in str(e).lower():
@@ -333,7 +383,7 @@ class CFSession:
             else:
                 resp = session.post(url, headers=headers, timeout=self.timeout, **kwargs)
             
-            if resp.status_code == 200:
+            if resp.status_code not in ENGEL_DURUMLARI and resp.status_code < 500:
                 self._last_method = "cloudscraper"
                 self._cookies.update(session.cookies.get_dict())
                 return resp
@@ -349,6 +399,9 @@ class CFSession:
         FlareSolverr uzak bir headless browser sunucusudur.
         API: POST http://host:8191/v1
         """
+        # Adres boşsa kullanıcı bu basamağı kapatmış demektir (bkz. __init__).
+        if not self.flaresolverr_url:
+            return None
         # Devre kesici: sunucuya bir kez bağlanılamadıysa oturum boyunca tekrar
         # deneme. Aksi hâlde erişilemez bir FlareSolverr her istekte timeout
         # süresi kadar gecikme ve log gürültüsü üretiyor.
@@ -430,9 +483,10 @@ class CFSession:
             else:
                 resp = requests.post(url, headers=headers, timeout=self.timeout, **kwargs)
             
-            if resp.status_code == 200:
-                self._last_method = "requests"
-                return resp
+            # Son çare: durum ne olursa olsun cevabı geri ver. Buraya kadar
+            # gelindiyse zincirin verecek başka bir şeyi kalmadı.
+            self._last_method = "requests"
+            return resp
         except Exception as e:
             print(f"[CF Bypass] requests hatası: {e}")
         return None
@@ -461,22 +515,22 @@ class CFSession:
         for attempt in range(self.max_retries):
             # 1. curl_cffi dene
             resp = self._try_curl_cffi(url, headers, "GET", **kwargs)
-            if resp is not None and not self._is_challenge(resp):
+            if self._mesru_yanit(resp):
                 return resp
 
             # 2. cloudscraper dene
             resp = self._try_cloudscraper(url, headers, "GET", **kwargs)
-            if resp is not None and not self._is_challenge(resp):
+            if self._mesru_yanit(resp):
                 return resp
 
             # 3. FlareSolverr dene
             resp = self._try_flaresolverr(url, "GET")
-            if resp is not None and not self._is_challenge(resp):
+            if self._mesru_yanit(resp):
                 return resp
 
             # 4. QtWebEngine dene (yerel gömülü Chromium, ayrı süreçte)
             resp = self._try_qtwebengine(url)
-            if resp is not None and not self._is_challenge(resp):
+            if self._mesru_yanit(resp):
                 return resp
 
             # 5. Normal requests dene (son çare: challenge olsa bile döndür)
@@ -571,21 +625,31 @@ _global_session: Optional[CFSession] = None
 
 
 def get_cf_session() -> CFSession:
-    """Global CF session'ı döndür (singleton)."""
+    """Global CF session'ı döndür (singleton).
+
+    FlareSolverr adresini `CFSession` kendisi ayardan okur — böylece kendi
+    oturumunu kuran kaynaklar (animecix, anizle, openani) da aynı tercihe uyar.
+    """
     global _global_session
     if _global_session is None:
-        # Ayarlardan FlareSolverr URL'sini oku
-        flaresolverr_url = None
+        _global_session = CFSession()
+    return _global_session
+
+
+def reset_cf_session() -> None:
+    """Global oturumu düşür; bir sonraki istek ayarları yeniden okusun.
+
+    Ayarlar sayfası FlareSolverr adresini değiştirdiğinde çağrılır: adres
+    kurulum anında okunduğu için, sıfırlanmazsa değişiklik ancak uygulama
+    yeniden başlatılınca etkili olurdu.
+    """
+    global _global_session
+    eski, _global_session = _global_session, None
+    if eski is not None:
         try:
-            from turkanime_api.cli.dosyalar import Dosyalar
-            dosya = Dosyalar()
-            flaresolverr_url = dosya.ayarlar.get("flaresolverr_url", "")
+            eski.close()
         except Exception:
             pass
-        _global_session = CFSession(
-            flaresolverr_url=flaresolverr_url or None
-        )
-    return _global_session
 
 
 def cf_get(url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> requests.Response:
@@ -601,7 +665,10 @@ def cf_post(url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> req
 __all__ = [
     "CFSession",
     "CFBypassError",
+    "ENGEL_DURUMLARI",
+    "flaresolverr_ayari",
     "get_cf_session",
+    "reset_cf_session",
     "cf_get",
     "cf_post",
     "HAS_CURL_CFFI",

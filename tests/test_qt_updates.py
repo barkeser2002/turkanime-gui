@@ -125,6 +125,45 @@ def test_release_yml_ile_updater_ayni_anahtarlari_kullaniyor():
     assert '"qt":' not in metin, "updater'ın okumadığı eski şema geri gelmiş"
 
 
+# ── Kurulum talimatı artefakt biçimine uymalı ───────────────────────────────
+# CI her platformda `.zip` yayımlıyor (bkz. `_ci_kaydi` ve release.yml), ama
+# talimat hâlâ tek dosya varsayıp "yeni dosyayı eskisinin yerine kopyalayın"
+# diyordu — kullanıcı bir zip'i exe'nin üstüne kopyalayamaz.
+@pytest.mark.parametrize("isim", ["windows", "linux", "macos"])
+def test_zip_talimati_cikarmayi_anlatiyor(isim, tmp_path):
+    yol = str(tmp_path / f"turkanime-gui-{isim}.zip")
+    metin = updater.kurulum_talimati(yol, isim).lower()
+
+    assert "çıkar" in metin or "unzip" in metin, "arşivin açılması anlatılmıyor"
+    assert "klasör" in metin, "onedir paketinde değişen şey klasör"
+    assert "dosyayı eskisinin yerine kopyalayın" not in metin
+    assert yol.lower() in metin
+
+
+def test_ci_nin_urettigi_ad_zip_talimatina_dusuyor(tmp_path):
+    """Üretici ile talimat aynı biçimi konuşuyor mu? (şema kayması sessizdi)"""
+    paket = updater.platform_paketi(_ci_kaydi(), get_os())
+    dosya = os.path.basename(paket["url"])
+    assert updater.arsiv_mi(dosya) is True
+    assert "çıkar" in updater.kurulum_talimati(str(tmp_path / dosya)).lower()
+
+
+def test_tek_dosya_talimati_korunuyor(tmp_path):
+    """Zip olmayan artefakt (CLI ikilisi) eski, doğru talimatı almalı."""
+    metin = updater.kurulum_talimati(str(tmp_path / "turkanime-cli.exe"), "windows")
+    assert "Yeni dosyayı eskisinin yerine kopyalayın" in metin
+    assert "çıkar" not in metin.lower()
+
+    linux = updater.kurulum_talimati(str(tmp_path / "turkanime-cli"), "linux")
+    assert "chmod +x" in linux
+
+
+def test_arsiv_mi_uzantiya_bakiyor():
+    assert updater.arsiv_mi("/tmp/turkanime-gui-linux.ZIP") is True
+    assert updater.arsiv_mi("/tmp/turkanime-gui-windows.exe") is False
+    assert updater.arsiv_mi("") is False
+
+
 # ── Sürüm tutarlılığı ───────────────────────────────────────────────────────
 def test_surum_tek_kaynaktan_okunuyor():
     """version.py / cli/version.py / pyproject.toml aynı sürümü söylemeli."""
