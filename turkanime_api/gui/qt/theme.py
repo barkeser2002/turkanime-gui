@@ -47,6 +47,21 @@ QFrame#Card, QFrame#Panel {{
 }}
 QFrame#Card:hover {{ border-color: {ACCENT}; }}
 
+/* Poster üstündeki köşe rozeti: metin rengini sayfalar kendi belirler
+   (puan rengi / izleme durumu), buradan yalnızca hap zemini gelir. İç
+   QLabel'ın zemini şeffaf olmalı, yoksa genel `QWidget` kuralının koyu
+   dikdörtgeni hapın içinde görünür. */
+QFrame#CardBadge {{
+    background-color: rgba(8, 8, 8, 200);
+    border: none;
+    border-radius: 5px;
+}}
+QFrame#CardBadge QLabel {{ background: transparent; }}
+QFrame#CardBadgeFlat, QFrame#CardBadgeFlat QLabel {{
+    background: transparent;
+    border: none;
+}}
+
 QFrame#Header {{
     background-color: {BG_ELEV};
     border: none;

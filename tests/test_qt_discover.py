@@ -343,3 +343,203 @@ def test_main_window_wires_all_discover_modes(main_window):
         page = main_window.pages[key]
         assert isinstance(page, DiscoverPage)
         assert page.mode == key
+
+
+# ── Izgara düzeni ───────────────────────────────────────────────────────────
+# Kullanıcının ekran görüntüsünde bildirdiği bozukluk: sütun genişlikleri
+# tutarsız, en sağdaki sütun dar. Kök neden ÖLÇÜLDÜ (bkz. `pages/_grid.py`
+# başlığı): eski ızgara sütun sayısını kendi genişliğinden hesaplıyordu, o
+# genişlik de kaydırma alanı yüzünden ızgaranın kendi asgarisinin altına
+# inemiyordu. Sonuç: sütun sayısı yalnızca ARTABİLİYOR, pencere daralınca
+# içerik görünen alandan taşıp kırpılıyordu.
+
+
+def _yerles(qtbot, widget, width, height=900):
+    """Widget'ı verilen genişliğe getir ve yerleşimin oturmasını bekle."""
+    widget.resize(width, height)
+    qtbot.wait(10)
+
+
+def _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200, kapak=None):
+    """`adet` kart yüklenmiş, `width` genişliğinde bir keşif sayfası.
+
+    `kapak` verilirse kartlar POSTER kipinde kurulur (kullanıcının gerçekte
+    gördüğü hâl); görsel indirme arka planda denenir ve ağ mandalına takılıp
+    sessizce vazgeçer — kart yine de poster geometrisiyle yerleşir.
+    """
+    fake_sources(trending=[make_item(f"Anime {i}", cover=kapak)
+                           for i in range(adet)])
+    page = DiscoverPage("trending")
+    qtbot.addWidget(page)
+    page.refresh()
+    qtbot.waitUntil(lambda: len(page.cards()) == adet, timeout=5000)
+    page.show()
+    _yerles(qtbot, page, width)
+    return page
+
+
+def _satirlar(page):
+    """Kartları y konumuna göre satırlara ayır (soldan sağa sıralı)."""
+    satirlar: dict = {}
+    for card in page.cards():
+        satirlar.setdefault(card.y(), []).append(card)
+    return [sorted(satirlar[y], key=lambda c: c.x()) for y in sorted(satirlar)]
+
+
+def test_izgara_sutunlari_esit_genislikte(qtbot, fake_sources):
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
+
+    genislikler = page.results.grid.column_widths()
+    assert len(genislikler) == page.results.columns() >= 2
+    # TAM eşitlik: bölünmeden artan pikseller sütunlara dağıtılmaz, sağdaki
+    # yutucu sütuna bırakılır.
+    assert len(set(genislikler)) == 1
+
+
+def test_izgara_bosluklari_sabit(qtbot, fake_sources):
+    """Fazla genişlik boşluğa değil sütunlara gider."""
+    from turkanime_api.gui.qt.pages._grid import GRID_GAP
+
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
+
+    ilk_satir = _satirlar(page)[0]
+    assert len(ilk_satir) >= 3
+    bosluklar = [sag.x() - (sol.x() + sol.width())
+                 for sol, sag in zip(ilk_satir, ilk_satir[1:])]
+    assert bosluklar == [GRID_GAP] * len(bosluklar)
+
+
+def test_son_satir_eksik_olsa_da_kart_genislikleri_ayni(qtbot, fake_sources):
+    """12 kart 5 sütuna dizilince son satırda 2 kart kalır; o ikisi de
+    üsttekilerle aynı genişlikte olmalı (kullanıcı "son sütun dar" diyordu)."""
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
+
+    satirlar = _satirlar(page)
+    assert len(satirlar) >= 2
+    assert len(satirlar[-1]) < len(satirlar[0])      # son satır gerçekten eksik
+
+    genislikler = {c.width() for satir in satirlar for c in satir}
+    assert len(genislikler) == 1
+
+
+def test_pencere_genisleyince_sutun_sayisi_artar(qtbot, fake_sources):
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=700)
+    dar = page.results.columns()
+
+    _yerles(qtbot, page, 1600)
+    genis = page.results.columns()
+
+    assert genis > dar >= 1
+
+
+def test_kartlar_genis_pencerede_orantisiz_buyumez(qtbot, fake_sources):
+    """Fazla genişlik kartları şişirmez, YENİ SÜTUNA gider.
+
+    Kart genişliği hiçbir pencere boyutunda asgari kart genişliğinin iki
+    katına çıkmamalı; çıkıyorsa ızgara yeni bir sütun açmalıydı.
+    """
+    from turkanime_api.gui.qt.widgets import CARD_MIN_WIDTH
+
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=700)
+
+    for width in (700, 900, 1200, 1600, 2000):
+        _yerles(qtbot, page, width)
+        assert page.results.columns() >= 2, width
+        for card in page.cards():
+            assert CARD_MIN_WIDTH <= card.width() < 2 * CARD_MIN_WIDTH, width
+
+
+def test_pencere_daralinca_sutun_sayisi_azalir(qtbot, fake_sources):
+    """GERİLEME TESTİ — mandal etkisi.
+
+    Eski ızgarada sütun sayısı bir kez arttı mı bir daha inmiyordu: 1600px'te
+    7 sütuna çıkan ızgara 900px'e indirildiğinde 1542px genişliğinde kalıyor,
+    yatay kaydırma da kapalı olduğu için son sütun ekran kenarında
+    kırpılıyordu.
+    """
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1600)
+    genis = page.results.columns()
+
+    _yerles(qtbot, page, 700)
+
+    assert page.results.columns() < genis
+
+
+def test_kartlar_gorunen_alani_asmaz(qtbot, fake_sources):
+    """Hiçbir genişlikte içerik viewport'tan taşmamalı (yatay kaydırma kapalı,
+    taşan sütun kırpılır)."""
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1600)
+
+    for width in (1600, 1200, 900, 700, 500, 1400):
+        _yerles(qtbot, page, width)
+        gorunen = page.results.available_width()
+        assert page.results.grid.width() <= gorunen
+        for card in page.cards():
+            assert card.x() + card.width() <= gorunen
+
+
+def test_izgara_her_genislikte_tutarli(qtbot, fake_sources):
+    """Genişlik taraması: büyürken de küçülürken de eşit sütun + taşma yok.
+
+    Tek tek genişlikleri denemek yetmiyordu; bu tarama gerçek bir hatayı
+    yakaladı: sütun sayısı düşünce, yeni yutucu sütun bir önceki turdan kalma
+    asgari genişliğini koruyor ve ızgarayı görünen alandan taşırıyordu
+    (320px pencerede gövde 531px).
+    """
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
+
+    genislikler = list(range(360, 1801, 120)) + list(range(1800, 359, -120))
+    for width in genislikler:
+        _yerles(qtbot, page, width)
+        gorunen = page.results.available_width()
+        assert page.results.grid.width() <= gorunen, width
+        assert len(set(page.results.grid.column_widths())) == 1, width
+        for card in page.cards():
+            assert card.x() + card.width() <= gorunen, width
+
+
+def test_poster_kartlari_ayni_satirda_ayni_hizada(qtbot, fake_sources):
+    """Poster kartında kart yüksekliği genişlikten türetiliyor (2:3), bu yüzden
+    sütunlar arasındaki 1px fark satırı dikeyde kaydırırdı. Sütunlar tam eşit
+    olduğu için aynı satırdaki kartların hepsi aynı y'de durmalı.
+    """
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200,
+                           kapak="http://ornek/kapak.jpg")
+
+    for width in (1200, 1340, 900, 1610):
+        _yerles(qtbot, page, width)
+        satirlar = _satirlar(page)
+        assert len(satirlar[0]) >= 2, width
+        # `_satirlar` kartları y'ye göre gruplar: satır kayması olsaydı tek bir
+        # görsel satır iki ayrı gruba bölünür ve grup sayısı artardı.
+        beklenen_satir = -(-len(page.cards()) // page.results.columns())
+        assert len(satirlar) == beklenen_satir, width
+        assert len({c.height() for c in page.cards()}) == 1, width
+
+
+def test_izgara_uste_hizali(qtbot, fake_sources):
+    """Az kart varken kartlar sayfaya yayılmaz; boş yer altta toplanır."""
+    page = _izgara_sayfasi(qtbot, fake_sources, adet=3, width=1200)
+
+    ilk_satir = _satirlar(page)[0]
+    assert [c.y() for c in ilk_satir] == [0] * len(ilk_satir)
+    # Izgara gövdesi kaydırma alanının tepesinde durur ve yalnızca kartların
+    # kapladığı yeri tutar.
+    assert page.results.grid.y() == 0
+    assert page.results.grid.height() < page.results.viewport().height()
+
+
+def test_sutun_hesabi_hicbir_genislikte_tasmaz():
+    """Sütun sayısı formülünün kendisi (Qt geometrisi olmadan)."""
+    from turkanime_api.gui.qt.pages._grid import GRID_GAP, CardGridBody
+
+    body = CardGridBody()
+    onceki = 0
+    for available in range(0, 2400, 7):
+        cols = body.columns_for(available)
+        assert cols >= 1
+        assert cols >= onceki                     # genişlikle birlikte artar
+        onceki = cols
+        if available >= body._min_item_width:
+            gereken = cols * body._min_item_width + (cols - 1) * GRID_GAP
+            assert gereken <= available           # asla taşmaz

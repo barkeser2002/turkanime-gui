@@ -31,8 +31,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..theme import TEXT_MUTED, score_color
-from ..widgets import AnimeCard, ScrollableGrid, StatusLabel
+from ..widgets import AnimeCard, StatusLabel
 from ..workers import WorkerSignals, run_bg
+from ._grid import CardGrid
 
 MODES = ("home", "trending", "season")
 
@@ -269,7 +270,12 @@ class DiscoverPage(QWidget):
         head.addWidget(self.btnRefresh)
         layout.addLayout(head)
 
-        self.results = ScrollableGrid()
+        # Izgara dikeyde tüm artan yeri alır (stretch 1): kartlar üste hizalı
+        # dizilir, boş yer altta toplanır. Stretch olmasaydı ızgara yalnızca
+        # kartların kapladığı kadar yer tutar, altındaki boşluk düzenin
+        # kendisine kalırdı ve kaydırma alanı kart sayısıyla birlikte
+        # zıplardı.
+        self.results = CardGrid()
         layout.addWidget(self.results, 1)
 
         self.lblStatus.info("Yükleniyor…")

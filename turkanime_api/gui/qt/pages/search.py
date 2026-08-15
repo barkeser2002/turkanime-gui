@@ -12,8 +12,9 @@ from typing import Any, Dict, List
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ..widgets import AnimeCard, ScrollableGrid, StatusLabel
+from ..widgets import AnimeCard, StatusLabel
 from ..workers import WorkerSignals, run_bg
+from ._grid import CardGrid
 
 # Kaynak başına gösterilecek azami sonuç
 LIMIT_PER_SOURCE = 10
@@ -56,7 +57,9 @@ class SearchPage(QWidget):
         head.addWidget(self.lblStatus)
         layout.addLayout(head)
 
-        self.results = ScrollableGrid()
+        # Keşif sayfasıyla aynı ızgara: kartlar üste hizalı, sütunlar eşit
+        # genişlikte, artan yer altta.
+        self.results = CardGrid()
         layout.addWidget(self.results, 1)
 
         self.lblStatus.info("Aramak için yukarıdaki kutuyu kullanın.")
