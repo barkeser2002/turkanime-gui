@@ -12,7 +12,7 @@ name: Release (tag → build, publish, PyPI)
 #   5) PyPI'a poetry ile yayınla
 #
 # Artefakt adları (tek isimlendirme — version.json ve README bağlantıları buna bağlı):
-#   turkanime-gui-{windows,linux,macos}.zip    ← PySide6 + QtWebEngine arayüzü (onedir)
+#   turkanime-gui-{windows,linux,macos}.zip    ← PySide6 + QtWebEngine arayüzü (onefile)
 #   turkanime-cli-windows.exe / -linux / -macos
 on:
   push:
@@ -154,9 +154,17 @@ jobs:
           Copy-Item -Force $ffmpegExe.FullName bin/
           if ($ffprobeExe) { Copy-Item -Force $ffprobeExe.FullName bin/ }
 
-      # Tek GUI: PySide6 + QtWebEngine. onedir üretir (QtWebEngine ile onefile
-      # kırılgan: QtWebEngineProcess çalışma anında bulunamıyor), bu yüzden
-      # klasör zip'lenerek dağıtılır.
+      # Tek GUI: PySide6 + QtWebEngine. Spec varsayılanı ONEFILE — kullanıcının
+      # yanında `_internal/` klasörü olmuyor, tek çalıştırılabilir dosya var.
+      # `TURKANIME_ONEFILE=0` ile onedir'e dönülebilir; paketleme adımı ikisini
+      # de tanır.
+      #
+      # Onefile'ın ölçülmüş bedeli (Windows, 245 MB exe):
+      #   * her açılışta arşiv geçici dizine açılıyor: ~9 sn, 550 MB / 4601 dosya
+      #   * CF çözücü alt-süreci (`sys.executable --cf-qt-solver`) KENDİ
+      #     açılımını yapıyor — ebeveynin dizinini paylaşmıyor (ölçüldü), yani
+      #     Cloudflare duvarı başına aynı bedel bir kez daha.
+      # onedir'de iki maliyet de sıfır. Tek dosya bilinçli bir tercih.
       - name: Build GUI (PySide6 + QtWebEngine)
         shell: bash
         run: python -m PyInstaller turkanime-gui.spec --noconfirm
@@ -165,17 +173,29 @@ jobs:
         shell: bash
         run: |
           case "${{ matrix.os }}" in
-            windows-latest) SUFFIX=windows ;;
-            ubuntu-latest)  SUFFIX=linux ;;
-            macos-latest)   SUFFIX=macos ;;
+            windows-latest) SUFFIX=windows; EXE=dist/turkanime-gui.exe ;;
+            ubuntu-latest)  SUFFIX=linux;   EXE=dist/turkanime-gui ;;
+            macos-latest)   SUFFIX=macos;   EXE=dist/turkanime-gui ;;
           esac
-          # Klasör yoksa sessizce atlanmıyor: eskiden PyInstaller başarısız
+          # Çıktı yoksa sessizce atlanmıyor: eskiden PyInstaller başarısız
           # olduğunda release GUI'siz yayımlanıyordu ve kimse fark etmiyordu.
-          if [[ ! -d dist/turkanime-gui ]]; then
-            echo "::error::dist/turkanime-gui üretilmedi — PyInstaller adımına bak."
+          #
+          # Tek dosya da yine zip'leniyor. Sebep: `docs/version.json` ve
+          # güncelleyici `.zip` adları üzerinden çalışıyor; çıplak exe'ye
+          # geçmek indirme sayfasını ve otomatik güncellemeyi bozardı.
+          # Kullanıcı zip'i açtığında `_internal/` değil tek dosya görüyor —
+          # istenen buydu.
+          if [[ -f "$EXE" && ! -d dist/turkanime-gui ]]; then
+            echo "onefile: $EXE ($(du -m "$EXE" | cut -f1) MB)"
+            mkdir -p dist/paket && cp "$EXE" dist/paket/
+            python -c "import shutil,sys; shutil.make_archive(f'dist/turkanime-gui-{sys.argv[1]}','zip','dist/paket')" "$SUFFIX"
+          elif [[ -d dist/turkanime-gui ]]; then
+            echo "onedir: dist/turkanime-gui/"
+            python -c "import shutil,sys; shutil.make_archive(f'dist/turkanime-gui-{sys.argv[1]}','zip','dist/turkanime-gui')" "$SUFFIX"
+          else
+            echo "::error::GUI üretilmedi (ne $EXE ne dist/turkanime-gui) — PyInstaller adımına bak."
             exit 1
           fi
-          python -c "import shutil,sys; shutil.make_archive(f'dist/turkanime-gui-{sys.argv[1]}','zip','dist/turkanime-gui')" "$SUFFIX"
 
       - name: Build CLI (Windows)
         if: matrix.os == 'windows-latest'

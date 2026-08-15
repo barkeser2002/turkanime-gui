@@ -179,12 +179,14 @@ a.datas = [t for t in a.datas if not _budanacak(t[0], t[1])]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# onedir: EXE yalnızca başlatıcıyı içerir, ikili/veriler COLLECT ile klasöre gider.
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
+# Paketleme kipi. `TURKANIME_ONEFILE=0` ile onedir'e dönülebilir.
+#
+# onefile: her şey tek `.exe` içinde; çalışırken geçici bir dizine açılır ve
+#   `sys._MEIPASS` oraya bakar. Kullanıcı tarafında `_internal/` klasörü yok.
+# onedir : `.exe` + yanında `_internal/`. Açılışı hızlı, dağıtımı iki parça.
+TEK_DOSYA = os.environ.get('TURKANIME_ONEFILE', '1').lower() not in ('0', 'false', 'no')
+
+_exe_ortak = dict(
     name='turkanime-gui',
     debug=False,
     bootloader_ignore_signals=False,
@@ -194,13 +196,34 @@ exe = EXE(
     icon='docs/TurkAnime.ico',
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='turkanime-gui',
-)
+if TEK_DOSYA:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        runtime_tmpdir=None,
+        **_exe_ortak,
+    )
+    coll = None
+else:
+    # onedir: EXE yalnızca başlatıcıyı içerir, ikili/veriler COLLECT ile klasöre gider.
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        **_exe_ortak,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='turkanime-gui',
+    )
