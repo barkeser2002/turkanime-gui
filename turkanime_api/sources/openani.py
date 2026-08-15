@@ -638,6 +638,44 @@ def get_anime_episodes(slug: str, timeout: int = 30) -> List[Tuple[str, str]]:
     # result: [{'url': ..., 'title': ..., 'provider_data': {'episode_id': ep_slug}}]
     return [(ep["provider_data"]["episode_id"], ep["title"]) for ep in episodes]
 
+# Stream uçlarını dönmeden önce yokla. Kapatmak için `False` yap (test/CLI).
+UCLARI_DOGRULA = True
+
+# JSON/HTML gövdesi "çalışan stream" değildir; CDN hatayı da 200 ile verebilir.
+_MEDYA_TIPLERI = ("video/", "audio/", "application/x-mpegurl",
+                  "application/vnd.apple.mpegurl", "application/dash+xml",
+                  "application/octet-stream", "binary/octet-stream")
+
+
+def _uc_calisiyor(url: str, referer: Optional[str] = None) -> Optional[bool]:
+    """Uç gerçekten veri veriyor mu? 1 baytlık Range isteğiyle yokla.
+
+    ``True``  = medya geldi
+    ``False`` = kesin ölü (404 vb. ya da JSON/HTML hata gövdesi)
+    ``None``  = karar verilemedi (ağ hatası) — uç atılmamalı
+
+    Ölçüm: ölü uç için ~0.08 sn. Oynatıcının açılıp başarısız olmasından
+    kat kat ucuz ve kullanıcıya sebebini söyleyebiliyoruz.
+    """
+    basliklar = {
+        "User-Agent": OpenAniAdapter.PROVIDER_CONFIG["user_agent"],
+        "Range": "bytes=0-0",
+    }
+    if referer:
+        basliklar["Referer"] = referer
+    try:
+        from curl_cffi import requests as _curl
+        yanit = _curl.get(url, headers=basliklar, timeout=10)
+    except Exception:
+        return None
+    if yanit.status_code not in (200, 206):
+        return False
+    tur = (yanit.headers.get("Content-Type") or "").lower()
+    if not tur:
+        return None
+    return any(tur.startswith(t) for t in _MEDYA_TIPLERI)
+
+
 def get_episode_streams(episode_slug: str, timeout: int = 30) -> List[Dict[str, str]]:
     episode_url = f"{BASE_URL}/anime/{episode_slug}"
     anime_slug = episode_slug.split("/")[0]
@@ -661,7 +699,30 @@ def get_episode_streams(episode_slug: str, timeout: int = 30) -> List[Dict[str, 
             "type": "hls" if vid["format"] == "m3u8" else "direct",
             "referer": vid.get("referer")
         })
-    return streams
+
+    if not streams or not UCLARI_DOGRULA:
+        return streams
+
+    # Sayfadan çıkarılan CDN yolu ölü olabiliyor: site "File with such name
+    # does not exist" (HTTP 404) döndürüyor. Eskiden bu uçlar olduğu gibi
+    # veriliyordu; kullanıcı oynat'a basıp sebepsiz bir hata görüyordu.
+    # Çalışanları öne al, hiçbiri çalışmıyorsa sebebini SÖYLE.
+    calisan, olu = [], []
+    for akis in streams:
+        if _uc_calisiyor(akis["url"], akis.get("referer")) is False:
+            olu.append(akis)
+        else:
+            calisan.append(akis)
+
+    if calisan:
+        return calisan
+
+    # Ölü uçları yine de döndürüyoruz: yoklama oynatıcıdan farklı başlıklar
+    # kullanıyor, yanılma payı var. Ama kullanıcı artık kör değil.
+    print("[OpenAnime] Stream uçlarının hiçbiri yanıt vermiyor (CDN 404). "
+          "Bu kaynak giriş yapmış oturum istiyor olabilir — Ayarlar'dan "
+          "OpenAnime token'ını girmeyi deneyin.")
+    return olu
 
 class OpenAniAnime:
     """Class definition for backward compatibility if needed."""
