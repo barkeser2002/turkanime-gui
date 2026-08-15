@@ -36,6 +36,16 @@ VARSAYILAN_GECMIS = {"izlendi": {}, "indirildi": {}}
 _KILIT_DEFTERI = {}
 _DEFTER_KILIDI = threading.Lock()
 
+# Eski (Türkçe karakterli) ayar adı -> ASCII karşılığı.
+#
+# Aşağıdaki "ayar isimleri ascii karakterlerden oluşmalı" kuralına rağmen Qt
+# tarafı bir süre "1080p aday sayısı" adını OKUDU; anahtar `default_ayarlar`da
+# hiç yoktu, yani dosyada ancak elle ya da eski bir sürümle oluşabiliyordu.
+# Kural ile gerçek ayrışınca tek bir ayar iki adla birden yaşar ve hangisinin
+# kazandığı okuyucunun sırasına kalır. Bu yüzden eski ad açılışta ASCII adına
+# taşınıp SİLİNİR: dosyada her zaman tek doğru anahtar kalır.
+ESKI_AYAR_ADLARI = {"1080p aday sayısı": "1080p aday sayisi"}
+
 
 def _kilit(yol):
     """Dosya yoluna bağlı süreç-içi kilit.
@@ -142,12 +152,20 @@ class Dosyalar:
             "indirilenler" : downloads_dir,
             "izlendi ikonu" : True,
             "paralel indirme sayisi" : 3,
+            # Kaç 1080p adayının erkenden yoklanacağı. Qt tarafı bunu okuyordu
+            # ama anahtar burada yoktu; varsayılansız ayar "kimse yazmadıysa
+            # ne olacak?" sorusunu her okuyucuya ayrı ayrı sordurur.
+            "1080p aday sayisi" : 8,
             "max resolution" : True,
             "dakika hatirla" : True,
             "aria2c kullan" : False,
             "kaynak": "turkanime",
             "discord_rich_presence": True,
             "tranime_cookie": "",
+            # OpenAnime giriş çerezleri: kaynak, ölü CDN uçlarında kullanıcıya
+            # "Ayarlar'dan token'ı girin" diyor (bkz. sources/openani.py).
+            "openani_token": "",
+            "openani_refresh_token": "",
             "flaresolverr_url": "http://node-kyb.bariskeser.com:8191",
             "cookie_tutorial_dismissed": False
         }
@@ -160,8 +178,15 @@ class Dosyalar:
             # aşağıda zaten tamamlandığı için kurtarma kendiliğinden tamamlanır.
             ayarlar = self.ayarlar
             eksikler = {a: v for a, v in default_ayarlar.items() if a not in ayarlar}
-            if eksikler:
-                self.set_ayar(ayar_list=eksikler)
+            # Eski adla yazılmış değer varsayılanı EZMELİ: kullanıcının seçtiği
+            # sayı, göç yüzünden sessizce 8'e dönmemeli. Bu yüzden `goc`
+            # sözlüğü `eksikler`in üstüne biniyor.
+            goc = {yeni: ayarlar[eski]
+                   for eski, yeni in ESKI_AYAR_ADLARI.items() if eski in ayarlar}
+            if eksikler or goc:
+                self.set_ayar(ayar_list={**eksikler, **goc})
+            if goc:
+                self.ayar_sil(*ESKI_AYAR_ADLARI)
             # User ID kontrolü - eğer yoksa oluştur
             if not ayarlar.get('user_id'):
                 user_id = str(uuid.uuid4())
@@ -229,6 +254,23 @@ class Dosyalar:
             else:
                 ayarlar[ayar] = deger
             atomik_json_yaz(self.ayar_path, ayarlar)
+
+    def ayar_sil(self, *adlar):
+        """Verilen ayar anahtarlarını dosyadan kaldır; bir şey silindiyse True.
+
+        Göç sonrası eski adın dosyada kalması "iki adlı tek ayar" demek olurdu:
+        kullanıcı yeni adı değiştirir, eski adı okuyan bir yol hâlâ eski değeri
+        görürdü. Silme de yazma gibi kilit altında (bkz. `set_ayar`).
+        """
+        with _kilit(self.ayar_path):
+            ayarlar = self.ayarlar
+            silinecek = [a for a in adlar if a in ayarlar]
+            if not silinecek:
+                return False
+            for a in silinecek:
+                del ayarlar[a]
+            atomik_json_yaz(self.ayar_path, ayarlar)
+            return True
 
     @property
     def ayarlar(self):

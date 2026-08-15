@@ -107,7 +107,16 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
           Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile "7zr.exe"
-          curl.exe -L -o bin/yt-dlp.exe "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+          # `-f` ŞART: onsuz curl, HTTP 404/5xx gövdesini de dosyaya yazar ve
+          # bir hata SAYFASI bin/yt-dlp.exe adıyla pakete girer. mpv/ffmpeg/aria2
+          # arşivden çıkarıldıkları için kazara korunuyordu (aşağıdaki `throw`lar
+          # ve Expand-Archive), doğrudan indirilen yt-dlp'de hiçbir koruma yoktu.
+          # Boyut kontrolü ikinci kapı: 200 dönen bir vekil/portal sayfası da
+          # exe olamayacak kadar küçüktür.
+          curl.exe -fL -o bin/yt-dlp.exe "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+          if ($LASTEXITCODE -ne 0) { throw "yt-dlp.exe indirilemedi (curl exit $LASTEXITCODE)" }
+          $ytDlp = Get-Item bin/yt-dlp.exe -ErrorAction SilentlyContinue
+          if (-not $ytDlp -or $ytDlp.Length -lt 1MB) { throw "yt-dlp.exe geçersiz (boyut: $($ytDlp.Length))" }
           curl.exe -L -o aria2.zip "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip"
           Expand-Archive -LiteralPath aria2.zip -DestinationPath tmp_aria2
           $aria2Dir = Get-ChildItem -Recurse -Path tmp_aria2 -Filter aria2c.exe | Select-Object -First 1 | Split-Path -Parent

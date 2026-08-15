@@ -40,3 +40,15 @@ turkanime_server/.env
 
 # graphify bilgi grafiği (üretilen; `graphify update .` ile yenilenir)
 graphify-out/
+
+# ── Üçüncü parti site dökümleri ─────────────────────────────────────────────
+# TRAnimeİzle'den elle alınmış sayfa/script dökümleri. Hiçbir Python modülü,
+# test ya da paketleme dosyası bunlara referans vermiyordu; yalnızca bir kez
+# bakılıp bırakıldıkları için depoya girmemeleri gerekiyordu. Yeniden döküm
+# alınırsa tekrar commit'lenmesin diye kalıp burada.
+site.js
+tranime_debug.html
+*_debug.html
+
+# Bozuk JSON karantinasi (dosyalar.py) - test artigi olabilir
+*.bozuk-*

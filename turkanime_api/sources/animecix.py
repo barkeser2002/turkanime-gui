@@ -63,6 +63,26 @@ def _http_get(url: str, timeout: int = 10) -> bytes:
         return resp.read()
 
 
+def _sayisal_kimlik(deger: Any) -> Optional[int]:
+    """AnimeciX başlık kimliğini int'e çevir; olmuyorsa ``None``.
+
+    Eskiden burada `hash(str(deger)) % 1000000` yedeği vardı ve iki yönden
+    yanlıştı:
+
+    * `hash` PYTHONHASHSEED'e bağlı — aynı slug her süreçte FARKLI sayı
+      üretiyordu, yani kimlik ne kalıcı ne de süreçler arası tutarlıydı;
+    * üretilen sayı gerçek bir başlığın kimliği olabileceği için kullanıcıya
+      sessizce ALAKASIZ bir animenin sezon/bölüm listesi gösteriliyordu.
+
+    Kimlik üretilemiyorsa doğru davranış kaydı atlamak: uydurma bir kimlikle
+    ağa çıkmak, hiç çıkmamaktan kötü.
+    """
+    try:
+        return int(deger)
+    except (ValueError, TypeError):
+        return None
+
+
 def search_animecix(query: str, timeout: int = 8) -> List[Tuple[str, str]]:
     # Boşluk -> '-' ve non-ASCII karakterleri encode et
     q = (query or "").strip().replace(" ", "-")
@@ -81,12 +101,13 @@ def search_animecix(query: str, timeout: int = 8) -> List[Tuple[str, str]]:
 
 
 def _seasons_for_title(title_id: int) -> List[int]:
-    # title_id'yi güvenli şekilde int'e çevir
-    try:
-        safe_id = int(title_id)
-    except (ValueError, TypeError):
-        safe_id = hash(str(title_id)) % 1000000 if title_id else 0
-    
+    # Sayısal olmayan kimlikle AnimeciX'e gitmenin anlamı yok (bkz.
+    # `_sayisal_kimlik`): uç zaten 404 verir, uydurma kimlik ise yanlış animeyi
+    # getirir. Kaydı atlıyoruz.
+    safe_id = _sayisal_kimlik(title_id)
+    if safe_id is None:
+        return []
+
     # Önce title bilgisini al ve video ID'yi dinamik çek
     video_id = ""
     try:
@@ -122,12 +143,10 @@ def _seasons_for_title(title_id: int) -> List[int]:
 
 
 def _episodes_for_title(title_id: int) -> List[Dict[str, Any]]:
-    # title_id'yi güvenli şekilde int'e çevir
-    try:
-        safe_id = int(title_id)
-    except (ValueError, TypeError):
-        safe_id = hash(str(title_id)) % 1000000 if title_id else 0
-    
+    safe_id = _sayisal_kimlik(title_id)
+    if safe_id is None:
+        return []
+
     # Dinamik video ID al
     video_id = ""
     try:
@@ -166,13 +185,19 @@ def _episodes_for_title(title_id: int) -> List[Dict[str, Any]]:
     return episodes
 
 
-def _video_streams(embed_path: str) -> List[Dict[str, str]]:
+def _video_streams(embed_path: str, timeout: int = 10) -> List[Dict[str, str]]:
     # BASE_URL + embed path'e gidip yönlendirilmiş URL'den player id/vid al
     # Embed path non-ASCII içerebilir; güvenle encode et
     full = f"{BASE_URL}{quote(embed_path, safe='/:?=&')}"
-    # Basit urllib ile final URL
-    resp = urllib.request.urlopen(urllib.request.Request(full, headers=HEADERS))
-    final_url = resp.geturl()
+    # Basit urllib ile final URL. `timeout` ŞART: `socket.setdefaulttimeout`
+    # hiçbir yerde çağrılmıyor, yani parametresiz `urlopen` soketin sonsuz
+    # varsayılanına düşüyordu. Bu fonksiyon `adapter.py`nin varsayılan stream
+    # sağlayıcısı ve sunucu tarayıcısının AnimeciX ucu; yanıt vermeyen bir
+    # sunucu oynatma akışını ve tarama turunu SÜRESİZ askıda bırakıyordu.
+    # `_http_get` (bkz. yukarısı) zaten doğru deseni kullanıyordu.
+    istek = urllib.request.Request(full, headers=HEADERS)
+    with urllib.request.urlopen(istek, timeout=timeout) as resp:
+        final_url = resp.geturl()
     p = urlparse(final_url)
     parts = p.path.strip("/").split("/")
     if len(parts) < 2:
@@ -183,7 +208,7 @@ def _video_streams(embed_path: str) -> List[Dict[str, str]]:
     if not embed_id or not vid:
         return []
     api = f"https://{VIDEO_PLAYERS[0]}/api/video/{embed_id}?vid={vid}"
-    data = json.loads(_http_get(api))
+    data = json.loads(_http_get(api, timeout=timeout))
     out: List[Dict[str, str]] = []
     for u in data.get("urls", []):
         label = u.get("label")
@@ -211,13 +236,14 @@ class CixAnime:
 
     @property
     def episodes(self) -> List[CixEpisode]:
-        # ID'yi güvenli şekilde int'e çevir
-        try:
-            title_id = int(self.id)
-        except (ValueError, TypeError):
-            # String ID ise hash değeri al
-            title_id = hash(self.id) % 1000000 if isinstance(self.id, str) and self.id else 0
-        
+        # AnimeciX sayısal başlık kimliği bekliyor. Kimlik sayısal değilse bu
+        # kaydı AnimeciX üzerinden açamıyoruz; boş liste dönüyoruz. (Qt tarafı
+        # aynı durumu `UnsupportedSource` ile kullanıcıya söylüyor; sunucu
+        # tarayıcısı ise kaynağı sessizce atlıyor.)
+        title_id = _sayisal_kimlik(self.id)
+        if title_id is None:
+            return []
+
         eps = _episodes_for_title(title_id)
         out: List[CixEpisode] = []
         for i, e in enumerate(eps):

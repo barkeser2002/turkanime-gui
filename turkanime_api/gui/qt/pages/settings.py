@@ -8,6 +8,12 @@ cookie olmadan hiç bölüm döndürmüyor. "Tarayıcıdan Al" düğmesi gömül
 QtWebEngine penceresini açar, kullanıcı kontrolü çözer, oturum çerezi otomatik
 kaydedilir.
 
+Çerez ve jetonlar diskte durmakla iş bitmiyor: kaynak modülleri onları süreç-içi
+global'lerde tutuyor ve her süreç boş başlıyor. Bu yüzden sayfa `reload()`
+sonunda `prefs.kaynak_kimliklerini_uygula()` çağırıyor — sayfa ana pencere
+kurulurken (`MainWindow._build_ui`) örnekleniyor, yani bu çağrı pratikte süreç
+açılışında ve her kayıt/temizleme sonrasında çalışıyor.
+
 AniList OAuth bilgileri buradan girilir ama `ayarlar.json`'a YAZILMAZ: istemci
 onları kendi dosyasında tutuyor (bkz. `prefs.anilist_yaz`). Client Secret alanı
 opsiyoneldir — boş bırakılınca giriş, sır gerektirmeyen Implicit akışa düşer.
@@ -87,13 +93,44 @@ class SettingsPage(QWidget):
         self.spnParallel.setRange(1, 10)
         form.addRow("Paralel indirme", self.spnParallel)
 
+        # Bu ayar `best_video(early_subset=...)`a gidiyor: kaç aday linkin
+        # erkenden yoklanacağını belirler. Qt tarafı okuyordu ama yazacak
+        # kontrol yoktu — kullanıcı değeri ancak ayarlar.json'ı elle
+        # düzenleyerek değiştirebiliyordu.
+        self.spnAday = QSpinBox()
+        self.spnAday.setRange(1, 30)
+        form.addRow("1080p aday sayısı", self.spnAday)
+        adayIpucu = QLabel("Kaç video linki denenip en iyisinin seçileceği. "
+                           "Yükseltmek kaliteyi artırabilir, aramayı yavaşlatır.")
+        adayIpucu.setObjectName("Muted")
+        adayIpucu.setWordWrap(True)
+        form.addRow("", adayIpucu)
+
         self.chkMaxRes = QCheckBox("En yüksek çözünürlüğü tercih et")
         form.addRow("", self.chkMaxRes)
         self.chkRemember = QCheckBox("Kaldığım dakikayı hatırla")
         form.addRow("", self.chkRemember)
+        self.chkWhileWatching = QCheckBox("İzlerken aynı anda kaydet")
+        form.addRow("", self.chkWhileWatching)
         self.chkAria = QCheckBox("aria2c ile indir")
         form.addRow("", self.chkAria)
         layout.addWidget(box)
+
+        # ── Liste görünümü / fansub ─────────────────────────────────────────
+        lbox = QFrame(); lbox.setObjectName("Panel")
+        lform = QFormLayout(lbox)
+        lform.setContentsMargins(16, 14, 16, 14)
+        lform.setSpacing(10)
+        self.chkWatchedIcon = QCheckBox("Bölüm listesinde izlendi/indirildi rozeti")
+        lform.addRow("", self.chkWatchedIcon)
+        self.chkManualFansub = QCheckBox("Fansub'u kendim seçeyim")
+        lform.addRow("", self.chkManualFansub)
+        fansubIpucu = QLabel("Fansub seçimi şimdilik yalnızca komut satırı "
+                             "arayüzünde soruluyor; ayar dosyası ikisinde ortak.")
+        fansubIpucu.setObjectName("Muted")
+        fansubIpucu.setWordWrap(True)
+        lform.addRow("", fansubIpucu)
+        layout.addWidget(lbox)
 
         # ── Discord / bakım ─────────────────────────────────────────────────
         dbox = QFrame(); dbox.setObjectName("Panel")
@@ -145,6 +182,37 @@ class SettingsPage(QWidget):
         crow.addStretch(1)
         cl.addLayout(crow)
         layout.addWidget(cbox)
+
+        # ── OpenAnime jetonları ─────────────────────────────────────────────
+        # Kaynak, CDN uçlarının hepsi ölünce kullanıcıya "Ayarlar'dan OpenAnime
+        # token'ını girin" diyordu; öyle bir alan yoktu. Var olmayan yere
+        # yönlendirmek, hatayı hiç açıklamamaktan kötü.
+        obox = QFrame(); obox.setObjectName("Panel")
+        ol = QVBoxLayout(obox)
+        ol.setContentsMargins(16, 14, 16, 14)
+        ol.setSpacing(8)
+        ol.addWidget(QLabel("OpenAnime oturumu"))
+
+        oform = QFormLayout()
+        oform.setSpacing(8)
+        self.txtOpenAniToken = QLineEdit()
+        # Jeton hesabın kendisi demek; omuz üstünden okunmasın.
+        self.txtOpenAniToken.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txtOpenAniToken.setPlaceholderText("token çerezi (opsiyonel)")
+        oform.addRow("Token", self.txtOpenAniToken)
+        self.txtOpenAniRefresh = QLineEdit()
+        self.txtOpenAniRefresh.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txtOpenAniRefresh.setPlaceholderText("refreshToken çerezi (opsiyonel)")
+        oform.addRow("Refresh Token", self.txtOpenAniRefresh)
+        ol.addLayout(oform)
+
+        ohint = QLabel("Boş bırakılabilir. OpenAnime bazı bölümlerde giriş "
+                       "yapmış oturum istiyor; stream uçlarının hepsi 404 "
+                       "dönüyorsa tarayıcınızdaki openani.me çerezlerini girin.")
+        ohint.setObjectName("Muted")
+        ohint.setWordWrap(True)
+        ol.addWidget(ohint)
+        layout.addWidget(obox)
 
         # ── Bypass ──────────────────────────────────────────────────────────
         bbox = QFrame(); bbox.setObjectName("Panel")
@@ -232,7 +300,7 @@ class SettingsPage(QWidget):
         return Dosyalar()
 
     def reload(self) -> None:
-        """Ayarları diskten oku ve forma yerleştir."""
+        """Ayarları diskten oku, forma yerleştir ve kaynak kimliklerini uygula."""
         try:
             ayarlar: Dict[str, Any] = self._dosya().ayarlar or {}
         except Exception as exc:
@@ -240,23 +308,51 @@ class SettingsPage(QWidget):
             return
         self.txtDir.setText(str(ayarlar.get("indirilenler") or ""))
         self.spnParallel.setValue(int(ayarlar.get("paralel indirme sayisi") or 3))
+        # Ayar sözlüğünden değil `prefs`ten: eski Türkçe ada düşme kuralı orada
+        # yaşıyor, burada kopyalansa iki yer ayrışırdı (bkz. `prefs._aday_sayisi`).
+        self.spnAday.setValue(prefs.oku().aday_sayisi)
         self.chkMaxRes.setChecked(bool(ayarlar.get("max resolution", True)))
         self.chkRemember.setChecked(bool(ayarlar.get("dakika hatirla", True)))
+        self.chkWhileWatching.setChecked(bool(ayarlar.get("izlerken kaydet", False)))
         self.chkAria.setChecked(bool(ayarlar.get("aria2c kullan", False)))
+        self.chkWatchedIcon.setChecked(bool(ayarlar.get("izlendi ikonu", True)))
+        self.chkManualFansub.setChecked(bool(ayarlar.get("manuel fansub", False)))
         self.txtFlare.setText(str(ayarlar.get("flaresolverr_url") or ""))
+        self.txtOpenAniToken.setText(str(ayarlar.get("openani_token") or ""))
+        self.txtOpenAniRefresh.setText(str(ayarlar.get("openani_refresh_token") or ""))
         self._show_cookie_state(str(ayarlar.get("tranime_cookie") or ""))
         self._reload_discord(bool(ayarlar.get("discord_rich_presence", True)))
         self._reload_anilist()
+        # Kaynak modülleri çerez/jetonu süreç-içi global'de tutuyor ve her süreç
+        # boş başlıyor; diskteki değer buradan içeri girmezse TRAnimeİzle her
+        # açılışta 0 bölüm döndürür (bkz. modül başlığı).
+        if not self._kimlikleri_uygula():
+            self.lblStatus.error(
+                "Kaynak çerez/jetonları uygulanamadı; TRAnimeİzle ve OpenAnime "
+                "bölüm döndürmeyebilir.")
+
+    @staticmethod
+    def _kimlikleri_uygula() -> bool:
+        """Çerez/jetonu kaynak modüllerinin süreç-içi global'lerine bas."""
+        return prefs.kaynak_kimliklerini_uygula()
 
     def save(self) -> None:
         try:
             self._dosya().set_ayar(ayar_list={
                 "indirilenler": self.txtDir.text().strip(),
                 "paralel indirme sayisi": self.spnParallel.value(),
+                # ASCII ad kanonik; eski Türkçe ad `Dosyalar` açılışında göç
+                # ediyor (bkz. `dosyalar.ESKI_AYAR_ADLARI`).
+                "1080p aday sayisi": self.spnAday.value(),
                 "max resolution": self.chkMaxRes.isChecked(),
                 "dakika hatirla": self.chkRemember.isChecked(),
+                "izlerken kaydet": self.chkWhileWatching.isChecked(),
                 "aria2c kullan": self.chkAria.isChecked(),
+                "izlendi ikonu": self.chkWatchedIcon.isChecked(),
+                "manuel fansub": self.chkManualFansub.isChecked(),
                 "flaresolverr_url": self.txtFlare.text().strip(),
+                "openani_token": self.txtOpenAniToken.text().strip(),
+                "openani_refresh_token": self.txtOpenAniRefresh.text().strip(),
             })
         except Exception as exc:
             self.lblStatus.error(f"Kaydedilemedi: {exc}")
@@ -270,6 +366,12 @@ class SettingsPage(QWidget):
             pass
         if not self._save_anilist():
             self.lblStatus.error("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı.")
+            return
+        # Jeton diske yazıldı; süreç içindeki kopyası da tazelenmeli, yoksa
+        # değişiklik ancak yeniden başlatınca etkili olurdu.
+        if not self._kimlikleri_uygula():
+            self.lblStatus.error(
+                "Ayarlar kaydedildi ama kaynak çerez/jetonları uygulanamadı.")
             return
         self.lblStatus.ok("Ayarlar kaydedildi.")
 
@@ -311,9 +413,10 @@ class SettingsPage(QWidget):
 
     def _on_cookie_ready(self, netscape: str) -> None:
         try:
-            from ....sources.tranime import set_session_cookie
-            set_session_cookie(netscape)                       # süreç içi
             self._dosya().set_ayar("tranime_cookie", netscape)  # kalıcı
+            # Süreç içi kopya diskten okunarak tazeleniyor: doğrudan `netscape`
+            # basmak, disk ile bellek arasında sessiz bir ayrışmaya kapı açardı.
+            self._kimlikleri_uygula()
         except Exception as exc:
             self.lblStatus.error(f"Çerez kaydedilemedi: {exc}")
             self.btnCookie.setEnabled(True)
@@ -332,6 +435,9 @@ class SettingsPage(QWidget):
         except Exception as exc:
             self.lblStatus.error(f"Temizlenemedi: {exc}")
             return
+        # Yalnızca diski temizlemek yetmez: kaynak modülü çerezi süreç-içi
+        # global'de tutuyor, yeniden başlatana kadar eskisiyle istek atardı.
+        self._kimlikleri_uygula()
         self._show_cookie_state("")
         self.lblStatus.info("Çerez temizlendi.")
 

@@ -14,6 +14,7 @@ from rich import print as rprint
 import questionary as qa
 
 from ..bypass import fetch
+from ..common import requirements as gereksinim   # modül olarak: testler sahteleyebilsin
 from ..common.cf_qt_solver import SOLVER_FLAG
 from ..objects import Anime
 from ..sources import search_animecix, search_anizle
@@ -174,7 +175,14 @@ def menu_loop():
                     anizle_anime = AnizleAnime(slug=seri_slug, title=seri_ismi)
                     adapter_anime = AdapterAnime(slug=anizle_anime.slug, title=anizle_anime.title)
                 elif source == "tranimeizle":
-                    from ..sources.tranime import search_tranime, get_tranime_episodes
+                    # `tranime` modülünde "get_tranime_*" diye bir ad HİÇ olmadı;
+                    # bu import ImportError yükseltiyor, aşağıdaki
+                    # `except (KeyError, IndexError)` onu yakalamıyor ve TRAnimeİzle
+                    # seçili her kullanıcının CLI'ı en dıştaki sys.exit(1)'e düşüyordu.
+                    from ..sources.tranime import (
+                        get_anime_episodes as get_tranime_episodes,
+                        search_tranime,
+                    )
                     q = qa.text("TRAnimeİzle: aramak için yazın", style=prompt_tema).ask(kbi_msg="")
                     if not q:
                         continue
@@ -304,7 +312,10 @@ def menu_loop():
 
             tranime_stream_provider = None
             if source == "tranimeizle":
-                from ..sources.tranime import get_tranime_episode_details
+                # Aynı ad hatası burada da vardı (bkz. yukarıdaki import notu).
+                from ..sources.tranime import (
+                    get_episode_details as get_tranime_episode_details,
+                )
                 def _tranime_provider(ep_slug):
                     def provider(url):
                         try:
@@ -642,7 +653,9 @@ def main():
         from ..common.cf_qt_solver import main as solver_main
         return solver_main()
 
-    # Güncelleme kontrolü
+    # Güncelleme kontrolü. Uç artık `common/updater.py` — gerekçesi
+    # `cli/version.py` başlığında (eski üç ucun üçü de yanlış hedefi
+    # gösteriyordu).
     try:
         with CliStatus("Güncelleme kontrol ediliyor.."):
             surum = guncel_surum()
@@ -653,11 +666,32 @@ def main():
             sleep(5)
     except Exception as e:
         log_error(e)
+        # sleep(3) kaldırıldı: mesaj zaten ekranda kalıyor, ağı olmayan
+        # kullanıcıyı her açılışta üç saniye bekletmenin karşılığı yoktu.
         rprint("[red][strong]Güncelleme kontrol edilemedi.[/strong][red]")
-        sleep(3)
 
-    # Gereksinimleri kontrol et (embed edilmiş araçlar kullanılıyor)
-    # gereksinim_kontrol_cli()
+    # Gereksinim denetimi. Eskiden yorum satırındaydı ve gerekçe "embed
+    # edilmiş araçlar kullanılıyor" idi; oysa gömülü kopya mekanizması
+    # (common/requirements.py: `sys._MEIPASS/bin`) YALNIZCA PyInstaller
+    # paketinde geçerli. pip ile kurulan CLI'da mpv/yt-dlp/aria2c/ffmpeg hiç
+    # denetlenmiyor, eksiklik ancak oynatma/indirme anında sessiz bir hataya
+    # dönüşüyordu. Denetim Qt ile AYNI çekirdekten yapılıyor; CLI'ın kendi
+    # kopyası (cli/gereksinimler.py) bu yüzden silindi.
+    # `path_hazirla` şart: sihirbazın uygulama dizinine kurduğu araçlar
+    # PATH'te değilse `arac_var_mi` onları göremez.
+    gereksinim.path_hazirla()
+    try:
+        with CliStatus("Gereksinimler denetleniyor.."):
+            eksikler = gereksinim.eksik_araclar()
+    except Exception as e:
+        log_error(e)
+        eksikler = []
+    if eksikler:
+        # Uyarı yeterli, çıkış değil: aria2c ve ffmpeg olmadan da izlenebiliyor
+        # ve CLI bugün hiç denetlemiyordu — çıkmak düpedüz gerileme olurdu.
+        rprint(f"[yellow]!) Şu araçlar bulunamadı: {', '.join(eksikler)}[/yellow]")
+        rprint("[yellow]   Kurulum için: https://github.com/barkeser2002/"
+               "turkanime-gui/wiki[/yellow]")
 
     # Script kapanışında
     def kapat():
@@ -665,14 +699,27 @@ def main():
             sleep(1.5)
     atexit.register(kapat)
 
-    # Türkanime'ye bağlan
-    try:
-        with CliStatus("Türkanime'ye bağlanılıyor.."):
-            _ = fetch("/")  # Create Session
-    except (ConnectionError, AssertionError) as e:
-        log_error(e)
-        rprint("[red][strong]TürkAnime'ye ulaşılamıyor.[/strong][red]")
-        sys.exit(1)
+    # Türkanime'ye bağlan — YALNIZCA seçili kaynak TürkAnime iken.
+    # Denetim eskiden koşulsuzdu: TürkAnime erişilemezken CLI menüye hiç
+    # girmiyordu, yani SOURCE_TITLES'taki diğer altı kaynak (AnimeciX, Anizle,
+    # TRAnimeİzle, OpenAnime, Tranimaci, AnimeDepo) da kullanılamıyordu —
+    # oysa hiçbiri TürkAnime'ye bağlı değil.
+    if _norm_source(Dosyalar().ayarlar.get("kaynak", "turkanime")) == "turkanime":
+        try:
+            with CliStatus("Türkanime'ye bağlanılıyor.."):
+                _ = fetch("/")  # Create Session
+        except Exception as e:
+            # Artık sys.exit(1) YOK: çıkmak kullanıcıyı "Kaynak seç" menüsünden
+            # de mahrum bırakıyordu, yani ayarını düzeltmesinin yolu kalmıyordu.
+            # Oturum kurulamadıysa arama zaten menu_loop içinde yakalanıyor.
+            # Yakalama genişletildi: eski `(ConnectionError, AssertionError)`
+            # ikilisi requests'in kendi istisnalarını (Timeout, SSLError…)
+            # kaçırıyor, onlar da :687'deki genel except'e düşüyordu.
+            log_error(e)
+            rprint("[red][strong]TürkAnime'ye ulaşılamıyor.[/strong][/red]")
+            rprint("[yellow]Menüden 'Kaynak seç' ile başka bir kaynağa "
+                   "geçebilirsiniz.[/yellow]")
+            sleep(2)
 
     # Navigasyon
     clear()

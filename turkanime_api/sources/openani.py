@@ -7,6 +7,7 @@ bilgileri HTML içerisindeki JSON datalarından parse edilir.
 """
 from __future__ import annotations
 
+import os
 import re
 import json
 import time
@@ -37,7 +38,30 @@ except ImportError:
 
 # Konfigürasyon
 BASE_URL = "https://openani.me"
+
+# Sayfadan CDN_LINK yakalanamadığında kullanılan **varsayılan** CDN kökü ve
+# `%CDN_HOST%` yer tutucusunun karşılığı. Adres sitenin barındırıcısına ait ve
+# değişebiliyor; sabit kodlu kaldığı sürece CDN taşındığında tek çare sürüm
+# çıkmaktı. Ortam değişkeniyle ezilebilsin (aynı desen: `animedepo.py`
+# ORTAM_ANAHTARI / `taban_url()`).
 CDN_HOST = "https://de2---vn-t9g4tsan-5qcl.yeshi.eu.org"
+CDN_ORTAM_ANAHTARI = "TURKANIME_OPENANI_CDN"
+
+# `search/episodes/streams` fonksiyonlarının varsayılan istek süresi.
+VARSAYILAN_TIMEOUT = 30
+
+
+def cdn_host() -> str:
+    """Kullanılacak CDN kökü: ortam değişkeni varsa o, yoksa `CDN_HOST`.
+
+    Değer her çağrıda okunuyor (bir `os.environ` bakışı, ölçülebilir maliyeti
+    yok); böylece süreç ortasında değişen ortam da geçerli oluyor ve
+    `animedepo.taban_url()`teki gibi bir sıfırlama fonksiyonu gerekmiyor.
+    Sondaki `/` atılıyor: yer tutucu `%CDN_HOST%/animes/...` biçiminde
+    dolduruluyor, çift eğik çizgi bazı CDN'lerde 404 demek.
+    """
+    ortam = (os.environ.get(CDN_ORTAM_ANAHTARI) or "").strip().rstrip("/")
+    return ortam or CDN_HOST
 
 # OpenAni tokens - kullanıcı tarafından sağlanmalı
 OPENANI_TOKEN = None
@@ -49,10 +73,10 @@ def set_openani_tokens(token: str, refresh_token: str):
     OPENANI_TOKEN = token
     OPENANI_REFRESH_TOKEN = refresh_token
 
-def _get_cf_session() -> Any:
+def _get_cf_session(timeout: int = VARSAYILAN_TIMEOUT) -> Any:
     """CF session'ı döndür (singleton)."""
     if HAS_CF_BYPASS:
-        session = CFSession(timeout=30)
+        session = CFSession(timeout=timeout)
         # `CFSession.cookies` bir dict property ve KOPYA döndürüyor; burada
         # `.set(...)` çağırmak dict'te öyle bir metot olmadığı için token
         # ayarlanır ayarlanmaz AttributeError atıyordu (ve olsaydı bile yazma
@@ -112,11 +136,15 @@ class OpenAniAdapter:
         "supported_resolutions": ["360p", "480p", "720p", "1080p"],
         "rate_limit": 1,
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "timeout": 30,
+        "timeout": VARSAYILAN_TIMEOUT,
     }
 
-    def __init__(self):
-        self.session = _get_cf_session()
+    def __init__(self, timeout: Optional[int] = None):
+        # `PROVIDER_CONFIG["timeout"]` yıllarca hiç okunmuyordu: istekler ya
+        # sabit sürelerle (15/10) ya da HİÇ timeout'suz atılıyordu. Artık
+        # adaptörün istek süresi burada ve bütün isteklere o gidiyor.
+        self.timeout = int(timeout or self.PROVIDER_CONFIG["timeout"])
+        self.session = _get_cf_session(self.timeout)
         self.last_request = 0
 
     def _rate_limit_wait(self):
@@ -161,9 +189,14 @@ class OpenAniAdapter:
             if sess is None:
                 sess = _curl.Session(impersonate="chrome110")
                 self._light_session = sess
-            return sess.get(url, headers=headers, timeout=15, allow_redirects=False)
+            return sess.get(url, headers=headers, timeout=self.timeout,
+                            allow_redirects=False)
         except Exception:
-            return self.session.get(url, headers=headers, allow_redirects=False)
+            # Yedek yolda da süre veriyoruz: `requests.Session` varsayılanı
+            # SONSUZ bekler (CFSession kendi varsayılanını koyar ama düz
+            # requests'e düşülen dalda kimse koymuyordu).
+            return self.session.get(url, headers=headers, allow_redirects=False,
+                                    timeout=self.timeout)
 
     def _probe_slug(self, slug: str) -> Optional[Dict[str, Any]]:
         """Doğrudan /anime/<slug> URL'ini deneyip varsa anime kartını döndür.
@@ -322,7 +355,10 @@ class OpenAniAdapter:
         headers = {"User-Agent": self.PROVIDER_CONFIG["user_agent"]}
         
         try:
-            response = self.session.get(anime_url, headers=headers)
+            # timeout ŞART: düz `requests.Session` yedeğine düşüldüğünde
+            # varsayılan sonsuzdur, yani yanıt vermeyen site GUI'yi asardı.
+            response = self.session.get(anime_url, headers=headers,
+                                        timeout=self.timeout)
             if response.status_code != 200:
                 print(f"[OpenAni] Detay hatası: HTTP {response.status_code}")
                 return None
@@ -459,7 +495,8 @@ class OpenAniAdapter:
         video_urls = []
 
         try:
-            response = self.session.get(episode_url, headers=headers)
+            response = self.session.get(episode_url, headers=headers,
+                                        timeout=self.timeout)
             if response.status_code != 200:
                 print(f"[OpenAni] Video hatası: HTTP {response.status_code}")
                 return []
@@ -471,12 +508,12 @@ class OpenAniAdapter:
                 data_text = data_match.group(1)
                 
                 # try to find the actual cdn host dynamically
-                dynamic_cdn = CDN_HOST
+                cdn = cdn_host()
                 cdn_match = re.search(r'CDN_LINK:"([^"]+)"', data_text)
                 if cdn_match:
-                     dynamic_cdn = cdn_match.group(1).replace("%CDN_HOST%", CDN_HOST)
+                     dynamic_cdn = cdn_match.group(1).replace("%CDN_HOST%", cdn)
                 else:
-                     dynamic_cdn = f"{CDN_HOST}/animes/"
+                     dynamic_cdn = f"{cdn}/animes/"
                      
                 files_match = re.search(r'files:(\[\{.*?\}\])', data_text)
                 if files_match:
@@ -509,8 +546,8 @@ class OpenAniAdapter:
                     for match in matches:
                         vid_url = match.group(1).replace("\\u002F", "/")
                         if "%CDN_HOST%" in vid_url:
-                            vid_url = vid_url.replace("%CDN_HOST%", CDN_HOST)
-                            
+                            vid_url = vid_url.replace("%CDN_HOST%", cdn_host())
+
                         try:
                             fansub_name = match.group(2).encode('ascii', 'ignore').decode('unicode_escape')
                         except:
@@ -546,8 +583,8 @@ class OpenAniAdapter:
                      for i, match in enumerate(vid_matches):
                          vid_url = match.group(0).replace("\\u002F", "/")
                          if "%CDN_HOST%" in vid_url:
-                             vid_url = vid_url.replace("%CDN_HOST%", CDN_HOST)
-                             
+                             vid_url = vid_url.replace("%CDN_HOST%", cdn_host())
+
                          quality = "720p"
                          if "1080p" in vid_url:
                              quality = "1080p"
@@ -623,18 +660,48 @@ class OpenAniAdapter:
 
 adapter = OpenAniAdapter()
 
-def search_openani(query: str, limit: int = 20, timeout: int = 30) -> List[Tuple[str, str]]:
-    results = adapter.search_anime(query)
+# Varsayılandan farklı süre isteyen çağrılar için adaptör önbelleği: her istekte
+# yeni `CFSession` kurmak (ayar dosyası okuma + oturum kurulumu) gereksiz.
+_ozel_adaptorler: Dict[int, OpenAniAdapter] = {}
+
+
+def _adaptor(timeout: Optional[int]) -> OpenAniAdapter:
+    """İstenen istek süresine sahip adaptör.
+
+    Aşağıdaki üç dışa açık fonksiyonun `timeout` parametresi eskiden HİÇBİR
+    yere gitmiyordu — üç gövdede de adı geçmiyordu, istekler sabit sürelerle
+    (15/10) veya süresiz atılıyordu. İmza yalan söylüyordu; çağıran "10 saniye"
+    dediğinde 30 saniye bekleyebiliyordu. Artık süre adaptöre veriliyor ve
+    oradan bütün HTTP isteklerine geçiyor.
+
+    Varsayılan süre paylaşılan tekil adaptörü kullanır; testlerin
+    `oa.adapter`ı yamalayabilmesi de buna bağlı.
+    """
+    if timeout is None:
+        return adapter
+    sure = int(timeout)
+    if sure == adapter.timeout:
+        return adapter
+    ozel = _ozel_adaptorler.get(sure)
+    if ozel is None:
+        ozel = _ozel_adaptorler[sure] = OpenAniAdapter(timeout=sure)
+    return ozel
+
+
+def search_openani(query: str, limit: int = 20,
+                   timeout: int = VARSAYILAN_TIMEOUT) -> List[Tuple[str, str]]:
+    results = _adaptor(timeout).search_anime(query)
     # result: [{'url': ..., 'title': ..., 'provider_data': {'item_id': slug}}]
     return [(res["provider_data"]["item_id"], res["title"]) for res in results[:limit]]
 
-def get_anime_episodes(slug: str, timeout: int = 30) -> List[Tuple[str, str]]:
-    anime_url = adapter.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
-    anime_data = adapter.get_anime_details(anime_url)
+def get_anime_episodes(slug: str, timeout: int = VARSAYILAN_TIMEOUT) -> List[Tuple[str, str]]:
+    ada = _adaptor(timeout)
+    anime_url = ada.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
+    anime_data = ada.get_anime_details(anime_url)
     if not anime_data:
         return []
-    
-    episodes = adapter.get_episodes(anime_data)
+
+    episodes = ada.get_episodes(anime_data)
     # result: [{'url': ..., 'title': ..., 'provider_data': {'episode_id': ep_slug}}]
     return [(ep["provider_data"]["episode_id"], ep["title"]) for ep in episodes]
 
@@ -646,8 +713,13 @@ _MEDYA_TIPLERI = ("video/", "audio/", "application/x-mpegurl",
                   "application/vnd.apple.mpegurl", "application/dash+xml",
                   "application/octet-stream", "binary/octet-stream")
 
+# Yoklama üst sınırı. Sayfa isteğinden ayrı ve bilerek kısa: istenen tek şey
+# 1 baytlık yanıt, uç başına saniyelerce beklemenin karşılığı yok.
+YOKLAMA_TIMEOUT = 10
 
-def _uc_calisiyor(url: str, referer: Optional[str] = None) -> Optional[bool]:
+
+def _uc_calisiyor(url: str, referer: Optional[str] = None,
+                  timeout: int = YOKLAMA_TIMEOUT) -> Optional[bool]:
     """Uç gerçekten veri veriyor mu? 1 baytlık Range isteğiyle yokla.
 
     ``True``  = medya geldi
@@ -665,7 +737,7 @@ def _uc_calisiyor(url: str, referer: Optional[str] = None) -> Optional[bool]:
         basliklar["Referer"] = referer
     try:
         from curl_cffi import requests as _curl
-        yanit = _curl.get(url, headers=basliklar, timeout=10)
+        yanit = _curl.get(url, headers=basliklar, timeout=timeout)
     except Exception:
         return None
     if yanit.status_code not in (200, 206):
@@ -676,11 +748,19 @@ def _uc_calisiyor(url: str, referer: Optional[str] = None) -> Optional[bool]:
     return any(tur.startswith(t) for t in _MEDYA_TIPLERI)
 
 
-def get_episode_streams(episode_slug: str, timeout: int = 30) -> List[Dict[str, str]]:
+def get_episode_streams(episode_slug: str,
+                        timeout: int = VARSAYILAN_TIMEOUT) -> List[Dict[str, str]]:
+    """Bölümün stream uçları.
+
+    `timeout` bölüm sayfası isteği içindir; uçların canlılık yoklaması ayrıca
+    `YOKLAMA_TIMEOUT` ile sınırlı (uç başına 1 baytlık istek).
+    """
+    ada = _adaptor(timeout)
     episode_url = f"{BASE_URL}/anime/{episode_slug}"
     anime_slug = episode_slug.split("/")[0]
-    anime_url = adapter.PROVIDER_CONFIG["anime_url"].format(anime_id=anime_slug)
-    
+    anime_url = ada.PROVIDER_CONFIG["anime_url"].format(anime_id=anime_slug)
+
+
     episode_data = {
         "url": episode_url,
         "provider_data": {
@@ -688,7 +768,7 @@ def get_episode_streams(episode_slug: str, timeout: int = 30) -> List[Dict[str, 
         }
     }
     
-    videos = adapter.get_video_urls(episode_data)
+    videos = ada.get_video_urls(episode_data)
     # result: [{'url': ..., 'quality': ..., 'provider_data': {'fansub': fansub_name}}]
     
     streams = []

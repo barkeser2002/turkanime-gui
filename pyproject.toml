@@ -42,6 +42,12 @@ rich = ">=13.0.0"
 easygui = ">=0.98.2"
 beautifulsoup4 = "*"
 requests = "*"
+# CF zincirinin 2. kademesi (`common/cf_bypass.py`: HAS_CLOUDSCRAPER). Yalnızca
+# requirements.txt'te vardı; burada olmadığı için "pip install turkanime-gui"
+# ile kuranda import düşüyor ve JS-challenge kademesi `_available_methods`
+# listesine SESSİZCE hiç girmiyordu. Kaynaktan kuranla PyPI'dan kuranın 5'e
+# karşı 4 kademeyle çalışması, ancak canlı bir CF duvarında fark ediliyor.
+cloudscraper = "*"
 # GUI PySide6 (LGPL) üzerine kuruluyor; QtWebEngine cookie/CF akışı için
 # gerekli. Opsiyonel tutuluyor, GUI isteyenler extras ile kurar.
 pyside6 = { version = ">=6.7", optional = true }

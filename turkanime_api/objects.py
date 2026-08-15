@@ -4,7 +4,8 @@
 >>> vid1 = bol3.videos[0]
 >>> vid1.oynat()
 """
-from os import remove
+from os import makedirs, remove
+from os.path import dirname, expanduser, join
 from tempfile import NamedTemporaryFile
 from html import unescape
 import subprocess as sp
@@ -55,6 +56,39 @@ class LogHandler:
     @staticmethod
     def debug(msg):
         pass  # msg is unused but required by yt-dlp interface
+
+
+def kayit_hedefi(bolum):
+    """ "İzlerken kaydet"in yazacağı dosya: `<indirilenler>/<seri>/<bölüm>.mkv`.
+
+    mpv bu seçeneği `--stream-record=<dosya>` biçiminde istiyor. Eski kod
+    bayrağı değersiz geçiyordu; bu yalnızca geçersiz değil, aynı zamanda
+    tehlikeliydi: bayraklar komuta `cmd.insert(1,opt)` ile en başa giriyor,
+    yani mpv bir sonraki argümanı (`--no-input-terminal`) değer sanabiliyordu.
+    Sonuç: "izlerken kaydet" açık olan kullanıcıda oynatma hiç başlamıyordu.
+
+    Klasör `ayarlar.json`'daki "indirilenler"den okunuyor — indirmenin yazdığı
+    yerin aynısı, kullanıcı kaydettiği bölümü orada arar. Import tembel:
+    `objects` çekirdek katman, modül düzeyinde `cli.dosyalar`a bağlanmak
+    gereksiz bir yükleme sırası kuralı doğururdu.
+
+    Ad temizliği `guvenli_alt_yol` üzerinden: seri ve bölüm slug'ı sitenin
+    HTML'inden geliyor ve `..` içerebilir (bkz. common.dosya_adi).
+    """
+    from .cli.dosyalar import Dosyalar
+    try:
+        kok = str(Dosyalar().ayarlar.get("indirilenler") or "").strip()
+    except Exception:
+        kok = ""
+    if not kok:
+        # `Dosyalar`ın kendi varsayılanıyla aynı değer: ayar okunamadığında
+        # çalışma dizinine düşmek paketlenmiş uygulamada Program Files demek.
+        kok = join(expanduser("~"), "Downloads")
+    seri = bolum.anime.slug if getattr(bolum, "anime", None) else ""
+    hedef = guvenli_alt_yol(kok, seri, getattr(bolum, "slug", ""), yedek="bolum")
+    makedirs(dirname(hedef), exist_ok=True)
+    # mkv: mpv'nin ham akışı yeniden kodlamadan sarabildiği en genel kap.
+    return hedef + ".mkv"
 
 
 class Anime:
@@ -188,7 +222,7 @@ class Bolum:
     Öznitelikler:
     - slug: Bölümün kodu: "naruto-54-bolum" veya URLsi: "https://turkani.co/video/naruto-54-bolum".
     - title: Bölümün okunaklı ismi. (opsiyonel)
-    - anime: Bölümün ait olduğu anime'nin objesi, eğer tanımlanmadıysa erişildiğinde yaratılır.
+    - anime: Bölümün ait olduğu anime'nin objesi; verilmediyse None kalır (bkz. `anime`).
     - parse_fansubs: Fansubları da parse'la. Fazladan fansub sayısı kadar istek gönderir.
     """
     def __init__(self,slug,anime=None,title=None,parse_fansubs=True):
@@ -225,9 +259,24 @@ class Bolum:
 
     @property
     def anime(self):
-        """ Bu bölümün ait olduğu anime serisi objesini yarat. """
-        if self._anime is None:
-            ...
+        """ Bu bölümün ait olduğu anime serisi — yalnızca kurucuya verildiyse.
+
+        Otomatik YARATILMIYOR, dönüş None olabilir. Gövde eskiden `...` idi:
+        docstring "erişildiğinde yaratılır" diyordu ama property kalıcı olarak
+        None dönüyordu, yani söz tutulmuyordu. Sözü koda değil koddaki gerçeği
+        söze taşıdık, çünkü tembel yaratmak iki bedeli getirirdi:
+
+        1. `Anime.__init__` kurulurken `fetch_info()` ile ağa çıkıyor; buradan
+           yaratmak `Video.indir`'in yol kurma satırını (`bolum.anime.slug`)
+           sessizce bir HTTP isteğine çevirirdi — hem yavaş hem ağsız ortamda
+           indirmeyi tümden düşürür.
+        2. Seri slug'ı bölüm slug'ından türetilemiyor; bölüm sayfasını ayrıca
+           ayrıştırmak, yani ikinci bir kırılgan regex daha gerekirdi.
+
+        Bölüm üreten her yol (`Anime.bolumler`, kaynak adaptörleri, openani)
+        zaten `anime=` veriyor; vermeyen çağıran için None doğru cevap ve
+        çağıranlar bunu kontrol ediyor (bkz. `Video.indir`).
+        """
         return self._anime
 
     @property
@@ -513,11 +562,20 @@ class Video:
         if callback:
             opts['progress_hooks'] = [callback]
         opts['outtmpl'] = {'default': output + r'.%(ext)s'}
-        with NamedTemporaryFile("w",delete=False) as tmp:
+        # delete=False şart: yt-dlp dosyayı adıyla ikinci kez açıyor (Windows'ta
+        # açık bir NamedTemporaryFile yeniden açılamaz). Temizlik bu yüzden bize
+        # kalıyor ve `finally`'de olmalı: eskiden `remove` try dışındaydı, indirme
+        # patladığında (kopan bağlantı, iptal) geçici dosya diskte kalıyordu.
+        with NamedTemporaryFile("w", delete=False, suffix=".info.json") as tmp:
             json.dump(self.info, tmp)
-        with YoutubeDL(opts) as ydl:
-            ydl.download_with_info_file(tmp.name)
-        remove(tmp.name)
+        try:
+            with YoutubeDL(opts) as ydl:
+                ydl.download_with_info_file(tmp.name)
+        finally:
+            try:
+                remove(tmp.name)
+            except OSError:
+                pass
 
     def oynat(self, dakika_hatirla=False ,izlerken_kaydet=False, mpv_opts=None):
         """ Oynatmak için yt-dlp + mpv kullanıyoruz. """
@@ -544,32 +602,47 @@ class Video:
             return sp.run(cmd, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
         
         # Standart masaüstü MPV komutu
-        with NamedTemporaryFile("w",delete=False) as tmp:
+        # delete=False + elle silme: mpv dosyayı adıyla açıyor. Temizlik
+        # `finally`'de: eskiden HİÇ silinmiyordu, yani her oynatma diskte bir
+        # `.info.json` bırakıyordu (indirme yolundaki kusurun aynısı).
+        with NamedTemporaryFile("w", delete=False, suffix=".info.json") as tmp:
             json.dump(self.info, tmp)
-        cmd = [
-            "mpv",
-            "--no-input-terminal",
-            "--msg-level=all=error",
-            "--script-opts=ytdl_hook-ytdl_path=yt-dlp,ytdl_hook-try_ytdl_first=yes",
-            "--ytdl-raw-options=load-info-json=" + tmp.name,
-            "ytdl://" + self.bolum.slug # Kaldığın yerden devam etmenin çalışması için.
-        ]
-
-        if self.url and self.url.endswith(".m3u8"):
-            cmd += [
-                "--demuxer-lavf-o=protocol_whitelist=[file,tcp,tls,https],"
-                "http_keep_alive=0,http_persistent=0"
+        try:
+            cmd = [
+                "mpv",
+                "--no-input-terminal",
+                "--msg-level=all=error",
+                "--script-opts=ytdl_hook-ytdl_path=yt-dlp,ytdl_hook-try_ytdl_first=yes",
+                "--ytdl-raw-options=load-info-json=" + tmp.name,
+                "ytdl://" + self.bolum.slug # Kaldığın yerden devam etmenin çalışması için.
             ]
-            cmd += ["--cache=yes", get_m3u8_stream(self.url) ]
-            del cmd[4]
 
-        if dakika_hatirla:
-            mpv_opts.append("--save-position-on-quit")
-        if izlerken_kaydet:
-            mpv_opts.append("--stream-record")
-        for opt in mpv_opts:
-            cmd.insert(1,opt)
-        return sp.run(cmd, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
+            if self.url and self.url.endswith(".m3u8"):
+                cmd += [
+                    "--demuxer-lavf-o=protocol_whitelist=[file,tcp,tls,https],"
+                    "http_keep_alive=0,http_persistent=0"
+                ]
+                cmd += ["--cache=yes", get_m3u8_stream(self.url) ]
+                del cmd[4]
+
+            if dakika_hatirla:
+                mpv_opts.append("--save-position-on-quit")
+            if izlerken_kaydet:
+                # Hedef kurulamazsa (izin yok, güvensiz yol) bayrağı hiç geçme:
+                # değersiz `--stream-record` oynatmayı bozar, sessizce
+                # kaydetmemek yeğdir.
+                try:
+                    mpv_opts.append("--stream-record=" + kayit_hedefi(self.bolum))
+                except (OSError, ValueError):
+                    pass
+            for opt in mpv_opts:
+                cmd.insert(1,opt)
+            return sp.run(cmd, text=True, stdout=sp.PIPE, stderr=sp.PIPE)
+        finally:
+            try:
+                remove(tmp.name)
+            except OSError:
+                pass
 
     def get(self, key, default=None):
         """Dictionary-like get method for compatibility."""

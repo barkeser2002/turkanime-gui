@@ -96,25 +96,6 @@ def prepare_qt_env() -> None:
         pass
 
 
-class PlaceholderPage(QWidget):
-    """Henüz taşınmamış sayfalar için geçici içerik."""
-
-    def __init__(self, title: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 28, 28, 28)
-        layout.setSpacing(8)
-
-        heading = QLabel(title)
-        heading.setObjectName("Title")
-        note = QLabel("Bu bölüm Qt'ye taşınıyor.")
-        note.setObjectName("Muted")
-
-        layout.addWidget(heading)
-        layout.addWidget(note)
-        layout.addStretch(1)
-
-
 class MainWindow(QMainWindow):
     """Uygulamanın ana penceresi (CustomTkinter `MainWindow`'un Qt karşılığı)."""
 
@@ -205,7 +186,14 @@ class MainWindow(QMainWindow):
         outer.addLayout(body, 1)
 
     def _make_page(self, key: str, label: str) -> QWidget:
-        """İlgili sayfayı üret; henüz taşınmamışsa yer tutucu döndür."""
+        """`NAV_ITEMS` anahtarına karşılık gelen sayfayı üret.
+
+        Aşağıdaki dallar `NAV_ITEMS`'ın yedi anahtarını da karşılıyor, yani
+        sona düşmek mümkün değil. Yine de sessizce `None` dönüp çağıranın
+        `addWidget`'ında anlamsız bir hatayla patlamak yerine burada
+        bağırıyoruz: `NAV_ITEMS`'a dalı yazılmamış bir anahtar eklenirse
+        hata, sebebini söyleyerek açılışta çıksın.
+        """
         if key == "search":
             page = SearchPage()
             page.anime_selected.connect(self._on_anime_selected)
@@ -225,7 +213,7 @@ class MainWindow(QMainWindow):
             return SettingsPage(self.anilist, discord=self.discord,
                                 updates=self.updates,
                                 requirements=self.requirements)
-        return PlaceholderPage(label)
+        raise ValueError(f"NAV_ITEMS anahtarı {key!r} ({label}) için sayfa dalı yok")
 
     def _goto_settings(self) -> None:
         """"Ayarlar'a Git" yönlendirmesi (sol menü de senkron kalmalı)."""

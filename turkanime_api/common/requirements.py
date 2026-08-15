@@ -14,6 +14,7 @@ bağlı ve Faz 9'da silinecek. Mantık burada duruyor ki hem Qt sihirbazı hem
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -29,6 +30,13 @@ from .utils import get_arch, get_os
 
 GEREKSINIM_URL = ("https://raw.githubusercontent.com/KebabLord/"
                   "turkanime-indirici/master/gereksinimler.json")
+
+# Aynı dosyanın depoya/pakete gömülü kopyası. `turkanime-gui.spec` onu zaten
+# pakete koyuyor (`('gereksinimler.json', '.')`) ama hiç okunmuyordu: liste
+# YALNIZCA upstream raw URL'sinden alınıyordu. Upstream silinir/erişilemezse
+# ya da kullanıcı ağsızsa sihirbaz tamamen ölüyordu — oysa yanı başında
+# aynı biçimde (platforms.<os>.<mimari>) bir dosya duruyor.
+GEREKSINIM_DOSYASI = "gereksinimler.json"
 
 # Oynatma (mpv), birleştirme (ffmpeg), hızlandırma (aria2c) ve çözümleme
 # (yt-dlp) — biri eksikken uygulamanın bir parçası sessizce çalışmıyor.
@@ -133,13 +141,67 @@ def eksik_araclar(araclar: Optional[Sequence[str]] = None) -> List[str]:
 
 
 # ── Paket listesi ───────────────────────────────────────────────────────────
+def _liste_suz(veri: Any) -> List[Dict[str, Any]]:
+    """Ham JSON'dan yalnızca sözlük kayıtlarını al (biçim bozuksa boş liste)."""
+    return [k for k in veri if isinstance(k, dict)] if isinstance(veri, list) else []
+
+
+def gomulu_gereksinim_yolu() -> Optional[str]:
+    """Uygulamayla gelen `gereksinimler.json`'ın yolu; yoksa ``None``.
+
+    Sıra `gomulu_arac_yolu` ile aynı mantıkta: PyInstaller tek-dosya modunda
+    `sys._MEIPASS`, sonra paketin içi (wheel'e gömüldüğü durum), en son depo
+    kökü (geliştirme).
+    """
+    adaylar = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        adaylar.append(os.path.join(meipass, GEREKSINIM_DOSYASI))
+    paket = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    adaylar.append(os.path.join(paket, GEREKSINIM_DOSYASI))
+    adaylar.append(os.path.join(os.path.dirname(paket), GEREKSINIM_DOSYASI))
+    for yol in adaylar:
+        if os.path.isfile(yol):
+            return yol
+    return None
+
+
+def gomulu_gereksinim_listesi() -> List[Dict[str, Any]]:
+    """Gömülü kopyadan liste; dosya yoksa/bozuksa boş liste."""
+    yol = gomulu_gereksinim_yolu()
+    if not yol:
+        return []
+    try:
+        with open(yol, "r", encoding="utf-8") as fp:
+            return _liste_suz(json.load(fp))
+    except (OSError, ValueError):
+        return []
+
+
 def gereksinim_listesi_getir(url: str = GEREKSINIM_URL,
                              timeout: int = ZAMAN_ASIMI) -> List[Dict[str, Any]]:
-    """`gereksinimler.json`'ı indir."""
-    yanit = requests.get(url, timeout=timeout)
-    yanit.raise_for_status()
-    veri = yanit.json()
-    return [k for k in veri if isinstance(k, dict)] if isinstance(veri, list) else []
+    """`gereksinimler.json`'ı indir; indirilemezse gömülü kopyaya düş.
+
+    Tek kaynak upstream (KebabLord) raw URL'siydi: o depo silinse, yeniden
+    adlandırılsa ya da kullanıcı ağsız olsa sihirbaz "liste alınamadı" deyip
+    hiçbir aracı kuramıyordu. Gömülü kopya bayat olabilir, ama bayat liste
+    hiç liste olmamasından iyidir.
+
+    Gömülü kopya da yoksa özgün hata YÜKSELTİLİR: çağıran (`gui/qt/requirements`)
+    hata metnini kullanıcıya gösteriyor, sessizce boş liste dönmek onu
+    "böyle bir araç yok"a çevirirdi.
+    """
+    try:
+        yanit = requests.get(url, timeout=timeout)
+        yanit.raise_for_status()
+        liste = _liste_suz(yanit.json())
+    except Exception:
+        yedek = gomulu_gereksinim_listesi()
+        if not yedek:
+            raise
+        return yedek
+    # 200 döndü ama gövde boş/biçimsiz: bu da kullanılabilir liste değil.
+    return liste or gomulu_gereksinim_listesi()
 
 
 def paket_kaydi(liste: Sequence[Dict[str, Any]], ad: str) -> Optional[Dict[str, Any]]:
@@ -247,6 +309,8 @@ def indir_ve_kur(ad: str, url: str, hedef_dizin: str,
     return hedef
 
 
-__all__ = ["ARACLAR", "GEREKSINIM_URL", "arac_var_mi", "eksik_araclar",
-           "gomulu_arac_yolu", "gereksinim_listesi_getir", "paket_kaydi",
-           "paket_url", "indir_ve_kur", "arama_yollari", "path_hazirla"]
+__all__ = ["ARACLAR", "GEREKSINIM_URL", "GEREKSINIM_DOSYASI", "arac_var_mi",
+           "eksik_araclar", "gomulu_arac_yolu", "gomulu_gereksinim_yolu",
+           "gomulu_gereksinim_listesi", "gereksinim_listesi_getir",
+           "paket_kaydi", "paket_url", "indir_ve_kur", "arama_yollari",
+           "path_hazirla"]

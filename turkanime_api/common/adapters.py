@@ -86,21 +86,6 @@ class AniListAdapter:
             })
         return out
 
-    def get_anime_details(self, anime_id: str) -> Optional[Dict[str, Any]]:
-        """Get anime details by ID.
-
-        Args:
-            anime_id: Anime ID as string
-
-        Returns:
-            Anime details dictionary or None if not found
-        """
-        try:
-            anime_id_int = int(anime_id)
-            return self.client.get_anime_by_id(anime_id_int)
-        except (ValueError, Exception):
-            return None
-
 
 class TurkAnimeAdapter:
     """Adapter for TurkAnime local database search."""
@@ -292,6 +277,15 @@ class SearchEngine:
     def search_all_sources(self, query: str, limit_per_source: int = 10) -> Dict[str, List[Tuple[str, str]]]:
         """Search anime across all sources in parallel.
 
+        DURUM: Üretimde çağrılmıyor — GUI'nin arama uç noktası da dahil olmak
+        üzere tüm gerçek çağrılar `search_all_sources_rich`'e gidiyor (o, kapak
+        görselini taşıyabildiği için tercih edildi). Silinmemesinin tek sebebi
+        `test_arama_zaman_asimi.py`: oradaki dört test (zaman aşımında toplanan
+        sonuçların korunması, yavaş kaynak yokken erken dönüş, patlayan kaynağın
+        diğerlerini düşürmemesi) paralel toplama sözleşmesini `_rich`'ten
+        bağımsız olarak bu metot üzerinden sınıyor. Yeni çağrı eklemeden önce
+        `_rich` varyantının işi görüp görmediğine bak.
+
         Args:
             query: Search query
             limit_per_source: Maximum results per source
@@ -310,10 +304,6 @@ class SearchEngine:
                 return source_name, []
 
         return self._paralel_ara(_search_single)
-
-    def get_adapter(self, source_name: str):
-        """Get adapter by source name."""
-        return self.adapters.get(source_name)
 
     def search_all_sources_rich(
         self, query: str, limit_per_source: int = 10

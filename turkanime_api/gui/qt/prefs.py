@@ -28,7 +28,7 @@ ARIA2C_DISI_PLAYER = "ALUCARD(BETA)"
 
 @dataclass(frozen=True)
 class Tercihler:
-    """`ayarlar.json`'ın oynatma/indirmeyi ilgilendiren kesiti."""
+    """`ayarlar.json`'ın oynatma/indirme ve kaynak kimliklerini ilgilendiren kesiti."""
 
     indirilenler: str = ""
     paralel: int = VARSAYILAN_PARALEL
@@ -38,8 +38,14 @@ class Tercihler:
     dakika_hatirla: bool = True
     izlerken_kaydet: bool = False
     izlendi_ikonu: bool = True
+    manuel_fansub: bool = False
     discord: bool = True
     gereksinim_atlandi: bool = False
+    # Kaynak kimlikleri: diskte duruyor ama süreç içine ancak
+    # `kaynak_kimliklerini_uygula` ile giriyor.
+    tranime_cookie: str = ""
+    openani_token: str = ""
+    openani_refresh: str = ""
 
 
 def _dosya():
@@ -61,6 +67,19 @@ def _pozitif(deger: Any, varsayilan: int) -> int:
     return sayi if sayi > 0 else varsayilan
 
 
+def _aday_sayisi(ayarlar: Dict[str, Any]) -> int:
+    """1080p aday sayısı — ASCII ad, eski Türkçe ad yedek.
+
+    Kanonik ad `dosyalar.ESKI_AYAR_ADLARI` göçüyle "1080p aday sayisi" oldu.
+    Yedek okuma yine de duruyor: `Dosyalar` örneklenmeden elde edilmiş bir
+    ayar sözlüğü (ya da göç yazamadan düşen bir çalıştırma) eski adı hâlâ
+    taşıyabilir ve kullanıcının seçtiği sayı sessizce varsayılana dönmemeli.
+    """
+    if "1080p aday sayisi" in ayarlar:
+        return _pozitif(ayarlar.get("1080p aday sayisi"), VARSAYILAN_ADAY)
+    return _pozitif(ayarlar.get("1080p aday sayısı"), VARSAYILAN_ADAY)
+
+
 def oku() -> Tercihler:
     """Ayarları tek seferde oku; dosya yoksa/bozuksa varsayılanlara düş."""
     try:
@@ -71,14 +90,50 @@ def oku() -> Tercihler:
         indirilenler=str(ayarlar.get("indirilenler") or ""),
         paralel=_pozitif(ayarlar.get("paralel indirme sayisi"), VARSAYILAN_PARALEL),
         max_res=bool(ayarlar.get("max resolution", True)),
-        aday_sayisi=_pozitif(ayarlar.get("1080p aday sayısı"), VARSAYILAN_ADAY),
+        aday_sayisi=_aday_sayisi(ayarlar),
         aria2c=bool(ayarlar.get("aria2c kullan", False)),
         dakika_hatirla=bool(ayarlar.get("dakika hatirla", True)),
         izlerken_kaydet=bool(ayarlar.get("izlerken kaydet", False)),
         izlendi_ikonu=bool(ayarlar.get("izlendi ikonu", True)),
+        manuel_fansub=bool(ayarlar.get("manuel fansub", False)),
         discord=bool(ayarlar.get("discord_rich_presence", True)),
         gereksinim_atlandi=bool(ayarlar.get("gereksinim_atlandi", False)),
+        tranime_cookie=str(ayarlar.get("tranime_cookie") or ""),
+        openani_token=str(ayarlar.get("openani_token") or ""),
+        openani_refresh=str(ayarlar.get("openani_refresh_token") or ""),
     )
+
+
+# ── Kaynak kimlikleri (çerez / jeton) ───────────────────────────────────────
+def kaynak_kimliklerini_uygula(tercih: Optional[Tercihler] = None) -> bool:
+    """Diskteki çerez ve jetonları kaynak modüllerinin süreç-içi global'lerine bas.
+
+    `sources.tranime.SESSION_COOKIE` her süreçte None başlıyor ve
+    `search_tranime` çerez yoksa hiç istek yapmadan boş liste dönüyor. Ayar
+    sayfası çerezi diske yazıyordu ama açılışta kimse geri yüklemiyordu:
+    kullanıcı çerezi bir kez alıyor, uygulamayı kapatıp açınca kaynak yine
+    "0 bölüm" diyordu. OpenAnime jetonlarında durum daha kötüydü — kaynak ölü
+    CDN uçlarında kullanıcıya "Ayarlar'dan token'ını girin" diyordu ama ne alan
+    ne de aktarım vardı.
+
+    Boş değer de bilerek gönderiliyor: "Temizle" dendiğinde süreç içindeki eski
+    çerezin de düşmesi gerekir, yoksa yalnızca disk temizlenirdi.
+
+    Hata yutulur ve `False` döner: kimlik yükleyememek açılışı engellememeli.
+    """
+    tercih = tercih or oku()
+    tamam = True
+    try:
+        from ...sources.tranime import set_session_cookie
+        set_session_cookie(tercih.tranime_cookie)
+    except Exception:
+        tamam = False
+    try:
+        from ...sources.openani import set_openani_tokens
+        set_openani_tokens(tercih.openani_token, tercih.openani_refresh)
+    except Exception:
+        tamam = False
+    return tamam
 
 
 def ayar_yaz(**degerler: Any) -> bool:
@@ -322,6 +377,7 @@ class Gecmis:
 
 
 __all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
+           "kaynak_kimliklerini_uygula",
            "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

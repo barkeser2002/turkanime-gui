@@ -1,4 +1,5 @@
-"""Kaynaklar (TürkAnime, AnimeciX, Anizle, Animely, TRAnimeİzle) için facade.
+"""Kaynaklar (AnimeciX, Anizle, TRAnimeİzle, OpenAnime, Tranimaci, AnimeDepo)
+için facade.
 
 Ek sağlayıcılar bu modülden dışa aktarılır ve `register_provider`
 yardımıyla sisteme kaydedilebilir.

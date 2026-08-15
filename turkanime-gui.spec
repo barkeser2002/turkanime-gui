@@ -13,6 +13,7 @@ artefaktı hep `turkanime-gui`; paketlenen klasör de aynı adı taşısın ki
 `version.json`'daki indirme bağlantısıyla birebir eşleşsin.
 """
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -99,7 +100,49 @@ hiddenimports = (
     ]
 )
 
-bin_data = [('bin', 'bin')] if os.path.isdir('bin') else []
+def _yer_tutucu_mu(yol):
+    """İlk satırı "#" ile başlayan metin dosyası mı?
+
+    Depoda `bin/*.exe` yerine 57-60 baytlık yer tutucu metinler duruyor
+    (git-lfs'siz kopyalar). Kanonik kontrol
+    `turkanime_api/common/requirements._placeholder_mi` — burada kopyalanıyor
+    ki spec ayrıştırılırken projeyi import etmek gerekmesin. `utf-8-sig` şart:
+    yer tutucular BOM ile yazılmış.
+    """
+    try:
+        with open(yol, "r", encoding="utf-8-sig", errors="ignore") as fp:
+            return fp.readline().strip().startswith("#")
+    except OSError:
+        return False
+
+
+def _bin_verileri(hedef=None):
+    """Pakete girecek `bin/` dosyaları — klasörün tamamı DEĞİL.
+
+    Eskiden `[('bin', 'bin')]` idi: gerçek ikilileri indiren CI adımı
+    `if: matrix.os == 'windows-latest'` ile korumalıyken PyInstaller klasörü
+    üç platformda da kopyalıyordu. Sonuç, Linux/macOS zip'lerinin içinde
+    Windows'a ait, üstelik yer tutucu olan `.exe` dosyaları taşımak.
+    Çalışma anını bozmuyordu (`common/requirements._placeholder_mi` onları
+    "kurulu" saymıyor) ama pakete hiç girmemeleri gerekiyor.
+    """
+    if not os.path.isdir('bin'):
+        return []
+    windows = (hedef or sys.platform).startswith('win')
+    girdiler = []
+    for ad in sorted(os.listdir('bin')):
+        yol = os.path.join('bin', ad)
+        if not os.path.isfile(yol):
+            continue
+        if not windows and ad.lower().endswith('.exe'):
+            continue
+        if _yer_tutucu_mu(yol):
+            continue
+        girdiler.append((yol, 'bin'))
+    return girdiler
+
+
+bin_data = _bin_verileri()
 
 a = Analysis(
     ['turkanime_api/gui/qt/__main__.py'],
