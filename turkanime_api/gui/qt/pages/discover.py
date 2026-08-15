@@ -1,21 +1,28 @@
 """Keşif sayfaları — Ana Sayfa / Trend / Bu Sezon.
 
-Tek bileşen (`DiscoverPage`) üç nav öğesini de karşılar; aralarındaki tek fark
-veri kaynağı, başlık ve kart sayısıdır. Eski GUI'deki `load_trending_anime` +
+Tek bileşen (`DiscoverPage`) üç nav öğesini de karşılar; aralarındaki fark veri
+kaynağı, başlık ve kart sayısıdır. Eski GUI'deki `load_trending_anime` +
 `show_season` akışlarının Qt karşılığı.
 
 Eski ana sayfadaki hero istatistikleri ("10.000+ Anime" gibi sabit sayılar) ve
 tıklanamayan kategori kartları **taşınmadı**: hiçbiri gerçek veriye bağlı
 değildi.
 
-Veri MyAnimeList'ten (Jikan) gelir; Jikan boş/hatalı dönerse AniList
-trending'e düşülür. İki istemci de aynı sözlük şeklini üretir
+Üç kipin üçü de ayrı bir soru sorar:
+
+* ``home``   — sezon + trend harmanı: ana sayfanın kendine ait vitrini.
+* ``trending`` — yalnızca trend listesi (Jikan, düşerse AniList).
+* ``season`` — yalnızca Jikan `/seasons/now`. **Yedeği yoktur**; bkz.
+  `fetch_discover`.
+
+Veri MyAnimeList'ten (Jikan) gelir. İki istemci de aynı sözlük şeklini üretir
 (`title.romaji`, `coverImage.large`, `averageScore` 0-100), bu yüzden kart
 üretimi tek koddur.
 """
 from __future__ import annotations
 
 from datetime import datetime
+from itertools import zip_longest
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -38,10 +45,20 @@ LIST_LIMIT = 24
 _SEASON_NAMES = {1: "Kış", 2: "İlkbahar", 3: "Yaz", 4: "Sonbahar"}
 
 _HEADINGS = {
-    "home": ("Ana Sayfa", "Şu anda trend olan animeler"),
-    "trending": ("Trend", "MyAnimeList'te yayında ve en çok izlenenler"),
+    "home": ("Ana Sayfa", "Bu sezondan ve trendlerden seçmeler"),
+    # Trend listesi AniList'e düşebiliyor; alt başlıkta kaynak adı vermiyoruz ki
+    # yedeğe düşüldüğünde başlık yalan söylemesin.
+    "trending": ("Trend", "Şu anda yayında ve en çok izlenenler"),
     "season": ("Bu Sezon", "MyAnimeList sezon listesi"),
 }
+
+# Boş sonuç mesajı kipe göre değişir: "Bu Sezon" boş kaldığında kullanıcının
+# elinde hâlâ bir sonraki adım olmalı (yenile / Trend sekmesi).
+_BOS_MESAJ = {
+    "season": ("Sezon verisi alınamadı (MyAnimeList yanıt vermedi). "
+               "Yenileyin ya da Trend sekmesine bakın."),
+}
+_BOS_VARSAYILAN = "İçerik alınamadı. Bağlantınızı kontrol edip yenileyin."
 
 
 # ── Veri yardımcıları (Qt'siz; doğrudan test edilebilir) ────────────────────
@@ -77,41 +94,119 @@ def score_of(item: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+# İçe aktarımlar gövdede: bu modül GUI açılışında yükleniyor, ağ istemcilerini
+# o anda import etmeye gerek yok. Üçü de hata/boş durumda [] döndürür ki çağıran
+# taraf "veri var mı" sorusunu tek bir şekilde sorabilsin.
+def _jikan_sezon() -> List[Dict[str, Any]]:
+    """Jikan'ın "şu anki sezon" listesi."""
+    try:
+        from ....jikan_client import get_seasonal_anime_list
+
+        # year/season BİLEREK verilmiyor: parametresiz çağrı Jikan'ın
+        # `/seasons/now` ucuna gider; "şu anki sezon" tanımını yerel saatten
+        # tahmin etmek yerine sunucuya bırakmak daha doğru.
+        return list(get_seasonal_anime_list() or [])
+    except Exception as exc:  # ağ/parse hatası sayfayı düşürmemeli
+        print(f"[Keşif] Jikan sezon hatası: {exc}")
+        return []
+
+
+def _jikan_trend(limit: int) -> List[Dict[str, Any]]:
+    """Jikan trend listesi."""
+    try:
+        from ....jikan_client import get_trending_anime_list
+
+        return list(get_trending_anime_list(limit=limit) or [])
+    except Exception as exc:
+        print(f"[Keşif] Jikan trend hatası: {exc}")
+        return []
+
+
+def _anilist_trend(limit: int) -> List[Dict[str, Any]]:
+    """AniList trend listesi — trend kipinin yedeği."""
+    try:
+        from ....anilist_client import anilist_client
+
+        return list(anilist_client.get_trending_anime(page=1, per_page=limit) or [])
+    except Exception as exc:
+        print(f"[Keşif] AniList hatası: {exc}")
+        return []
+
+
+def _kimlik(item: Dict[str, Any]) -> str:
+    """Harmanda yinelenen kaydı ayıklamak için anahtar.
+
+    Aynı anime hem sezon hem trend listesinde çıkabiliyor; `id` iki istemcide de
+    var ama yoksa ada düşüyoruz (kartta zaten ad görünüyor, iki özdeş kart
+    kullanıcıya hata gibi görünür).
+    """
+    ident = item.get("id")
+    return f"id:{ident}" if ident is not None else f"ad:{anime_title(item).casefold()}"
+
+
+def _vitrin(sezon: List[Dict[str, Any]], trend: List[Dict[str, Any]],
+            limit: int) -> List[Dict[str, Any]]:
+    """Sezon ve trend listelerini dönüşümlü ör (sezon başta).
+
+    Uç uca eklemek (önce tüm sezon, sonra tüm trend) ana sayfayı ilk ekranda
+    yine tek kaynaklı bir listeye çevirirdi; dönüşümlü örgü her iki kaynağın da
+    kaydırma çizgisinin üstünde görünmesini garanti eder.
+    """
+    harman: List[Dict[str, Any]] = []
+    gorulen = set()
+    for cift in zip_longest(sezon, trend):
+        for item in cift:
+            if not isinstance(item, dict):
+                continue
+            anahtar = _kimlik(item)
+            if anahtar in gorulen:
+                continue
+            gorulen.add(anahtar)
+            harman.append(item)
+            if len(harman) >= limit:
+                return harman
+    return harman
+
+
 def fetch_discover(mode: str, limit: int = LIST_LIMIT) -> List[Dict[str, Any]]:
     """Seçilen kip için anime listesini getir (arka plan thread'inde çağrılır).
 
-    Jikan tercih edilir; 5xx/timeout gibi geçici hatalarda istemci kendi içinde
-    yeniden dener ve önbelleğe düşer. Yine de boş dönerse AniList trending
-    devreye girer — eski GUI'deki davranış buydu ve keşif sayfasının tamamen
-    boş kalmasını engelliyor.
+    Kipe göre üç ayrı davranış:
+
+    ``season``
+        YEDEĞİ YOK. AniList istemcisinde sezon ucu bulunmuyor (yalnızca
+        `get_trending_anime` / `search_anime` var), dolayısıyla düşülecek yedek
+        "bu sezon" değil "trend" listesi olurdu. Eskiden tam da bu yapılıyordu:
+        başlık "… sezonu • MyAnimeList", durum "{n} anime" derken ekranda
+        AniList trendi duruyordu — kullanıcı sezon listesi sandığı şeye bakıyor,
+        yanlış animeyi "bu sezon çıkmış" sanıyordu. İki seçenekten (uyarı
+        göstererek ikame / boş durum) **boş durum** seçildi: uyarı seçeneği
+        başlığı, alt başlığı, durum etiketini ve ipuçlarını sonsuza dek senkron
+        tutmayı gerektirir ve bunlardan biri unutulduğunda yalan geri gelir;
+        üstelik kullanıcının bir tık ötesinde zaten bir "Trend" sekmesi var.
+        Boş durum yanlış bilgi veremez.
+
+    ``home``
+        Sezon + trend harmanı (bkz. `_vitrin`). Trend sekmesiyle aynı veriyi
+        gösteren ikinci bir gezinti yüzeyi olmasın diye ana sayfanın kendi
+        derlemesi var. İki kaynak da boşsa AniList trendine düşülür — vitrin
+        "şu an ilginç olan" vaat ediyor, hangi listeden geldiği bir iddia değil.
+
+    ``trending``
+        Jikan trendi; boş/hatalıysa AniList trendi. İkisi de aynı soruyu
+        yanıtladığı için bu ikame kullanıcıyı yanıltmaz.
     """
-    items: List[Dict[str, Any]] = []
-    try:
-        # İçe aktarımlar gövdede: bu modül GUI açılışında yükleniyor, ağ
-        # istemcilerini o anda import etmeye gerek yok.
-        from ....jikan_client import get_seasonal_anime_list, get_trending_anime_list
+    if mode == "season":
+        return _jikan_sezon()[:limit]
 
-        if mode == "season":
-            # year/season BİLEREK verilmiyor: parametresiz çağrı Jikan'ın
-            # `/seasons/now` ucuna gider; "şu anki sezon" tanımını yerel saatten
-            # tahmin etmek yerine sunucuya bırakmak daha doğru.
-            items = get_seasonal_anime_list() or []
-        else:
-            items = get_trending_anime_list(limit=limit) or []
-    except Exception as exc:  # ağ/parse hatası sayfayı düşürmemeli
-        print(f"[Keşif] Jikan hatası: {exc}")
-        items = []
+    if mode == "home":
+        sezon = _jikan_sezon()
+        trend = _jikan_trend(limit)
+        if not sezon and not trend:
+            return _anilist_trend(limit)[:limit]
+        return _vitrin(sezon, trend, limit)
 
-    if not items:
-        try:
-            from ....anilist_client import anilist_client
-
-            items = anilist_client.get_trending_anime(page=1, per_page=limit) or []
-        except Exception as exc:
-            print(f"[Keşif] AniList hatası: {exc}")
-            items = []
-
-    return list(items)[:limit]
+    return (_jikan_trend(limit) or _anilist_trend(limit))[:limit]
 
 
 class DiscoverPage(QWidget):
@@ -208,12 +303,16 @@ class DiscoverPage(QWidget):
         self.signals.emit_found(fetch_discover(self.mode, self.limit))
 
     # ── Sonuç işleme (GUI thread'i) ─────────────────────────────────────────
+    def _bos_mesaj(self) -> str:
+        """Liste boş kaldığında gösterilecek metin (kipe özgü)."""
+        return _BOS_MESAJ.get(self.mode, _BOS_VARSAYILAN)
+
     def _on_items(self, items: List[Dict[str, Any]]) -> None:
         self._busy = False
         self.btnRefresh.setEnabled(True)
 
         if not isinstance(items, list) or not items:
-            self.lblStatus.error("İçerik alınamadı. Bağlantınızı kontrol edip yenileyin.")
+            self.lblStatus.error(self._bos_mesaj())
             return
 
         cards: List[AnimeCard] = []
@@ -227,7 +326,7 @@ class DiscoverPage(QWidget):
                 pending_thumbs.append((card, card.image_url))
 
         if not cards:
-            self.lblStatus.error("İçerik alınamadı. Bağlantınızı kontrol edip yenileyin.")
+            self.lblStatus.error(self._bos_mesaj())
             return
 
         self._cards = cards

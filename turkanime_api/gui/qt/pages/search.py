@@ -7,7 +7,7 @@ gerektirmez.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
@@ -31,6 +31,7 @@ class SearchPage(QWidget):
         super().__init__(parent)
         self._busy = False
         self._query = ""
+        self._cards: List[AnimeCard] = []
 
         self.signals = WorkerSignals()
         self.signals.connect_found(self._on_results)
@@ -72,6 +73,7 @@ class SearchPage(QWidget):
         self._busy = True
         self._query = query
         self.lblTitle.setText(f"Arama — “{query}”")
+        self._cards = []
         self.results.clear()
         self.lblStatus.info("Kaynaklarda aranıyor…")
 
@@ -87,6 +89,10 @@ class SearchPage(QWidget):
         results = engine.search_all_sources_rich(query, limit_per_source=LIMIT_PER_SOURCE)
         # Sinyal kuyruklu bağlandığı için slot GUI thread'inde çalışır.
         self.signals.emit_found(results)
+
+    def cards(self) -> List[AnimeCard]:
+        """Ekrandaki kartlar (test ve köprüleme için) — `DiscoverPage` ile aynı."""
+        return list(self._cards)
 
     def _fetch_thumb(self, card, url: str) -> None:
         """Arka plan: görseli indir, baytları UI thread'ine taşı.
@@ -110,35 +116,63 @@ class SearchPage(QWidget):
             pass          # kart bu arada silinmiş (yeni arama)
 
     # ── Sonuç işleme (GUI thread'i) ─────────────────────────────────────────
-    def _on_results(self, results: Dict[str, List[Tuple[str, str]]]) -> None:
+    def _on_results(self, results: Dict[str, List[Dict[str, Any]]]) -> None:
+        """Kaynak → kayıt listesi eşlemesini karta çevir.
+
+        Sözleşme `SearchEngine.search_all_sources_rich`'in döndürdüğüdür: kayıt
+        bir SÖZLÜK (slug/title/image), `(slug, title)` çifti DEĞİL. İmza uzun
+        süre eski `search_all_sources` sözleşmesini (`Tuple[str, str]`) iddia
+        ediyordu; gövde en baştan sözlük okuduğu için çalışıyordu ama okuyan
+        kişiyi gövdeyi "düzeltmeye" davet ediyordu.
+        """
         self._busy = False
         if not isinstance(results, dict):
             self.lblStatus.error("Beklenmeyen arama sonucu.")
             return
 
-        cards: List[QWidget] = []
+        cards: List[AnimeCard] = []
         per_source: List[str] = []
         pending_thumbs = []
         for source, items in sorted(results.items()):
             if not items:
                 continue
-            per_source.append(f"{source}: {len(items)}")
+            eklenen = 0
             for item in items:
+                # Tek bozuk kayıt (eski demet biçimi, None…) tüm sonuç ekranını
+                # götürmemeli: slot içindeki istisna Qt sinyal yolunda yutulur,
+                # geriye yalnızca "aranıyor…"da donmuş bir sayfa kalırdı.
+                if not isinstance(item, dict):
+                    continue
                 slug = item.get("slug") or ""
+                # Slug'sız kayıt tıklanabilir ama işe yaramaz: bölüm sayfası boş
+                # slug'la sorgulanır ve kullanıcı sessiz bir hiçlikle karşılaşır.
+                # Kaydı hiç göstermemek, ölü kart göstermekten dürüst.
+                if not slug:
+                    continue
                 title = item.get("title") or slug
                 image = item.get("image")
                 card = AnimeCard(title, source, payload=(source, slug, title),
                                  image_url=image)
                 card.clicked.connect(self._on_card_clicked)
                 cards.append(card)
+                eklenen += 1
                 if image:
                     pending_thumbs.append((card, image))
+            # Sayaç atılan kayıtları değil GÖSTERİLENLERİ saymalı; aksi hâlde
+            # kaynak dökümünün toplamı üstteki toplamı tutmuyordu.
+            if eklenen:
+                per_source.append(f"{source}: {eklenen}")
 
         if not cards:
+            # Önceki aramanın kartları ekranda kalmamalı: "sonuç bulunamadı"
+            # yazarken altta eski sonuçları göstermek doğrudan yalan olurdu.
+            self._cards = []
+            self.results.clear()
             self.lblStatus.error(f"“{self._query}” için sonuç bulunamadı.")
             return
 
-        self.results.set_items(cards)
+        self._cards = cards
+        self.results.set_items(list(cards))
         self.lblStatus.ok(f"{len(cards)} sonuç — " + ", ".join(per_source))
 
         # Görseller kartlar yerleştikten SONRA, arka planda indirilir.
