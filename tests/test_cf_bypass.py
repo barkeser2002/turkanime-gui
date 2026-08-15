@@ -87,6 +87,89 @@ def sahte_curl(monkeypatch):
     return _kur
 
 
+# ── timeout kwarg'ı: requests uyumluluğu ────────────────────────────────────
+@pytest.fixture
+def kwarg_yakalayici(monkeypatch):
+    """Her basamağın taşımasını sahtele; İLETİLEN kwarg'ları kaydet.
+
+    Basamak metodunu değil taşımayı sahtelemek şart: hata basamakların
+    içindeydi (`timeout=self.timeout, **kwargs` → çağıran `timeout=` verince
+    "got multiple values for keyword argument").
+    """
+    gorulen: dict = {}
+
+    def _kur(cevap: requests.Response):
+        class SahteSession:
+            def __init__(self, *_a, **_kw):
+                self.cookies: dict = {}
+
+            def get(self, url, **kw):
+                gorulen.setdefault("curl", kw)
+                return cevap
+
+            post = get
+
+        monkeypatch.setattr(cf, "HAS_CURL_CFFI", True)
+        monkeypatch.setattr(cf, "curl_requests",
+                            type("M", (), {"Session": SahteSession}))
+
+        def sahte_requests_get(url, **kw):
+            gorulen.setdefault("requests", kw)
+            return cevap
+
+        monkeypatch.setattr(cf.requests, "get", sahte_requests_get)
+        monkeypatch.setattr(cf.requests, "post", sahte_requests_get)
+        return gorulen
+
+    return _kur
+
+
+def test_cagiranin_timeout_u_zinciri_cokertmiyor(kwarg_yakalayici):
+    """ESKİ HATA: `get(url, timeout=5)` her basamakta TypeError'a düşüyordu.
+
+    Sonuç ağ hatası gibi görünüyordu: 11 curl_cffi profili + cloudscraper +
+    FlareSolverr sırayla "hata" verip düz requests'e düşülüyordu — tek bir
+    kwarg yüzünden tüm CF bypass kaybediliyordu.
+    """
+    gorulen = kwarg_yakalayici(yanit(200))
+    s = oturum(timeout=30)
+    resp = s.get("https://ornek.test/", timeout=5)
+
+    assert resp.status_code == 200, "çağıranın timeout'u zinciri kırdı"
+    assert gorulen["curl"]["timeout"] == 5, "çağıranın değeri kazanmalı"
+
+
+def test_timeout_verilmezse_oturum_varsayilani(kwarg_yakalayici):
+    gorulen = kwarg_yakalayici(yanit(200))
+    oturum(timeout=17).get("https://ornek.test/")
+    assert gorulen["curl"]["timeout"] == 17
+
+
+def test_post_da_timeout_u_kabul_ediyor(kwarg_yakalayici):
+    gorulen = kwarg_yakalayici(yanit(200))
+    resp = oturum(timeout=30).post("https://ornek.test/", timeout=9, data={"a": 1})
+    assert resp.status_code == 200
+    assert gorulen["curl"]["timeout"] == 9
+
+
+def test_requests_yedegi_de_timeout_u_kabul_ediyor(monkeypatch):
+    """Son çare basamağı aynı hatayı taşıyordu; o da düzelmeli."""
+    gorulen: dict = {}
+
+    def sahte_get(url, **kw):
+        gorulen.update(kw)
+        return yanit(200)
+
+    monkeypatch.setattr(cf, "HAS_CURL_CFFI", False)
+    monkeypatch.setattr(cf, "HAS_CLOUDSCRAPER", False)
+    monkeypatch.setattr(cf, "HAS_QTWEBENGINE", False)
+    monkeypatch.setattr(cf.requests, "get", sahte_get)
+
+    resp = oturum().get("https://ornek.test/", timeout=3)
+    assert resp.status_code == 200
+    assert gorulen["timeout"] == 3
+
+
 def test_404_tek_istekte_donuyor(sahte_curl, monkeypatch):
     """Var olmayan bölüm: tüm zincir + 3 retry dönüp istisna fırlıyordu."""
     istekler = sahte_curl(yanit(404, "Sayfa bulunamadi"))

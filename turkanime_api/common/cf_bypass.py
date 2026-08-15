@@ -60,6 +60,13 @@ except Exception:
     )
 
 
+# Challenge izlerinin tek kaynağı `cf_qt_solver`; buradan public olarak yeniden
+# yayınlanıyor ki tüketiciler (anizle, sunucu tarayıcısı) kendi kopyalarını
+# tutmak zorunda kalmasın. İki liste ayrıştığında ortaya çıkan hata sinsi:
+# "Just a moment" bir tarafta engel, diğerinde geçici hata sayılıyor.
+CHALLENGE_MARKERS = _CHALLENGE_MARKERS
+
+
 # User-Agent listesi (rotasyon için)
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -330,6 +337,7 @@ class CFSession:
         """curl_cffi ile istek at."""
         if not HAS_CURL_CFFI:
             return None
+        kwargs.setdefault("timeout", self.timeout)
         
         # Desteklenen impersonate değerleri (öncelik sırasına göre)
         impersonate_options = [
@@ -354,9 +362,9 @@ class CFSession:
                 )
                 
                 if method.upper() == "GET":
-                    resp = session.get(url, headers=headers, timeout=self.timeout, **kwargs)
+                    resp = session.get(url, headers=headers, **kwargs)
                 else:
-                    resp = session.post(url, headers=headers, timeout=self.timeout, **kwargs)
+                    resp = session.post(url, headers=headers, **kwargs)
                 
                 if resp.status_code in ENGEL_DURUMLARI:
                     # CF engeli/limit — parmak izini değiştirip tekrar dene
@@ -387,6 +395,7 @@ class CFSession:
         """cloudscraper ile istek at."""
         if not HAS_CLOUDSCRAPER:
             return None
+        kwargs.setdefault("timeout", self.timeout)
         
         try:
             session = self._get_cloud_session()
@@ -485,15 +494,21 @@ class CFSession:
 
     def _try_requests_fallback(self, url: str, headers: Dict[str, str], method: str = "GET", **kwargs) -> Optional[requests.Response]:
         """Normal requests ile istek at (fallback)."""
+        # `timeout` sabit değil varsayılan: eskiden `timeout=self.timeout,
+        # **kwargs` yazılıyordu, yani `session.get(url, timeout=20)` diyen her
+        # çağrı "got multiple values for keyword argument" ile patlıyordu — hem
+        # de zincirin HER kademesinde, ağ hatası gibi görünerek. Sonuç: tek bir
+        # kwarg yüzünden tüm CF bypass'ı kaybedip düz requests'e düşmek.
+        kwargs.setdefault("timeout", self.timeout)
         try:
             headers["User-Agent"] = random.choice(USER_AGENTS)
             if self._cookies:
                 kwargs.setdefault("cookies", {}).update(self._cookies)
             
             if method.upper() == "GET":
-                resp = requests.get(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = requests.get(url, headers=headers, **kwargs)
             else:
-                resp = requests.post(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = requests.post(url, headers=headers, **kwargs)
             
             # Son çare: durum ne olursa olsun cevabı geri ver. Buraya kadar
             # gelindiyse zincirin verecek başka bir şeyi kalmadı.
@@ -690,6 +705,7 @@ __all__ = [
     "CFSession",
     "CFBypassError",
     "ENGEL_DURUMLARI",
+    "CHALLENGE_MARKERS",
     "flaresolverr_ayari",
     "get_cf_session",
     "reset_cf_session",

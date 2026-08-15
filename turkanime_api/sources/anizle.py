@@ -24,10 +24,15 @@ from urllib.parse import urlparse
 
 # CF Bypass modülünü içe aktar
 try:
-    from turkanime_api.common.cf_bypass import CFSession, CFBypassError, get_cf_session
+    from turkanime_api.common.cf_bypass import (
+        CFSession, CFBypassError, get_cf_session,
+        ENGEL_DURUMLARI, CHALLENGE_MARKERS,
+    )
     HAS_CF_BYPASS = True
 except ImportError:
     HAS_CF_BYPASS = False
+    ENGEL_DURUMLARI = frozenset({403, 429, 503})
+    CHALLENGE_MARKERS = ("Just a moment", "Checking your browser", "challenge-platform")
 
 import requests
 
@@ -57,6 +62,28 @@ _database_loaded: bool = False
 _cf_session: Optional[Any] = None
 
 
+def _engellenmis(yanit: Any) -> bool:
+    """Yanıt WAF/Cloudflare tarafından kesilmiş mi?
+
+    curl_cffi bir challenge sayfasını hata saymaz; HTTP 403/503 ile birlikte
+    "Just a moment" gövdesini sorunsuzca döndürür. Bunu engel saymazsak
+    ayrıştırıcı boş sonuç üretiyor ve arkasındaki bypass zinciri hiç
+    denenmiyor — kullanıcı "kaynak çalışmıyor" görüyor.
+    """
+    if yanit is None:
+        return True
+    if getattr(yanit, "status_code", 200) in ENGEL_DURUMLARI:
+        return True
+    try:
+        govde = yanit.text
+    except Exception:
+        return False
+    if not govde:
+        return False
+    dusuk = govde[:4000].lower()
+    return any(iz.lower() in dusuk for iz in CHALLENGE_MARKERS)
+
+
 def _get_cf_session() -> Any:
     """CF session'ı döndür (singleton)."""
     global _cf_session
@@ -80,23 +107,37 @@ def _http_get(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = N
     if headers:
         default_headers.update(headers)
     
+    # 1) curl_cffi (TLS parmak izi taklidi) — en hızlısı, çoğu zaman yeter.
+    #
+    # DİKKAT: `session.get` eskiden `except ImportError` bloğunun içindeydi.
+    # curl_cffi zorunlu bağımlılık olduğu için o except hiç tetiklenmiyordu;
+    # istek ağ hatasıyla düşse de 403 challenge dönse de aşağıdaki iki kademe
+    # ÖLÜ KODDU. Anizle CF arkasındaki kaynak olduğu için pratikte "kaynak
+    # çalışmıyor" demekti. Artık her kademe gerçekten sırasını alıyor.
     try:
-        # Önce curl_cffi dene
+        from curl_cffi import requests as curl_requests
+        session = curl_requests.Session(impersonate="chrome110")
+        yanit = session.get(url, headers=default_headers, timeout=timeout)
+        if not _engellenmis(yanit):
+            return yanit
+    except ImportError:
+        pass
+    except Exception:
+        pass  # ağ/TLS hatası — sıradaki kademeye düş
+
+    # 2) CF bypass zinciri (cloudscraper → FlareSolverr → QtWebEngine → requests)
+    if HAS_CF_BYPASS:
         try:
-            from curl_cffi import requests as curl_requests
-            session = curl_requests.Session(impersonate="chrome110")
-            return session.get(url, headers=default_headers, timeout=timeout)
-        except ImportError:
-            pass
-        
-        # CF Bypass modülü dene
-        if HAS_CF_BYPASS:
             session = _get_cf_session()
-            return session.get(url, headers=default_headers)
-        
-        # Fallback: normal requests
+            yanit = session.get(url, headers=default_headers)
+            if not _engellenmis(yanit):
+                return yanit
+        except Exception:
+            pass
+
+    # 3) Son çare: düz requests
+    try:
         return requests.get(url, headers=default_headers, timeout=timeout)
-        
     except Exception:
         # Sessiz başarısızlık - paralel işlemde çok fazla hata mesajı olmasın
         return None
@@ -113,23 +154,29 @@ def _http_post(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = 
     if headers:
         default_headers.update(headers)
     
+    # Kademeler `_http_get` ile aynı; gerekçesi için oradaki nota bak.
     try:
-        # Önce curl_cffi dene
+        from curl_cffi import requests as curl_requests
+        session = curl_requests.Session(impersonate="chrome110")
+        yanit = session.post(url, headers=default_headers, timeout=timeout, data=data)
+        if not _engellenmis(yanit):
+            return yanit
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    if HAS_CF_BYPASS:
         try:
-            from curl_cffi import requests as curl_requests
-            session = curl_requests.Session(impersonate="chrome110")
-            return session.post(url, headers=default_headers, timeout=timeout, data=data)
-        except ImportError:
-            pass
-        
-        # CF Bypass modülü dene
-        if HAS_CF_BYPASS:
             session = _get_cf_session()
-            return session.post(url, headers=default_headers, data=data)
-        
-        # Fallback: normal requests
+            yanit = session.post(url, headers=default_headers, data=data)
+            if not _engellenmis(yanit):
+                return yanit
+        except Exception:
+            pass
+
+    try:
         return requests.post(url, headers=default_headers, timeout=timeout, data=data)
-        
     except Exception as e:
         print(f"[Anizle] HTTP POST hatası ({url}): {e}")
         return None
