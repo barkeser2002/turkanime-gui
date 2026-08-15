@@ -102,7 +102,11 @@ class ElidedLabel(QLabel):
         # Stil sayfasından gelen arka planı da çiz (özel paintEvent onu atlar).
         self.style().drawPrimitive(
             QStyle.PrimitiveElement.PE_Widget, opt, painter, self)
-        painter.setPen(opt.palette.color(self.foregroundRole()))
+        # `opt.palette` PySide6'da bir metot gibi de görünebiliyor; pylint onu
+        # `palette` sınıfı sanıp `.color` yok diyor (Linux CI'da E1101).
+        # Widget'ın kendi paletini okumak hem doğru hem taşınabilir — stil
+        # sayfasından gelen renk zaten buraya yansıyor.
+        painter.setPen(self.palette().color(self.foregroundRole()))
         fm = self.fontMetrics()
         y = fm.ascent()
         for line in self.visible_lines():
