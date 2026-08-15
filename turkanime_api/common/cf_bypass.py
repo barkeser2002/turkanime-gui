@@ -6,8 +6,8 @@ farklı yöntemleri bir arada sunar:
 
 1. curl_cffi - Firefox/Chrome TLS fingerprint taklidi
 2. cloudscraper - JS Challenge çözümü
-3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu)
-4. undetected-chromedriver - Selenium tabanlı tam bypass
+3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu, opsiyonel)
+4. QtWebEngine - Yerel gömülü Chromium (ayrı süreçte; Selenium'un yerini aldı)
 5. Normal requests - Fallback
 
 Kullanım:
@@ -18,10 +18,13 @@ Kullanım:
 """
 from __future__ import annotations
 
+import json
+import os
+import threading
 import time
 import random
-from typing import Optional, Dict, Any
 from urllib.parse import urlparse
+from typing import Optional, Dict, Any
 
 # curl_cffi - TLS fingerprint taklidi için
 try:
@@ -40,12 +43,28 @@ except ImportError:
 # requests - Fallback için
 import requests
 
-# undetected-chromedriver - Son çare Selenium bypass
+# QtWebEngine çözücü - Selenium/undetected-chromedriver'ın yerini aldı.
+# Gerçek bir Chromium'u ayrı süreçte çalıştırır (yerel, gömülü FlareSolverr gibi).
 try:
-    import undetected_chromedriver as uc
-    HAS_UC = True
-except ImportError:
-    HAS_UC = False
+    from .cf_qt_solver import (  # noqa: F401
+        DEFAULT_TIMEOUT as _QT_SOLVER_TIMEOUT,
+        CHALLENGE_MARKERS as _CHALLENGE_MARKERS,
+    )
+    import importlib.util as _ilu
+    HAS_QTWEBENGINE = _ilu.find_spec("PySide6.QtWebEngineCore") is not None
+except Exception:
+    HAS_QTWEBENGINE = False
+    _CHALLENGE_MARKERS = (
+        "Just a moment", "Checking your browser", "cf-browser-verification",
+        "challenge-platform", "Security Verification", "turn JavaScript on",
+    )
+
+
+# Challenge izlerinin tek kaynağı `cf_qt_solver`; buradan public olarak yeniden
+# yayınlanıyor ki tüketiciler (anizle, sunucu tarayıcısı) kendi kopyalarını
+# tutmak zorunda kalmasın. İki liste ayrıştığında ortaya çıkan hata sinsi:
+# "Just a moment" bir tarafta engel, diğerinde geçici hata sayılıyor.
+CHALLENGE_MARKERS = _CHALLENGE_MARKERS
 
 
 # User-Agent listesi (rotasyon için)
@@ -62,6 +81,29 @@ class CFBypassError(Exception):
     pass
 
 
+# Zincirin ilerlemesi YALNIZCA bu durumlarda anlamlı: hepsi "sunucu seni
+# istemedi" sinyali. Diğer 4xx'ler (404/410/401…) sitenin gerçek cevabıdır ve
+# başka bir yöntemle tekrar sorulunca da aynısı gelir.
+ENGEL_DURUMLARI = frozenset({403, 429, 503})
+
+
+def flaresolverr_ayari() -> Optional[str]:
+    """Ayarlardaki FlareSolverr adresi; anahtar hiç yoksa ``None``.
+
+    Boş dize `None` DEĞİL: kullanıcı Ayarlar'da kutuyu bilerek temizlediyse bu
+    "FlareSolverr kullanma" demektir. `or` ile varsayılana düşmek, ayarın
+    yalan söylemesine yol açıyordu (kutu boş, istekler yine uzak sunucuya).
+    """
+    try:
+        from turkanime_api.cli.dosyalar import Dosyalar
+        ayarlar = Dosyalar().ayarlar or {}
+    except Exception:
+        return None
+    if "flaresolverr_url" not in ayarlar:
+        return None
+    return str(ayarlar.get("flaresolverr_url") or "").strip()
+
+
 class CFSession:
     """
     Cloudflare korumalı sitelere erişim için akıllı session yöneticisi.
@@ -69,8 +111,8 @@ class CFSession:
     Sırasıyla şu yöntemleri dener:
     1. curl_cffi (Firefox TLS fingerprint)
     2. cloudscraper (JS Challenge)
-    3. FlareSolverr (uzak headless browser)
-    4. undetected-chromedriver (Selenium)
+    3. FlareSolverr (uzak headless browser — opsiyonel)
+    4. QtWebEngine (yerel gömülü Chromium, ayrı süreçte)
     5. Normal requests (fallback)
     """
 
@@ -89,25 +131,83 @@ class CFSession:
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.flaresolverr_url = flaresolverr_url or self.DEFAULT_FLARESOLVERR_URL
-        
+        # `None` = "ayara bak", boş dize = "kullanma". İkisini `or` ile aynı
+        # kefeye koymak, ayarı sessizce ezip varsayılan sunucuya gitmek demekti.
+        if flaresolverr_url is None:
+            flaresolverr_url = flaresolverr_ayari()
+        self.flaresolverr_url = (self.DEFAULT_FLARESOLVERR_URL
+                                 if flaresolverr_url is None
+                                 else str(flaresolverr_url).strip())
+
         self._curl_session: Optional[Any] = None
         self._cloud_session: Optional[Any] = None
-        self._uc_driver: Optional[Any] = None
+        self._qt_solver: Optional[Any] = None      # QtWebEngine alt-süreci
+        # Çözücü tek seferde tek istek işler; SearchEngine adapterleri paralel
+        # çalıştığı için kilitsiz yazıp okursak thread'ler birbirinin cevabını
+        # tüketir (A sitesinin HTML'i B'nin parser'ına gider).
+        self._qt_lock = threading.Lock()
         self._cookies: Dict[str, str] = {}
         self._last_method: Optional[str] = None
         self._flaresolverr_user_agent: Optional[str] = None
-        
+        self._flaresolverr_down: bool = False   # devre kesici (bkz. _try_flaresolverr)
+
         # Hangi yöntemlerin mevcut olduğunu kontrol et
         self._available_methods = []
         if HAS_CURL_CFFI:
             self._available_methods.append("curl_cffi")
         if HAS_CLOUDSCRAPER:
             self._available_methods.append("cloudscraper")
-        self._available_methods.append("flaresolverr")  # Her zaman denenebilir
-        if HAS_UC:
-            self._available_methods.append("undetected_chrome")
+        if self.flaresolverr_url:
+            self._available_methods.append("flaresolverr")
+        if HAS_QTWEBENGINE:
+            self._available_methods.append("qtwebengine")
         self._available_methods.append("requests")  # Her zaman mevcut
+
+    @staticmethod
+    def _cookie_matches_host(name: str, value: str, host: str, data: Dict[str, Any]) -> bool:
+        """Çerez, isteğin host'una mı ait? (çözücü tüm kavanozu döndürüyor)"""
+        domains = data.get("cookie_domains") or {}
+        dom = (domains.get(name) or "").lstrip(".").lower()
+        if not dom or not host:
+            return True          # domain bilgisi yoksa eski davranış
+        return host == dom or host.endswith("." + dom)
+
+    @staticmethod
+    def _is_challenge(resp) -> bool:
+        """Cevap gerçek içerik değil, bir koruma/challenge sayfası mı?
+
+        KRİTİK: Challenge sayfaları da HTTP 200 döner. Bunu kontrol etmezsek
+        zincir ilk yöntemde (curl_cffi) "başarı" sanıp kısa devre yapar ve
+        gerçek tarayıcı (QtWebEngine) rung'ına hiç ulaşılmaz.
+        """
+        if resp is None:
+            return False
+        if getattr(resp, "status_code", 200) == 202:
+            return True
+        try:
+            head = resp.text[:6000]
+        except Exception:
+            return False
+        return any(marker in head for marker in _CHALLENGE_MARKERS)
+
+    @staticmethod
+    def _mesru_yanit(resp) -> bool:
+        """Bu, sitenin gerçek cevabı mı — zinciri sürdürmek anlamsız mı?
+
+        Eskiden yalnızca HTTP 200 "başarı" sayılıyordu; var olmayan bir bölümün
+        404'ü hiçbir basamakta kabul edilmediği için tüm zincir + 3 retry
+        dönüyor, kullanıcı basit bir "bulunamadı" yerine onlarca saniye bekleyip
+        istisna görüyordu. 404/410/401 gibi yanıtlar başka bir yöntemle tekrar
+        sorulunca da değişmez; doğrudan çağırana verilir.
+        """
+        if resp is None:
+            return False
+        kod = int(getattr(resp, "status_code", 200) or 200)
+        if kod in ENGEL_DURUMLARI:
+            return False          # CF engeli/limit — sıradaki yöntem denensin
+        if kod >= 500:
+            return False          # geçici sunucu hatası: yeniden denemeye değer
+        return not CFSession._is_challenge(resp)
 
     def _get_curl_session(self):
         """curl_cffi session'ı lazy-load et."""
@@ -131,22 +231,113 @@ class CFSession:
             )
         return self._cloud_session
 
-    def _get_uc_driver(self):
-        """undetected-chromedriver'ı lazy-load et."""
-        if self._uc_driver is None and HAS_UC:
-            options = uc.ChromeOptions()
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument(f"--user-agent={random.choice(USER_AGENTS)}")
-            self._uc_driver = uc.Chrome(options=options)
-        return self._uc_driver
+    def _get_qt_solver(self):
+        """QtWebEngine çözücü alt-sürecini lazy-spawn et ve yeniden kullan.
+
+        Ayrı süreç kullanmamızın sebebi: QtWebEngine bir QApplication'ın ana
+        thread'inde çalışmak zorunda, oysa CFSession senkron olarak hem GUI
+        worker thread'lerinden hem de Qt'siz CLI'dan çağrılıyor.
+        """
+        if not HAS_QTWEBENGINE:
+            return None
+        if self._qt_solver is not None and self._qt_solver.poll() is None:
+            return self._qt_solver
+
+        import subprocess
+        import sys as _sys
+        from .cf_qt_solver import SOLVER_FLAG
+
+        proc = None
+        try:
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8")
+            if getattr(_sys, "frozen", False):
+                # Paketlenmiş EXE'de `-m modul` çalışmaz (sys.executable uygulamanın
+                # kendisi). Uygulamayı özel bayrakla yeniden çağırıyoruz; giriş
+                # noktaları (gui/qt/__main__.py ve cli/__main__.py) bunu yakalayıp
+                # çözücüyü başlatır.
+                cmd = [_sys.executable, SOLVER_FLAG]
+            else:
+                cmd = [_sys.executable, "-m", "turkanime_api.common.cf_qt_solver"]
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, encoding="utf-8", bufsize=1, env=env,
+            )
+            ready = proc.stdout.readline()          # hazır sinyalini bekle
+            if not ready or not json.loads(ready).get("ok"):
+                proc.kill()
+                return None
+            self._qt_solver = proc
+            return proc
+        except Exception as e:
+            # Süreç KESİNLİKLE öldürülmeli: el sıkışma bozuk çıktığında (ör.
+            # bayrağı tanımayan bir giriş noktası cevap yerine menü basarsa)
+            # `json.loads` burada patlıyor ve alt-süreç yetim kalıyordu.
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            print(f"[CF Bypass] QtWebEngine çözücü başlatılamadı: {e}")
+            return None
+
+    def _try_qtwebengine(self, url: str, timeout: Optional[int] = None) -> Optional[requests.Response]:
+        """Gerçek Chromium ile challenge'ı çöz (undetected-chromedriver'ın yerine).
+
+        Yalnızca GET destekler; POST için zincir requests'e düşer.
+        """
+        try:
+            # Kilit: istek/cevap çifti bölünmez olmalı (bkz. _qt_lock).
+            with self._qt_lock:
+                proc = self._get_qt_solver()
+                if proc is None:
+                    return None
+                req = {"url": url, "timeout": int(timeout or self.timeout)}
+                proc.stdin.write(json.dumps(req, ensure_ascii=True) + "\n")
+                proc.stdin.flush()
+                line = proc.stdout.readline()
+            if not line:
+                return None
+            data = json.loads(line)
+            if not data.get("ok"):
+                print(f"[CF Bypass] QtWebEngine: {data.get('error')}")
+                return None
+
+            # Çözücü tüm çerez kavanozunu döndürür; yalnızca BU host'a ait
+            # olanları alıyoruz. Aksi hâlde bir sitenin cf_clearance'ı başka
+            # siteye iliştirilip 403/challenge döngüsü yaratır.
+            host = (urlparse(url).hostname or "").lower()
+            for name, value in (data.get("cookies") or {}).items():
+                if self._cookie_matches_host(name, value, host, data):
+                    self._cookies[name] = value
+            ua = data.get("user_agent")
+            if ua:
+                self._flaresolverr_user_agent = ua
+
+            html = data.get("html") or ""
+            fake_resp = requests.Response()
+            fake_resp.status_code = int(data.get("status") or 200)
+            fake_resp._content = html.encode("utf-8")
+            fake_resp.headers["Content-Type"] = "text/html; charset=utf-8"
+            fake_resp.url = data.get("url") or url
+
+            self._last_method = "qtwebengine"
+            return fake_resp
+        except Exception as e:
+            print(f"[CF Bypass] QtWebEngine hatası: {e}")
+            # Bozulmuş süreci at ki bir sonraki çağrı temiz başlasın
+            try:
+                self._qt_solver.kill()
+            except Exception:
+                pass
+            self._qt_solver = None
+        return None
 
     def _try_curl_cffi(self, url: str, headers: Dict[str, str], method: str = "GET", **kwargs) -> Optional[requests.Response]:
         """curl_cffi ile istek at."""
         if not HAS_CURL_CFFI:
             return None
+        kwargs.setdefault("timeout", self.timeout)
         
         # Desteklenen impersonate değerleri (öncelik sırasına göre)
         impersonate_options = [
@@ -171,23 +362,24 @@ class CFSession:
                 )
                 
                 if method.upper() == "GET":
-                    resp = session.get(url, headers=headers, timeout=self.timeout, **kwargs)
+                    resp = session.get(url, headers=headers, **kwargs)
                 else:
-                    resp = session.post(url, headers=headers, timeout=self.timeout, **kwargs)
+                    resp = session.post(url, headers=headers, **kwargs)
                 
-                if resp.status_code == 200:
-                    self._last_method = f"curl_cffi ({imp})"
-                    # Çerezleri kaydet (curl_cffi dict döner)
-                    try:
-                        cookies_dict = session.cookies.get_dict() if hasattr(session.cookies, 'get_dict') else dict(session.cookies)
-                        self._cookies.update(cookies_dict)
-                    except Exception:
-                        pass
-                    return resp
-                elif resp.status_code == 403:
-                    # CF engeli, sonraki impersonate'i dene
+                if resp.status_code in ENGEL_DURUMLARI:
+                    # CF engeli/limit — parmak izini değiştirip tekrar dene
                     continue
-                    
+
+                # 200 dışındaki yanıtlar da (404/410/301…) sitenin CEVABIdır;
+                # başka impersonate ile sormak aynı sonucu verir.
+                self._last_method = f"curl_cffi ({imp})"
+                # Çerezleri kaydet (curl_cffi dict döner)
+                try:
+                    cookies_dict = session.cookies.get_dict() if hasattr(session.cookies, 'get_dict') else dict(session.cookies)
+                    self._cookies.update(cookies_dict)
+                except Exception:
+                    pass
+                return resp
             except Exception as e:
                 # Bu impersonate desteklenmiyor, sonrakini dene
                 if "not supported" in str(e).lower():
@@ -203,15 +395,16 @@ class CFSession:
         """cloudscraper ile istek at."""
         if not HAS_CLOUDSCRAPER:
             return None
+        kwargs.setdefault("timeout", self.timeout)
         
         try:
             session = self._get_cloud_session()
             if method.upper() == "GET":
-                resp = session.get(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = session.get(url, headers=headers, **kwargs)
             else:
-                resp = session.post(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = session.post(url, headers=headers, **kwargs)
             
-            if resp.status_code == 200:
+            if resp.status_code not in ENGEL_DURUMLARI and resp.status_code < 500:
                 self._last_method = "cloudscraper"
                 self._cookies.update(session.cookies.get_dict())
                 return resp
@@ -227,6 +420,14 @@ class CFSession:
         FlareSolverr uzak bir headless browser sunucusudur.
         API: POST http://host:8191/v1
         """
+        # Adres boşsa kullanıcı bu basamağı kapatmış demektir (bkz. __init__).
+        if not self.flaresolverr_url:
+            return None
+        # Devre kesici: sunucuya bir kez bağlanılamadıysa oturum boyunca tekrar
+        # deneme. Aksi hâlde erişilemez bir FlareSolverr her istekte timeout
+        # süresi kadar gecikme ve log gürültüsü üretiyor.
+        if getattr(self, "_flaresolverr_down", False):
+            return None
         try:
             api_url = f"{self.flaresolverr_url.rstrip('/')}/v1"
             payload: Dict[str, Any] = {
@@ -280,57 +481,39 @@ class CFSession:
             return fake_resp
 
         except requests.exceptions.ConnectionError:
-            print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı")
+            self._flaresolverr_down = True
+            print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı "
+                  "— bu oturumda tekrar denenmeyecek")
         except requests.exceptions.Timeout:
-            print("[CF Bypass] FlareSolverr zaman aşımı")
+            self._flaresolverr_down = True
+            print("[CF Bypass] FlareSolverr zaman aşımı "
+                  "— bu oturumda tekrar denenmeyecek")
         except Exception as e:
             print(f"[CF Bypass] FlareSolverr hatası: {e}")
         return None
 
-    def _try_undetected_chrome(self, url: str, headers: Dict[str, str]) -> Optional[str]:
-        """undetected-chromedriver ile sayfa al (sadece GET)."""
-        if not HAS_UC:
-            return None
-        
-        try:
-            driver = self._get_uc_driver()
-            driver.get(url)
-            
-            # CF challenge için bekle
-            time.sleep(5)
-            
-            # Sayfa yüklenene kadar bekle
-            for _ in range(10):
-                if "Just a moment" not in driver.page_source:
-                    break
-                time.sleep(1)
-            
-            self._last_method = "undetected_chrome"
-            
-            # Çerezleri al
-            for cookie in driver.get_cookies():
-                self._cookies[cookie["name"]] = cookie["value"]
-            
-            return driver.page_source
-        except Exception as e:
-            print(f"[CF Bypass] undetected-chromedriver hatası: {e}")
-        return None
-
     def _try_requests_fallback(self, url: str, headers: Dict[str, str], method: str = "GET", **kwargs) -> Optional[requests.Response]:
         """Normal requests ile istek at (fallback)."""
+        # `timeout` sabit değil varsayılan: eskiden `timeout=self.timeout,
+        # **kwargs` yazılıyordu, yani `session.get(url, timeout=20)` diyen her
+        # çağrı "got multiple values for keyword argument" ile patlıyordu — hem
+        # de zincirin HER kademesinde, ağ hatası gibi görünerek. Sonuç: tek bir
+        # kwarg yüzünden tüm CF bypass'ı kaybedip düz requests'e düşmek.
+        kwargs.setdefault("timeout", self.timeout)
         try:
             headers["User-Agent"] = random.choice(USER_AGENTS)
             if self._cookies:
                 kwargs.setdefault("cookies", {}).update(self._cookies)
             
             if method.upper() == "GET":
-                resp = requests.get(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = requests.get(url, headers=headers, **kwargs)
             else:
-                resp = requests.post(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = requests.post(url, headers=headers, **kwargs)
             
-            if resp.status_code == 200:
-                self._last_method = "requests"
-                return resp
+            # Son çare: durum ne olursa olsun cevabı geri ver. Buraya kadar
+            # gelindiyse zincirin verecek başka bir şeyi kalmadı.
+            self._last_method = "requests"
+            return resp
         except Exception as e:
             print(f"[CF Bypass] requests hatası: {e}")
         return None
@@ -359,30 +542,25 @@ class CFSession:
         for attempt in range(self.max_retries):
             # 1. curl_cffi dene
             resp = self._try_curl_cffi(url, headers, "GET", **kwargs)
-            if resp is not None:
+            if self._mesru_yanit(resp):
                 return resp
-            
+
             # 2. cloudscraper dene
             resp = self._try_cloudscraper(url, headers, "GET", **kwargs)
-            if resp is not None:
+            if self._mesru_yanit(resp):
                 return resp
-            
+
             # 3. FlareSolverr dene
             resp = self._try_flaresolverr(url, "GET")
-            if resp is not None:
+            if self._mesru_yanit(resp):
                 return resp
-            
-            # 4. undetected-chrome dene (HTML döner, Response değil)
-            html = self._try_undetected_chrome(url, headers)
-            if html is not None:
-                # Sahte Response nesnesi oluştur
-                fake_resp = requests.Response()
-                fake_resp.status_code = 200
-                fake_resp._content = html.encode("utf-8")
-                fake_resp.headers["Content-Type"] = "text/html; charset=utf-8"
-                return fake_resp
-            
-            # 5. Normal requests dene
+
+            # 4. QtWebEngine dene (yerel gömülü Chromium, ayrı süreçte)
+            resp = self._try_qtwebengine(url)
+            if self._mesru_yanit(resp):
+                return resp
+
+            # 5. Normal requests dene (son çare: challenge olsa bile döndür)
             resp = self._try_requests_fallback(url, headers, "GET", **kwargs)
             if resp is not None:
                 return resp
@@ -440,11 +618,16 @@ class CFSession:
             except Exception:
                 pass
         
-        if self._uc_driver is not None:
+        if self._qt_solver is not None:
             try:
-                self._uc_driver.quit()
+                self._qt_solver.stdin.close()
+                self._qt_solver.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    self._qt_solver.kill()
+                except Exception:
+                    pass
+            self._qt_solver = None
 
     def __enter__(self):
         return self
@@ -460,8 +643,20 @@ class CFSession:
 
     @property
     def cookies(self) -> Dict[str, str]:
-        """Toplanan çerezleri döndür."""
+        """Toplanan çerezleri döndür (KOPYA — yazmak için `set_cookie`)."""
         return self._cookies.copy()
+
+    def set_cookie(self, name: str, value: str) -> None:
+        """Oturuma çerez ekle.
+
+        Yazma yolu ayrı bir metot: `cookies` bilinçli olarak kopya döndürüyor
+        (çağıran taraf iç sözlüğü kazara bozmasın diye). Kopya üzerinden yazmayı
+        denemek sessizce kaybolurdu — nitekim `sources/openani.py` yıllarca
+        `session.cookies.set(...)` çağırıyordu; dict'te böyle bir metot olmadığı
+        için token ayarlanır ayarlanmaz AttributeError atıyordu.
+        """
+        if name:
+            self._cookies[str(name)] = str(value)
 
 
 # Global session instance (lazy-load)
@@ -469,21 +664,31 @@ _global_session: Optional[CFSession] = None
 
 
 def get_cf_session() -> CFSession:
-    """Global CF session'ı döndür (singleton)."""
+    """Global CF session'ı döndür (singleton).
+
+    FlareSolverr adresini `CFSession` kendisi ayardan okur — böylece kendi
+    oturumunu kuran kaynaklar (animecix, anizle, openani) da aynı tercihe uyar.
+    """
     global _global_session
     if _global_session is None:
-        # Ayarlardan FlareSolverr URL'sini oku
-        flaresolverr_url = None
+        _global_session = CFSession()
+    return _global_session
+
+
+def reset_cf_session() -> None:
+    """Global oturumu düşür; bir sonraki istek ayarları yeniden okusun.
+
+    Ayarlar sayfası FlareSolverr adresini değiştirdiğinde çağrılır: adres
+    kurulum anında okunduğu için, sıfırlanmazsa değişiklik ancak uygulama
+    yeniden başlatılınca etkili olurdu.
+    """
+    global _global_session
+    eski, _global_session = _global_session, None
+    if eski is not None:
         try:
-            from turkanime_api.cli.dosyalar import Dosyalar
-            dosya = Dosyalar()
-            flaresolverr_url = dosya.ayarlar.get("flaresolverr_url", "")
+            eski.close()
         except Exception:
             pass
-        _global_session = CFSession(
-            flaresolverr_url=flaresolverr_url or None
-        )
-    return _global_session
 
 
 def cf_get(url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> requests.Response:
@@ -499,10 +704,14 @@ def cf_post(url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> req
 __all__ = [
     "CFSession",
     "CFBypassError",
+    "ENGEL_DURUMLARI",
+    "CHALLENGE_MARKERS",
+    "flaresolverr_ayari",
     "get_cf_session",
+    "reset_cf_session",
     "cf_get",
     "cf_post",
     "HAS_CURL_CFFI",
     "HAS_CLOUDSCRAPER",
-    "HAS_UC",
+    "HAS_QTWEBENGINE",
 ]

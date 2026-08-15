@@ -14,13 +14,13 @@ from rich import print as rprint
 import questionary as qa
 
 from ..bypass import fetch
+from ..common.cf_qt_solver import SOLVER_FLAG
 from ..objects import Anime
 from ..sources import search_animecix, search_anizle
 from ..sources.animecix import CixAnime
 from ..sources.anizle import AnizleAnime, get_episode_streams
 from ..sources.adapter import AdapterAnime, AdapterBolum
 from .dosyalar import Dosyalar
-from .gereksinimler import gereksinim_kontrol_cli
 from .cli_tools import prompt_tema, clear, indirme_task_cli, VidSearchCLI, CliStatus
 from .version import guncel_surum, update_type
 
@@ -78,15 +78,22 @@ SOURCE_TITLES = {
     "anizle": "Anizle (deneysel)",
     "tranimeizle": "TRAnimeİzle",
     "openanime": "OpenAnime",
+    "tranimaci": "Tranimaci",
+    "animedepo": "AnimeDepo (arşiv)",
 }
 
 
 def _norm_source(val: str) -> str:
     s = str(val or "").lower()
+    # NOT: "animedepo" kontrolü "anime*" ile başlayan diğerlerinden önce gelmeli.
+    if "animedepo" in s or "depo" in s:
+        return "animedepo"
     if "animecix" in s:
         return "animecix"
     if "anizle" in s:
         return "anizle"
+    if "tranimaci" in s or "tranimaci.com" in s:
+        return "tranimaci"
     if "tran" in s or "tranime" in s:
         return "tranimeizle"
     if "open" in s or "openanime" in s:
@@ -119,6 +126,8 @@ def menu_loop():
                 anizle_anime = None
                 tranime_episodes_data = None
                 openani_episodes_data = None
+                animedepo_episodes_data = None
+                tranimaci_episodes_data = None
                 adapter_anime = None
                 seri_slug = ""
                 seri_ismi = ""
@@ -206,6 +215,54 @@ def menu_loop():
                     seri_slug, seri_ismi = pick
                     adapter_anime = AdapterAnime(slug=seri_slug, title=seri_ismi)
                     openani_episodes_data = get_openani_episodes(seri_slug)
+                elif source == "tranimaci":
+                    from ..sources.tranimaci import (
+                        search_tranimaci,
+                        get_anime_episodes as get_tranimaci_episodes,
+                    )
+                    q = qa.text("Tranimaci: aramak için yazın", style=prompt_tema).ask(kbi_msg="")
+                    if not q:
+                        continue
+                    with CliStatus("Tranimaci aranıyor.."):
+                        found = search_tranimaci(q) or []
+                    if not found:
+                        raise KeyError
+                    choices = [qa.Choice(name, (slug, name)) for (slug, name) in found]
+                    pick = qa.select(
+                        "Seri seç",
+                        choices=choices,
+                        style=prompt_tema,
+                        instruction="Yukarı/Aşağı • Enter"
+                    ).ask()
+                    if not pick:
+                        continue
+                    seri_slug, seri_ismi = pick
+                    adapter_anime = AdapterAnime(slug=seri_slug, title=seri_ismi)
+                    tranimaci_episodes_data = get_tranimaci_episodes(seri_slug)
+                elif source == "animedepo":
+                    from ..sources.animedepo import (
+                        search_animedepo,
+                        get_anime_episodes as get_animedepo_episodes,
+                    )
+                    q = qa.text("AnimeDepo: aramak için yazın", style=prompt_tema).ask(kbi_msg="")
+                    if not q:
+                        continue
+                    with CliStatus("AnimeDepo aranıyor.."):
+                        found = search_animedepo(q) or []
+                    if not found:
+                        raise KeyError
+                    choices = [qa.Choice(name, (slug, name)) for (slug, name) in found]
+                    pick = qa.select(
+                        "Seri seç",
+                        choices=choices,
+                        style=prompt_tema,
+                        instruction="Yukarı/Aşağı • Enter"
+                    ).ask()
+                    if not pick:
+                        continue
+                    seri_slug, seri_ismi = pick
+                    adapter_anime = AdapterAnime(slug=seri_slug, title=seri_ismi)
+                    animedepo_episodes_data = get_animedepo_episodes(seri_slug)
                 else:
                     arama_metni = qa.text(
                         'Animeyi yazın',
@@ -271,6 +328,16 @@ def menu_loop():
                 from ..sources.openani import get_episode_streams as get_openani_streams
                 openani_stream_provider = (lambda slug, _timeout=10: get_openani_streams(slug, timeout=_timeout))
 
+            tranimaci_stream_provider = None
+            if source == "tranimaci":
+                from ..sources.tranimaci import get_episode_streams as get_tranimaci_streams
+                tranimaci_stream_provider = (lambda slug: get_tranimaci_streams(slug))
+
+            animedepo_stream_provider = None
+            if source == "animedepo":
+                from ..sources.animedepo import get_episode_streams as get_animedepo_streams
+                animedepo_stream_provider = (lambda ep_id: get_animedepo_streams(ep_id))
+
             while True:
                 dosya = Dosyalar()
                 if "izle" in islem:
@@ -316,6 +383,30 @@ def menu_loop():
                                     player_name="OPENANI"
                                 )
                                 for ep_slug, ep_title in openani_episodes_data
+                            ]
+                        elif source == "tranimaci" and tranimaci_episodes_data is not None and tranimaci_stream_provider:
+                            adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                            bolumler = [
+                                AdapterBolum(
+                                    f"https://tranimaci.com/video/{ep_slug}",
+                                    ep_title,
+                                    adapter,
+                                    stream_provider=lambda url, _es=ep_slug: tranimaci_stream_provider(_es),
+                                    player_name="TRANIMACI"
+                                )
+                                for ep_slug, ep_title in tranimaci_episodes_data
+                            ]
+                        elif source == "animedepo" and animedepo_episodes_data is not None and animedepo_stream_provider:
+                            adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                            bolumler = [
+                                AdapterBolum(
+                                    ep_id,   # "anime_slug/bolum_slug" bileşik kimlik
+                                    ep_title,
+                                    adapter,
+                                    stream_provider=lambda url, _es=ep_id: animedepo_stream_provider(_es),
+                                    player_name="ANIMEDEPO"
+                                )
+                                for ep_id, ep_title in animedepo_episodes_data
                             ]
                         elif anime is not None:
                             bolumler = anime.bolumler
@@ -408,6 +499,32 @@ def menu_loop():
                             for ep_slug, ep_title in openani_episodes_data
                         ]
                         choices, recent = eps_to_choices(bolum_kayitlari, mark_type="indirildi")
+                    elif source == "tranimaci" and tranimaci_episodes_data is not None and tranimaci_stream_provider:
+                        adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                        bolum_kayitlari = [
+                            AdapterBolum(
+                                f"https://tranimaci.com/video/{ep_slug}",
+                                ep_title,
+                                adapter,
+                                stream_provider=lambda url, _es=ep_slug: tranimaci_stream_provider(_es),
+                                player_name="TRANIMACI"
+                            )
+                            for ep_slug, ep_title in tranimaci_episodes_data
+                        ]
+                        choices, recent = eps_to_choices(bolum_kayitlari, mark_type="indirildi")
+                    elif source == "animedepo" and animedepo_episodes_data is not None and animedepo_stream_provider:
+                        adapter = adapter_anime or AdapterAnime(slug=seri_slug, title=seri_ismi)
+                        bolum_kayitlari = [
+                            AdapterBolum(
+                                ep_id,   # "anime_slug/bolum_slug" bileşik kimlik
+                                ep_title,
+                                adapter,
+                                stream_provider=lambda url, _es=ep_id: animedepo_stream_provider(_es),
+                                player_name="ANIMEDEPO"
+                            )
+                            for ep_id, ep_title in animedepo_episodes_data
+                        ]
+                        choices, recent = eps_to_choices(bolum_kayitlari, mark_type="indirildi")
                     elif anime is not None:
                         choices, recent = eps_to_choices(anime.bolumler, mark_type="indirildi")
                     else:
@@ -447,7 +564,9 @@ def menu_loop():
             kay = _norm_source(ds.ayarlar.get("kaynak", "turkanime"))
             # Questionary sürümleri arasında Choice(name,value) ile default eşleşmesi sorun çıkarabiliyor.
             # Bu yüzden düz string seçenekler kullanıp başlıktan koda map ediyoruz.
-            secenekler = ["TürkAnime", "AnimeciX (deneysel)", "Anizle (deneysel)", "TRAnimeİzle", "OpenAnime"]
+            # Liste SOURCE_TITLES'tan türetiliyor: elle yazılan kopya ayrışıyordu
+            # (AnimeDepo eklendiğinde burada görünmediği için seçilemiyordu).
+            secenekler = list(SOURCE_TITLES.values())
             varsayilan = _source_title(kay)
             sec_title = qa.select(
                 "Kaynak seç",
@@ -514,6 +633,15 @@ def menu_loop():
 
 
 def main():
+    # Donmuş (PyInstaller) CLI exe'si de CF çözücüsünün giriş noktasıdır:
+    # `cf_bypass._get_qt_solver`, donmuş modda `sys.executable --cf-qt-solver`
+    # ile UYGULAMANIN KENDİSİNİ çağırıyor. CLI bu bayrağı tanımadığı sürece o
+    # çağrı etkileşimli menüyü açıyor, çözücü el sıkışması bozuk çıkıyor ve
+    # açılan süreç yetim kalıyordu — her CF challenge'ında bir tane.
+    if SOLVER_FLAG in sys.argv:
+        from ..common.cf_qt_solver import main as solver_main
+        return solver_main()
+
     # Güncelleme kontrolü
     try:
         with CliStatus("Güncelleme kontrol ediliyor.."):

@@ -1,0 +1,83 @@
+# Docker build context'inin KÖKÜ burasıdır: docker-compose.yml'deki her servis
+# `context: ..` (depo kökü) ile build ediliyor. `.dockerignore` yalnızca context
+# kökünde okunur — alt dizindeki bir kopya (eskiden turkanime_server/) hiçbir
+# zaman uygulanmaz. Bu dosya oraya taşındı; aksi hâlde `turkanime_server/.env`
+# içindeki deploy token `COPY turkanime_server` ile imaj katmanına giriyordu ve
+# `docker run --entrypoint cat <imaj> turkanime_server/.env` ile okunabiliyordu.
+#
+# NOT: `.dockerignore` .gitignore DEĞİLDİR; desenler context köküne göre eşleşir
+# ve kendiliğinden alt dizinlere inmez. Her yerde geçerli olması istenen desen
+# `**/` ile başlamalı.
+
+# ── Sırlar ───────────────────────────────────────────────────────────────────
+# `.env` konteynere yalnızca çalışma anında (compose environment) geçmeli, imaj
+# katmanına asla. `.env.example` gerçek sır içermez; o kalsın.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/*_rsa
+**/*_ed25519
+sirlar/
+gecmis.json
+ayarlar.json
+
+# ── Git ──────────────────────────────────────────────────────────────────────
+# Depo geçmişi imajda işe yaramıyor; yayıncı arşiv için kendi ağacını kuruyor.
+.git
+.github
+.gitignore
+.gitattributes
+
+# ── Python ───────────────────────────────────────────────────────────────────
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.egg-info
+**/*.egg
+**/*.so
+build
+develop-eggs
+dist
+downloads
+eggs
+.eggs
+parts
+sdist
+var
+wheels
+poetry.lock
+
+# ── Sanal ortamlar ───────────────────────────────────────────────────────────
+.venv
+venv
+env
+ENV
+
+# ── Araç / IDE / işletim sistemi artıkları ───────────────────────────────────
+.claude
+.vscode
+.idea
+.ruff_cache
+.pytest_cache
+graphify-out
+**/*.swp
+**/*.swo
+**/.DS_Store
+**/Thumbs.db
+
+# ── Çalışma zamanı artıkları ─────────────────────────────────────────────────
+**/*.log
+**/*.db
+**/*.sqlite3
+~~state
+bin
+tranime_debug.html
+
+# ── İmajda gereksiz olanlar ──────────────────────────────────────────────────
+tests
+docs
+*.md
+turkanime-gui.spec
+requirements-gui.txt

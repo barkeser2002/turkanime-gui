@@ -12,7 +12,7 @@ import json
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 try:
     from curl_cffi import requests as curl_requests

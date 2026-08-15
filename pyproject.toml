@@ -1,6 +1,8 @@
 [tool.poetry]
 name = "turkanime-gui"
-version = "9.4.9.3"
+# Sürümün asıl kaynağı turkanime_api/version.py; burası poetry literal
+# istediği için ikinci kopya. tests/test_qt_updates.py ikisini karşılaştırıyor.
+version = "10.0.0"
 description = "Türkanime video oynatıcı ve indirici"
 authors = ["barkeser2002 <bariskeser@bariskeser.com>", "Junicchi <junicchi@waifu.club>"]
 readme = "README.md"
@@ -40,28 +42,67 @@ rich = ">=13.0.0"
 easygui = ">=0.98.2"
 beautifulsoup4 = "*"
 requests = "*"
-# PyQt6 bazı Linux/musl ve yeni Python kombinasyonlarında tekerlek yayınlamayabilir.
-# Bu nedenle opsiyonel yapıyoruz; GUI isteyenler extras ile kurabilir.
-# PyQt6 = { version = ">=6.5", optional = true }
-customtkinter = { version = ">=5.2.0", optional = true }
-
-selenium = { version = ">=4.11.0", optional = true }
+# GUI PySide6 (LGPL) üzerine kuruluyor; QtWebEngine cookie/CF akışı için
+# gerekli. Opsiyonel tutuluyor, GUI isteyenler extras ile kurar.
+pyside6 = { version = ">=6.7", optional = true }
+# Discord Rich Presence yalnızca GUI'de kullanılıyor (`gui/qt/discord.py`) ve
+# orada da opsiyonel; CLI kullanıcısına yüklenmesin diye extras'ta.
+pypresence = { version = "*", optional = true }
 
 [tool.poetry.extras]
-gui = ["customtkinter", "selenium"]
+gui = ["pyside6", "pypresence"]
 
 [tool.poetry.group.dev.dependencies]
 toml = "*"
+pytest = ">=8.0"
+pytest-qt = ">=4.4"
+# `tests/test_release_workflow.py` release.yml'i ayrıştırıyor — yalnızca test
+# bağımlılığı, çalışma zamanında hiçbir yerde kullanılmıyor.
+pyyaml = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# adapters-test-all.py bir pytest paketi değil, elle çalıştırılan ağ betiği.
+# NOT: buraya `-q` KOYMA — komut satırında da `-q` verilince `-qq` olur ve
+# pytest özet satırını ("N passed") hiç basmaz; doğrulama körleşir.
+addopts = "--ignore=tests/adapters-test-all.py"
+markers = [
+    "network: gerçek ağ erişimi gerektirir (varsayılan olarak atlanır; --network ile çalıştır)",
+]
+
+[tool.pylint.main]
+# PySide6 derlenmiş bir C++ eklentisi; pylint onu statik olarak inceleyemediği
+# için her Qt importuna "No name 'QWidget' in module" (E0611) yanlış pozitifi
+# üretiyordu. CI `pylint -E` koştuğundan bu, gerçek hataları gürültüde boğuyor.
+# Allow-list, pylint'in modülü gerçekten yükleyip incelemesini sağlar.
+extension-pkg-allow-list = ["PySide6"]
+# `flask_cors` yalnızca `turkanime_server/requirements.txt` içinde; istemci
+# geliştirme ortamına kurulmuyor. Kurulu olmayan modül pylint'te E0401 üretir
+# ve `pylint -E` çıktısını gerçek hataların yanında gürültüye boğar.
+ignored-modules = ["py7zr", "flask_cors"]
+
+[tool.pylint.typecheck]
+# Qt sinyalleri (clicked, textChanged, özel Signal'ler) metaclass tarafından
+# üretildiği için pylint bunlarda `.connect/.emit/.disconnect` üyesini göremiyor
+# ve E1101 yanlış pozitifi veriyor. Yalnızca bu üç üye adı muaf tutuluyor —
+# gerçek `no-member` hataları yakalanmaya devam eder.
+generated-members = ["connect", "emit", "disconnect"]
+
 [tool.poetry.scripts]
 # Publish sırasında yapılması gerekenler:
-#   turkanime_api/version.py dosyasındaki build, pip olarak değişmeli.
+#   turkanime_api/cli/version.py içindeki __build__, "pip" olarak değişmeli.
+#   (Sürüm numarası orada DEĞİL: tek kaynak turkanime_api/version.py.)
 #   poetry build; poetry install; poetry publish
 
 turkanime = 'turkanime_api.cli.__main__:main'
 turkanime-cli = 'turkanime_api.cli.__main__:main'
-turkanime-gui = 'turkanime_api.gui.main:run'
+# GUI artık tek arayüz: PySide6 + QtWebEngine. `turkanime-gui` adı kullanıcı
+# alışkanlığı bozulmasın diye korunuyor (eskiden CustomTkinter'ı açıyordu,
+# artık doğrudan Qt'yi açıyor). `turkanime-qt` Faz 3-8 boyunca belgelenen ad
+# olduğu için alias olarak bırakıldı; ikisi de aynı giriş noktasına bağlı.
+turkanime-gui = 'turkanime_api.gui.qt:run'
+turkanime-qt = 'turkanime_api.gui.qt:run'

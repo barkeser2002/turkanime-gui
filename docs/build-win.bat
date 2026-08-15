@@ -1,6 +1,9 @@
 @echo off
 SETLOCAL ENABLEDELAYEDEXPANSION
 REM Pure-Batch Windows build helper (no PowerShell)
+REM Hem GUI (turkanime-gui.spec, onedir) hem CLI (tek dosya exe) derler.
+REM DEPO KOKUNDEN calistirin:  docs\build-win.bat
+REM (spec, gereksinimler.json ve docs\TurkAnime.ico yollari koke gore.)
 
 echo Preparing build environment...
 if not exist bin mkdir bin
@@ -88,7 +91,10 @@ echo Installing python deps and building GUI with PyInstaller...
 python -m pip install --upgrade pip || (echo pip upgrade failed & pause & exit /b 1)
 pip install -r requirements-gui.txt || echo warn: requirements-gui install failed
 pip install pyinstaller || echo warn: pyinstaller install failed
-python -m PyInstaller pyinstaller.spec || echo warn: PyInstaller GUI build failed
+:: Faz 9: eski pyinstaller.spec (CustomTkinter) silindi. Tek GUI spec'i bu.
+:: Faz 10: spec adi turkanime-qt.spec -> turkanime-gui.spec olarak degisti.
+:: onedir uretir -> dist\turkanime-gui\ (QtWebEngine onefile'da kirilgan).
+python -m PyInstaller turkanime-gui.spec --noconfirm || echo warn: PyInstaller GUI build failed
 
 echo Building CLI (Windows)...
 python -m pip install --upgrade pip
@@ -116,7 +122,7 @@ echo Generating compiled.py
 >>compiled.py echo     main()
 
 echo Running PyInstaller for CLI
-pyinstaller --noconfirm --onefile --console --icon "docs\TurkAnime.ico" --name "TurkAnime" --version-file versionfile.txt --hidden-import yt_dlp --hidden-import curl_cffi --hidden-import Crypto --hidden-import selenium --add-data "gereksinimler.json;." compiled.py || echo warn: PyInstaller CLI build failed
+pyinstaller --noconfirm --onefile --console --icon "docs\TurkAnime.ico" --name "TurkAnime" --version-file versionfile.txt --hidden-import yt_dlp --hidden-import curl_cffi --hidden-import Crypto --add-data "gereksinimler.json;." compiled.py || echo warn: PyInstaller CLI build failed
 
 echo Build complete. Artifacts are in the dist\ directory.
 

@@ -1,0 +1,21 @@
+Flask==3.0.3
+Flask-CORS==4.0.1
+mysql-connector-python==9.0.0
+requests==2.32.3
+curl_cffi==0.7.4
+beautifulsoup4==4.12.3
+rapidfuzz==3.9.7
+
+# yt-dlp / appdirs / pycryptodome BİLİNÇLİ OLARAK YOK.
+#
+# Eskiden üçü de buradaydı ama hiçbiri sunucu kodunda kullanılmıyordu; yalnızca
+# import zinciri yüzünden kuruluyorlardı: `turkanime_api/__init__.py` koşulsuz
+# `objects` (→ yt_dlp) ve `bypass` (→ appdirs, Crypto) çekiyordu, dolayısıyla
+# `turkanime_api.common.episode_parser` gibi masum bir modülü import etmek bile
+# tüm indirme yığınını sürüklüyordu. Zincir tembelleştirildi; tarayıcı video
+# indirmediği için artık gerçekten gereksizler.
+#
+# Geri eklemeden önce ölç: `tests/test_sunucu_bagimliliklari.py` her sunucu
+# modülünü import edip bu üçünün sys.modules'a girmediğini doğruluyor. Test
+# kırmızıya döndüyse zincir yeniden sızmış demektir — çözüm paketi geri
+# eklemek değil, sızıntıyı bulmak.

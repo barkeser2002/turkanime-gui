@@ -1,7 +1,9 @@
 @echo off
 CHCP 1252 >NUL
 :: Windows için PyInstaller ile build: terminal tabanlı tek dosya exe
-:: Script'i bu dizinden çalıştırdığınızı varsayıyorum
+:: SADECE CLI derler. Arayüz için turkanime-gui.spec kullanılır
+:: (depo kökünden: docs\build-win.bat, ya da python -m PyInstaller turkanime-gui.spec)
+:: Script'i bu dizinden (docs\) çalıştırdığınızı varsayıyorum
 findstr /R /C:"__build__ = .exe." ..\turkanime_api\cli\version.py 1>NUL 2>NUL || (
 	echo Derlemeden once version.py dosyasindaki "build" degiskenini exe olarak degistirmelisin
 	goto :EOF
@@ -23,7 +25,7 @@ echo Surum dosyasi yaratiliyor..
     echo     company_name="TurkAnime Dev",
     echo     file_description="Anime İndirici & Oynatıcı",
     echo     internal_name="TurkAnime",
-    echo     legal_copyright="© KebabLord, All rights reserved.",
+    echo     legal_copyright="© Barkeser2002, All rights reserved.",
     echo     original_filename="TurkAnime.exe",
     echo     product_name="TurkAnime İndirici"
     echo ^)
@@ -41,9 +43,10 @@ echo compiled.py yaratiliyor..
 echo EXE derleniyor..
 pyinstaller --noconfirm --onefile --console --icon "docs\Turkanime.ico" --name "Turkanime" --version-file versionfile.txt "compiled.py" && (
   echo Hersey yolunda gitti, calistirilabilir dosya: dist/Turkanime.exe
+  :: SHA-256: yayin akisi ve uygulama ici guncelleme dogrulamasi da bunu kullaniyor
   for %%F in (dist\*.exe) do (
-    certutil -hashfile "%%F" MD5 > "%%F.md5"
-    echo MD5 olusturuldu: %%F.md5
+    certutil -hashfile "%%F" SHA256 > "%%F.sha256"
+    echo SHA-256 olusturuldu: %%F.sha256
   )
 )
 

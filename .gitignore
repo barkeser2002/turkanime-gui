@@ -1,16 +1,42 @@
-geckodriver.log
-log
+# ── Python ──────────────────────────────────────────────────────────────────
+# Not: eskiden her dizin için ayrı __pycache__ satırı vardı; yeni bir paket
+# eklendiğinde (ör. gui/qt/) unutuluyordu. Genel desen bunu kalıcı çözer.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Kullanıcı verisi / yerel durum (asla commit edilmez) ─────────────────────
 ayarlar.json
 gecmis.json
-turkanime_api/cli/__pycache__/*
-turkanime_api/__pycache__/*
-.vscode/*
-build/*
-!dist/version.json
-dist/turkanime*
-turkanime_api/gui/__pycache__/*
-turkanime_api/sources/__pycache__/*
-turkanime_api/common/__pycache__/*
-turkanime_server/
+geckodriver.log
+log
 debug.log
+# mpv script'lerinin yazdığı izleme geçmişi (`~~` mpv'nin config-dizini sözdizimi;
+# uygulama repo dizininden başlatılınca klasör buraya düşüyor)
+~~state/
+
+# ── Derleme çıktıları ───────────────────────────────────────────────────────
+build/*
+dist/turkanime*
+!dist/version.json
+# GUI build çıktıları (turkanime-gui.spec)
+dist-qt/
+build-qt/
+
+# ── Araç / editör ───────────────────────────────────────────────────────────
+.vscode/*
 .claude
+
+# ── Sunucu tarafı üretilen veri ─────────────────────────────────────────────
+# `turkanime_server/` Faz 11'de takibe alındı (kod artık commit ediliyor);
+# yalnızca tarayıcının ürettiği çıktı ve yerel sırlar hariç tutulur.
+turkanime_server/arsiv/
+turkanime_server/durum/
+turkanime_server/.env
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# graphify bilgi grafiği (üretilen; `graphify update .` ile yenilenir)
+graphify-out/

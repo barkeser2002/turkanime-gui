@@ -29,3 +29,31 @@ jobs:
         shell: bash
         run: |
           if [ -f turkanime.py ]; then pylint --ignored-modules py7zr turkanime.py --disable=all --enable=duplicate-code || true; fi
+
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # QtWebEngine (Chromium) başsız ortamda bu sistem kütüphanelerini ister;
+      # eksikse PySide6 importu değil, ilk sayfa yüklemesi sessizce başarısız olur.
+      - name: Qt sistem bağımlılıkları
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libnss3 libxkbcommon-x11-0 libxcomposite1 libxdamage1 libxrandr2 \
+            libxtst6 libasound2t64 libegl1 libgl1 libxcursor1 libxi6
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          grep -v py7zr requirements.txt > req2.txt && pip install -r req2.txt
+          # PyYAML: test_release_workflow.py release.yml'i ayrıştırıyor;
+          # kurulu değilse o testler sessizce atlanır ve denetim körleşir.
+          pip install PySide6 pytest pytest-qt PyYAML
+      - name: pytest (ağ testleri hariç)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/

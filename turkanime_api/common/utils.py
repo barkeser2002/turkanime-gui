@@ -76,6 +76,21 @@ def get_platform() -> str:
 
     return f"{system}_{machine}"
 
+def get_os() -> str:
+    """`version.json` / `gereksinimler.json` anahtarlarındaki sade platform adı.
+
+    `get_platform()` "windows_x64" gibi mimari ekli bir ad döndürüyor; iki JSON
+    dosyası ise yalnızca "windows"/"linux"/"macos" anahtarlarını tanıyor. İkisi
+    karıştırıldığında sözlükten hiçbir zaman kayıt dönmüyor, yani güncelleme ve
+    gereksinim indirmesi sessizce "platform desteklenmiyor"a düşüyordu.
+    """
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    if system in ("windows", "linux"):
+        return system
+    return system or "unknown"
+
 def get_arch() -> str:
     """Mevcut mimariyi tespit et."""
     machine = platform.machine().lower()
@@ -119,15 +134,21 @@ def get_ydl_opts(logger=None, impersonate_target: Optional[str] = None) -> Dict[
             pass
     return opts
 
-def get_video_resolution_mpv(url: str) -> Optional[int]:
-    """mpv kullanarak bir video URL'sinin çözünürlüğünü (yüksekliğini) alır."""
+def get_video_resolution_mpv(url: str, referer: Optional[str] = None) -> Optional[int]:
+    """mpv kullanarak bir video URL'sinin çözünürlüğünü (yüksekliğini) alır.
+
+    `referer` verilirse mpv'ye iletilir: referer bekleyen CDN'ler aksi hâlde 403
+    döner ve çözünürlük "bilinmiyor" (0) kalırdı.
+    """
     try:
         cmd = [
             "mpv", "--no-config", "--no-audio", "--no-video",
             "--frames=1", "--really-quiet",
             "--term-playing-msg=${video-params/w}x${video-params/h}",
-            url,
         ]
+        if referer:
+            cmd.append(f"--referrer={referer}")
+        cmd.append(url)
         res = sp.run(cmd, text=True, stdout=sp.PIPE, stderr=sp.PIPE, timeout=10)
         out = (res.stdout or "") + (res.stderr or "")
         mm = re.findall(r"(\d{3,4})x(\d{3,4})", out)

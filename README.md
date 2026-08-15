@@ -5,38 +5,41 @@
 
 [![GitHub all releases](https://img.shields.io/github/downloads/barkeser2002/turkanime-gui/total?style=flat-square)](https://github.com/barkeser2002/turkanime-gui/releases/latest)
 [![Downloads](https://static.pepy.tech/personalized-badge/turkanime-gui?period=total&units=international_system&left_color=grey&right_color=orange&left_text=Pip%20Installs)](https://pepy.tech/project/turkanime-gui)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/barkeser2002/turkanime-gui?style=flat-square)](https://github.com/barkeser2002/turkanime-gui/releases/latest/download/turkanime-gui-windows.exe)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/barkeser2002/turkanime-gui?style=flat-square)](https://github.com/barkeser2002/turkanime-gui/releases/latest)
 [![Pypi version](https://img.shields.io/pypi/v/turkanime-gui?style=flat-square)](https://pypi.org/project/turkanime-gui/)
 
 </div>
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V9.4.9.3](docs/V9.4.9.3.md)
+**Sürüm notları:** [V10.0.0](docs/V10.0.0.md)
 
-TürkAnime artık **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi sunuyor. Terminal (CLI) sürümü destek dışı bırakıldı; tüm geliştirme modern masaüstü uygulamasına odaklanıyor.
+TürkAnime **tamamen GUI odaklı** bir anime keşif, izleme ve indirme deneyimi
+sunuyor. Arayüz **PySide6 + QtWebEngine** üzerine kurulu; V10.0.0 ile
+CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sürümü
+çalışmaya devam ediyor ama geliştirme masaüstü uygulamasına odaklı.
 
 ## ✨ Öne Çıkan Özellikler
 
-- **4 kaynak, tek arayüz:** Anizle, AnimeCix, TürkAnime ve TRAnimeİzle'den paralel erişim.
+- **7 kaynak, tek arayüz:** TürkAnime, AnimeCix, Anizle, TRAnimeİzle, OpenAnime, Tranimaci ve AnimeDepo'dan paralel erişim.
 - **Jikan + AniList arama:** MyAnimeList (Jikan) birincil, AniList fallback — geniş anime kataloguna erişim.
-- **FlareSolverr CF bypass:** Cloudflare korumalı sitelere uzak headless browser ile otomatik erişim. Sunucu adresi ayarlardan özelleştirilebilir.
+- **Gömülü Cloudflare atlatma:** Uzak bir FlareSolverr'a bağımlı kalmadan, uygulamanın içindeki Chromium (QtWebEngine) ayrı süreçte challenge çözüyor. FlareSolverr adresi isteyen için ayarlarda duruyor.
 - **Hızlı stream çekme:** Paralel işleme ile 8 kat hızlı video link alma.
-- **Paralel kaynak arama:** Tüm kaynaklar aynı anda aranır (ThreadPoolExecutor).
+- **Paralel kaynak arama:** Tüm kaynaklar aynı anda aranır (ThreadPoolExecutor); yavaş kaynak aramayı çökertmez, zaman aşımına uğrayan kaynak boş döner.
 - **Gelişmiş indirme sistemi:** Bölüm başına ilerleme çubukları, otomatik yeniden deneme (2 deneme), tek tuşla iptal, renkli durum göstergesi.
 - **Tek tıkla indirme ve oynatma:** Bölümleri sıra bekletmeden indir, izlerken otomatik kaydet.
 - **AniList entegrasyonu:** OAuth2 ile hesabına bağlan, listelerini senkron tut (1 yıllık token).
 - **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur.
 - **Netflix benzeri arayüz:** Hover efektli kartlar, batch rendering, poster galerileri, akıcı animasyonlar.
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
-- **TRAnimeİzle cookie desteği:** İlk açılışta otomatik cookie toplama teklifi, entegre tarayıcı ile tek tıkla cookie alma (Selenium), Netscape format desteği, manuel rehber.
-- **Çoklu platform:** Windows için hazır paket, Python 3.9+ olan her platformdan pip ile çalıştır.
-- **Adaptör testleri:** Tüm kaynakları tek komutla test eden kapsamlı test suite'i.
+- **TRAnimeİzle cookie desteği:** İlk açılışta otomatik cookie toplama teklifi, uygulama içine gömülü tarayıcı (QtWebEngine) ile tek tıkla cookie alma, Netscape format desteği, manuel rehber.
+- **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan her platformdan pip ile çalıştır.
+- **Testler:** 313 otomatik test (pytest + pytest-qt) ve tüm kaynakları tek komutla sınayan adaptör betiği.
 
 ## 🧭 Uygulama Akışı
 
 1. **Keşfet:** Jikan/AniList trend listeler ve kişisel öneriler tek ekranda.
-2. **Ara:** 4 kaynakta paralel arama, Jikan+AniList veritabanını aynı anda gez.
+2. **Ara:** tüm kaynaklarda paralel arama, Jikan+AniList veritabanını aynı anda gez.
 3. **İndir & Oynat:** mpv entegrasyonu sayesinde indirme ve izleme tek pencerede.
 4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, AniList'e anında yansır.
 
@@ -62,30 +65,43 @@ TürkAnime GUI, Discord profilinde canlı durum gösterebilir:
 ## 📥 Kurulum
 
 ### 1. Hazır Paket (Önerilen)
-- [Releases](https://github.com/barkeser2002/turkanime-gui/releases/latest) sayfasından en güncel `.exe` dosyasını indir.
-- Çalıştır ve kurulum sihirbazını tamamla.
+
+[Releases](https://github.com/barkeser2002/turkanime-gui/releases/latest)
+sayfasından platformuna uyanı indir:
+
+| Dosya | Ne |
+|-------|-----|
+| `turkanime-gui-windows.zip` | Arayüz — Windows (mpv, ffmpeg, aria2c, yt-dlp gömülü) |
+| `turkanime-gui-linux.zip` / `turkanime-gui-macos.zip` | Arayüz — Linux / macOS |
+| `turkanime-cli-windows.exe` / `-linux` / `-macos` | Terminal sürümü (tek dosya) |
+| `*.sha256` | Yayımlanan dosyanın SHA-256 özeti |
+
+Arayüz paketi **zip**'tir (tek exe değil): QtWebEngine bir Chromium çalışma
+zamanı taşıyor ve tek dosyaya sıkıştırıldığında alt-süreci bulamıyor. Zip'i bir
+klasöre çıkar, `turkanime-gui.exe` ile başlat.
 
 ### 2. PyPI Üzerinden
 ```bash
-pip install turkanime-gui
-turkanime-gui
-&
-turkanime-cli
+pip install "turkanime-gui[gui]"
+turkanime-gui        # arayüz
+turkanime-cli        # terminal sürümü
 ```
+> `[gui]` ekstrası PySide6'yı (ve opsiyonel `pypresence`'ı) kurar. Sade
+> `pip install turkanime-gui` yalnızca CLI'yı çalıştırır.
 
 ### 3. Kaynak Koddan
 ```bash
 git clone https://github.com/barkeser2002/turkanime-gui.git
 cd turkanime-indirici
 pip install -r requirements-gui.txt
-python -m turkanime_api.gui.main
+python -m turkanime_api.gui.qt
 ```
 
 ## 🚀 Kullanım
 
-1. **İlk açılışta** ffmpeg/mpv bin klasörü otomatik hazırlanır.
-2. **TRAnimeİzle** kullanmak istiyorsan ilk açılışta çıkan "Otomatik Cookie Al" teklifini kabul et — tarayıcı açılır, captcha çöz, cookie'ler otomatik kaydedilir. Ayarlardan da her zaman tekrar alabilirsin.
-3. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden sunucu adresini gir.
+1. **İlk açılışta** ffmpeg/mpv/aria2c/yt-dlp denetlenir; eksik varsa kurulum sihirbazı açılır (hazır pakette hepsi gömülü gelir).
+2. **TRAnimeİzle** kullanmak istiyorsan ilk açılışta çıkan "Otomatik Cookie Al" teklifini kabul et — uygulama içindeki tarayıcı açılır, bot kontrolünü çöz, çerezler otomatik kaydedilir. Ayarlardan da her zaman tekrar alabilirsin.
+3. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden sunucu adresini gir (zorunlu değil).
 4. **Keşfet veya Ara sekmesinden** anime seç.
 5. **Bölümü oynat** ya da **indir**; her bölüm için ayrı ilerleme çubuğu, yeniden deneme ve iptal desteği mevcut.
 
@@ -94,10 +110,13 @@ python -m turkanime_api.gui.main
 ### Birincil Kaynaklar
 | Kaynak | Açıklama |
 |--------|----------|
-| **Anizle** | 4500+ anime, paralel stream çekme, HLS desteği, FirePlayer pipeline |
+| **TürkAnime** | Klasik Türk anime kaynağı (şifreli embed çözümü) |
 | **AnimeCix** | Dinamik video ID, geniş fansub seçenekleri |
-| **TürkAnime** | Klasik Türk anime kaynağı |
-| **TRAnimeİzle** | Cookie tabanlı oturum, fuzzy + doğrudan arama, geniş arşiv |
+| **Anizle** | Geniş arşiv; site video.js/HLS'e geçtiği için şu an bölüm başına sınırlı kaynak |
+| **TRAnimeİzle** | Cookie tabanlı oturum — Ayarlar'dan gömülü tarayıcıyla çerez alınmalı |
+| **OpenAnime** | SvelteKit SSR JSON çıkarımı + CF bypass |
+| **Tranimaci** | SHA-256 proof-of-work WAF + JS kapısı (QtWebEngine ile aşılır), multi-CDN mp4 |
+| **AnimeDepo** | GitLab üzerinde barındırılan statik arşiv; gerçek arama ucu yok, dizin indirilip yerel fuzzy arama yapılır |
 
 ### Arama Motorları
 | Motor | Rol |
@@ -109,57 +128,70 @@ python -m turkanime_api.gui.main
 ```
 1. curl_cffi      (TLS fingerprint taklidi)
 2. cloudscraper   (JS Challenge çözümü)
-3. FlareSolverr   (Uzak headless browser)
-4. undetected-chromedriver (Selenium bypass)
+3. FlareSolverr   (Uzak headless browser — opsiyonel, tanımlıysa)
+4. QtWebEngine    (Yerel gömülü Chromium, ayrı süreçte)
 5. requests       (Fallback)
 ```
+> Not: Zincir, HTTP 200 dönen *challenge sayfalarını* da tanır ve başarı
+> saymaz; aksi hâlde ilk adımda kısa devre olup gerçek tarayıcıya hiç
+> ulaşılmıyordu. Selenium/undetected-chromedriver bağımlılıkları V10.0.0 ile
+> tamamen kaldırıldı.
 
 ### Video Sunucuları
+
+TürkAnime embed'lerinde desteklenen oynatıcılar (öncelik sırasıyla,
+`turkanime_api/objects.py::SUPPORTED`):
+
 ```
-Sibnet  Odnoklassniki  HDVID  Myvi  Sendvid  Mail
-Amaterasu  Alucard  PixelDrain  VK  MP4upload
-Vidmoly  Dailymotion  Yandisk  Uqload  Drive
-FirePlayer (Anizle)  HLS Streams
+Yandisk  Alucard  GDrive  Mail  PixelDrain  Amaterasu  HDVID
+Odnoklassniki  Dailymotion  Sibnet  VK  Vidmoly  YourUpload
+Sendvid  Myvi  Uqload
 ```
+> MP4upload listeden çıkarıldı: çözümlenmiş gibi görünüp oynatılamayan
+> bağlantılar üretiyordu. Diğer kaynaklar (Anizle, Tranimaci, AnimeDepo,
+> OpenAnime) doğrudan mp4/HLS bağlantısı döndürür, bu listeden geçmez.
 
 ## 🔧 Sistem Gereksinimleri
 
-- **Python:** 3.9+
-- **FFmpeg & yt-dlp:** Uygulama ilk açılışta otomatik indirir.
-- **mpv:** Bin klasörü içinde paketle birlikte gelir (GUI).
-- **FlareSolverr:** Opsiyonel — varsayılan sunucu adresi ayarlardan değiştirilebilir.
+- **Python:** 3.9+ (kaynaktan/pip ile çalıştırmak için; hazır pakette gerekmez)
+- **FFmpeg, mpv, aria2c, yt-dlp:** Hazır Windows paketinde gömülü gelir; kaynaktan çalıştırıyorsan uygulama içindeki sihirbaz indirip kurar.
+- **FlareSolverr:** Opsiyonel — tanımlı değilse zincir gömülü QtWebEngine'e düşer.
 - **İnternet bağlantısı:** Kaynaklara erişim ve AniList senkronu için.
 
 ## 🧪 Testler
 
-Tüm kaynak adaptörleri tek komutla test edilebilir:
+Otomatik test paketi (ağa çıkmaz, Qt offscreen koşar):
 
 ```bash
-# Tüm testler
+pip install -r requirements-gui.txt
+pip install pytest pytest-qt
+python -m pytest tests/
+```
+
+Kaynak adaptörleri gerçek ağa çıkan ayrı bir betikle sınanır:
+
+```bash
+# Tüm kaynaklar
 python tests/adapters-test-all.py
 
 # Tek kaynak
 python tests/adapters-test-all.py --source animecix
 python tests/adapters-test-all.py --source anizle
 python tests/adapters-test-all.py --source tranime
+python tests/adapters-test-all.py --source animedepo
 
-# Stream testlerini atla (hızlı)
+# Stream testlerini atla (hızlı) / detaylı çıktı / JSON
 python tests/adapters-test-all.py --skip-streams
-
-# Detaylı çıktı
 python tests/adapters-test-all.py --verbose
-
-# JSON formatında
 python tests/adapters-test-all.py --json
 ```
 
 ### Test Kapsamı
-| Kaynak | Testler |
-|--------|--------|
-| **Genel** | Import kontrolü, curl_cffi, Provider registry |
-| **AnimeCix** | Arama, sezon/bölüm listeleme, video stream |
-| **Anizle** | Veritabanı, arama, bölüm, URL pattern, translator, video pipeline |
-| **TRAnimeİzle** | Cookie, harf/fuzzy/doğrudan arama, anime/bölüm detay, fansub, iframe |
+| Alan | Testler |
+|------|--------|
+| **Arayüz (pytest-qt)** | Keşif/arama/detay/bölüm/indirme sayfaları, oynatma, izleme listesi, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
+| **Çekirdek** | Bölüm birleştirme, başlık eşleştirme, Jikan istemcisi, kaynak köprüsü, sürüm/`version.json` şeması |
+| **Adaptörler (ağ)** | AnimeCix, Anizle, TRAnimeİzle, AnimeDepo — arama, bölüm listesi, stream |
 
 > **Not:** TRAnimeİzle doğrudan arama ve stream testleri geçerli bir cookie gerektirir. Cookie süresi dolmuşsa bu testler beklenen şekilde başarısız olur.
 
@@ -169,13 +201,11 @@ python tests/adapters-test-all.py --json
 - PR göndermeden önce kısa bir açıklama ve ekran görüntüsü eklemek incelemeyi hızlandırır.
 - Dokümantasyon ve çeviri katkıları da memnuniyetle kabul edilir.
 
-> CI yayınlarında `.md5` dosyaları otomatik eklenir.
+> Yayımlanan her dosyanın yanına `.sha256` özeti eklenir; uygulama içi
+> güncelleme de indirdiği paketi aynı özetle doğrular, uyuşmazsa dosyayı siler.
 
 ## 📧 İletişim
 
 Eğer sitenizi kullanmamamı, kaldırmamı veya istekleriniz için bana ulaşın:
 - **E-mail:** info@bariskeser.com
 - **Discord:** bariskeser
-
-
-

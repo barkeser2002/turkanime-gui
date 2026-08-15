@@ -8,8 +8,11 @@ easygui
 questionary
 requests
 cloudscraper
-Pillow
-pypresence
 toml
-selenium>=4.11.0
 beautifulsoup4>=4.12.0
+# NOT: Pillow / pypresence / selenium buradan çıkarıldı (Faz 9).
+#   Pillow   → yalnızca eski CustomTkinter GUI'si (gui/main.py) kullanıyordu.
+#   selenium → yalnızca eski Selenium cookie tarayıcısı; Qt karşılığı
+#              QtWebEngine kullanıyor, ek paket gerekmiyor.
+#   pypresence → yalnızca GUI'de (opsiyonel) → requirements-gui.txt
+# Üçü de koşulsuz kuruluyordu; CLI kullanıcısı bedelini boşuna ödüyordu.

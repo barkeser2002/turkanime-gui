@@ -5,7 +5,6 @@
 >>> vid1.oynat()
 """
 from os import remove
-from os.path import join
 from tempfile import NamedTemporaryFile
 from html import unescape
 import subprocess as sp
@@ -17,22 +16,24 @@ try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
 except ImportError:
     ImpersonateTarget = None
+from .common.dosya_adi import guvenli_alt_yol
 from .common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 from .bypass import get_real_url, unmask_real_url, fetch, get_m3u8_stream
 from .common.utils import get_platform, get_arch
 
 # Çalıştığı bilinen playerlar ve öncelikleri
+# (KebabLord upstream V9.2.2/V10: MP4UPLOAD false-positive'ler yüzünden çıkarıldı,
+#  ALUCARD/GDRIVE güvenilirlikleri nedeniyle öne alındı.)
 SUPPORTED = [
     "YADISK",
-    "MAIL",
     "ALUCARD(BETA)",
+    "GDRIVE",
+    "MAIL",
     "PIXELDRAIN",
     "AMATERASU(BETA)",
     "HDVID",
     "ODNOKLASSNIKI",
-    "GDRIVE",
-    "MP4UPLOAD",
     "DAILYMOTION",
     "SIBNET",
     "VK",
@@ -104,7 +105,7 @@ class Anime:
         info_table=re.findall(r'<div id="animedetay">(<table.*?</table>)',src)[0]
         raw_m = re.findall(r"<tr>.*?<b>(.*?)<\/b>.*?width.*?>(.*?)<\/td>.*?<\/tr>",info_table)
         for key,val in raw_m:
-            if not key in self.info:
+            if key not in self.info:
                 continue
             val = re.sub("<.*?>","",val)
             val = re.sub("^ {1,3}","",val)
@@ -119,7 +120,13 @@ class Anime:
         """ Anime bölümlerinin [(slug,isim),] formatında listesi. """
         anime_id = self.anime_id
         src = fetch(f'/ajax/bolumler&animeId={anime_id}')
-        return re.findall(r'\/video\/(.*?)\\?".*?title=.*?"(.*?)\\?"',src)
+        # Upstream V10 kalıbı başlık sınırlarını `\" style=` ile tam ankrajlar; bu daha
+        # kesin ama markup'ta ` style=` yoksa bölüm kaçırır. Önce kesin kalıbı dene,
+        # sonuç çıkmazsa fork'un müsamahakâr kalıbına düş (bölüm kaybetmemek için).
+        episodes = re.findall(r'\/video\/(.*?)\\?".*?title=\\?"(.*?)\\?" style=', src)
+        if not episodes:
+            episodes = re.findall(r'\/video\/(.*?)\\?".*?title=.*?"(.*?)\\?"', src)
+        return episodes
 
     # Eski get_anime_listesi methodu, geriye dönük uyumluluk için bırakıldı.
     @staticmethod
@@ -235,7 +242,8 @@ class Bolum:
     def get_videos(self):
         self._videos = []
         # Yalnızca tek bir fansub varsa
-        if not re.search(".*birden fazla grup",self.html):
+        # `.*birden fazla grup` regex'i yerine düz substring: aynı sonuç, backtracking yok.
+        if "birden fazla grup" not in self.html:
             fansub = re.findall(r"</span> ([^\\<>]*)</button>.*?iframe",self.html)[0]
             vids = re.findall(
                 r"/embed/#/url/(.*?)\?status=0\".*?</span> ([^ ]*?) ?</button>",
@@ -496,7 +504,11 @@ class Video:
         """ info.json'u kullanarak videoyu indir """
         assert self.is_working, "Video çalışmıyor."
         seri_slug = self.bolum.anime.slug if self.bolum.anime else ""
-        output = join(output, seri_slug, self.bolum.slug)
+        # Hem seri hem bölüm slug'ı sitenin HTML'inden regex ile çekiliyor ve
+        # `/` ile `..` içerebiliyor; temizlenmezse dosya indirme klasörünün
+        # dışına düşer (bkz. common.dosya_adi).
+        output = guvenli_alt_yol(output, seri_slug, self.bolum.slug,
+                                 yedek="bolum")
         opts = self.ydl_opts.copy()
         if callback:
             opts['progress_hooks'] = [callback]
@@ -507,9 +519,13 @@ class Video:
             ydl.download_with_info_file(tmp.name)
         remove(tmp.name)
 
-    def oynat(self, dakika_hatirla=False ,izlerken_kaydet=False, mpv_opts=[]):
+    def oynat(self, dakika_hatirla=False ,izlerken_kaydet=False, mpv_opts=None):
         """ Oynatmak için yt-dlp + mpv kullanıyoruz. """
         assert self.is_working, "Video çalışmıyor."
+        # Varsayılan liste paylaşılmamalı: eskiden `mpv_opts=[]` idi ve
+        # aşağıdaki append'ler bu TEK listeye yazıyordu; "dakika hatirla" açıkken
+        # ikinci oynatmada mpv aynı bayrağı iki kez alıyordu.
+        mpv_opts = list(mpv_opts or [])
         
         # Platform ve mimari bilgisini al
         platform_info = get_platform()

@@ -18,6 +18,8 @@ from rich.progress import (
     TransferSpeedColumn
 )
 
+from ..common.dosya_adi import guvenli_ad, guvenli_alt_yol
+
 def clear():
     """ Daha kompakt görüntü için her prompt sonrası clear
         Debug yapacaksanız devre dışı bırakmanız önerilir.
@@ -146,7 +148,10 @@ def indir_aria2c(video, callback, output):
     Harici downloader kullanınca ytdl hooklar çalışmadığından
     custom_hook fonksiyonunu bu şekilde yazmak zorunda kaldım
     """
-    subdir = path.join(output,(video.bolum.anime.slug if video.bolum.anime else ""))
+    # `video.indir()` slug'ı temizleyerek yazıyor; ilerleme okuması aynı
+    # temizlikten geçmezse parça dosyalarını hiç bulamaz (bkz. common.dosya_adi).
+    subdir = guvenli_alt_yol(output, video.bolum.anime.slug if video.bolum.anime else "",
+                             yedek="bolum")
     tmp = NamedTemporaryFile(delete=False)
     # aria2c mevcut mu? yoksa direkt yt-dlp ile indir
     try:
@@ -191,7 +196,7 @@ def indir_aria2c(video, callback, output):
             # Calculate downloaded bytes from part files.
             downloaded = 0
             try:
-                slug = re.escape(video.bolum.slug)
+                slug = re.escape(guvenli_ad(video.bolum.slug, "bolum"))
                 for file in listdir(subdir):
                     # slug ile başlayan gerçek çıktı veya parça dosyaları
                     if not re.match(rf"^{slug}\." , file):

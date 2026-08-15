@@ -14,9 +14,19 @@ from .tranime import (  # noqa: F401
     set_session_cookie as set_tranime_cookie
 )
 from .openani import ( # noqa: F401
-    OpenAniAdapter, OpenAniAnime, search_openani, 
-    get_anime_episodes as get_openani_episodes, 
+    OpenAniAdapter, OpenAniAnime, search_openani,
+    get_anime_episodes as get_openani_episodes,
     get_episode_streams as get_openani_streams
+)
+from .tranimaci import (  # noqa: F401
+    search_tranimaci,
+    get_anime_episodes as get_tranimaci_episodes,
+    get_episode_streams as get_tranimaci_streams,
+)
+from .animedepo import (  # noqa: F401
+    search_animedepo,
+    get_anime_episodes as get_animedepo_episodes,
+    get_episode_streams as get_animedepo_streams,
 )
 
 # Mevcut sağlayıcılar
@@ -44,6 +54,18 @@ PROVIDERS = {
         "adapter": OpenAniAdapter,
         "enabled": True,
         "priority": 4
+    },
+    "tranimaci": {
+        "name": "Tranimaci",
+        "adapter": None,
+        "enabled": True,
+        "priority": 5
+    },
+    "animedepo": {
+        "name": "AnimeDepo",
+        "adapter": None,  # Fonksiyon-stili (GitLab statik arşiv)
+        "enabled": True,
+        "priority": 6
     }
 }
 
