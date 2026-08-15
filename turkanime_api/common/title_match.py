@@ -74,6 +74,44 @@ def fuzzy_score(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
+def siralama_skoru(query: str, candidate: str) -> float:
+    """Arama sonuçlarını sıralamak için skor. `fuzzy_score`'dan FARKLI.
+
+    `fuzzy_score` "bu ikisi aynı seri olabilir mi?" sorusunu yanıtlıyor ve bu
+    yüzden `partial_ratio`/`token_set_ratio` kullanıyor — sorgu adayın *içinde*
+    geçiyorsa 1.0 veriyor. Sıralama için bu işe yaramaz: "one piece" sorgusunda
+    "One Piece", "Koisuru One Piece" ve "Noroi no One Piece" hepsi 1.00 alır,
+    sıra kaynağın döndürdüğü rastgele düzende kalır.
+
+    Ölçüm: 8 kaynaktan 3'ü (AnimeciX, TürkAnime, Tranimaci) "one piece" için
+    ilk sıraya yanlış kaydı koyuyordu — TürkAnime'de gerçek One Piece 4.
+    sıradaydı. Bölüm çekme yolu ilk sonucu aldığı için bu doğrudan "yanlış
+    animenin bölümleri" demek.
+
+    Buradaki skor tam dizgi benzerliğine bakıyor (fazladan kelimeyi cezalandırır)
+    ve seri adıyla *başlayan* adaylara bonus veriyor:
+
+        One Piece                 1.00   (birebir)
+        One Piece Film: Z         0.97   (devam/film — aynı seri)
+        ONE PIECE (Live Action)   0.85
+        Koisuru One Piece         0.69   (farklı seri, adı içinde geçiyor)
+    """
+    a, b = _normalize(query), _normalize(candidate)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if _HAS_RF:
+        temel = _rf_fuzz.ratio(a, b) / 100.0
+    else:
+        temel = SequenceMatcher(None, a, b).ratio()
+    if b.startswith(a + " "):
+        temel += 0.25          # "One Piece Film: Z" — seri doğru
+    elif f" {a} " in f" {b} ":
+        temel += 0.05          # "Koisuru One Piece" — yalnızca içinde geçiyor
+    return min(temel, 0.99)    # birebir eşleşme her zaman tepede kalsın
+
+
 def score_match(query: str, candidate: str, aliases: Optional[List[str]] = None) -> float:
     """Sorgu + alias listesi içinde aday başlığa en yakın eşleşmenin skorunu döndür."""
     best = fuzzy_score(query, candidate)

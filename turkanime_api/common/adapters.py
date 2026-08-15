@@ -19,6 +19,27 @@ from ..sources.tranime import search_tranime
 from ..sources.animedepo import search_animedepo
 from ..sources.openani import search_openani
 from ..sources.tranimaci import search_tranimaci
+from .title_match import siralama_skoru
+
+
+def _alakaya_gore_sirala(sorgu: str, kayitlar: list, baslik) -> list:
+    """Kaynağın döndürdüğü sırayı alakaya göre yeniden diz.
+
+    Kaynakların çoğu kendi iç sırasını veriyor ve bu sıra sorguyla ilgisiz
+    olabiliyor: "one piece" araması AnimeciX'te "ONE PIECE (Live Action)",
+    TürkAnime'de "Koisuru One Piece", Tranimaci'de "One Piece Fan Letter" ile
+    başlıyordu — gerçek One Piece TürkAnime'de 4. sıradaydı. Bölüm çekme yolu
+    ilk sonucu aldığı için bu doğrudan "yanlış animenin bölümleri" demekti.
+
+    Sıralama **kararlı**: eşit skorlu kayıtlar kaynağın kendi sırasını korur,
+    yani kaynağın popülerlik bilgisi boşa gitmez.
+    """
+    if not kayitlar:
+        return kayitlar
+    try:
+        return sorted(kayitlar, key=lambda k: -siralama_skoru(sorgu, baslik(k)))
+    except Exception:
+        return kayitlar          # skorlama asla aramayı düşürmesin
 
 
 class AniListAdapter:
@@ -281,7 +302,9 @@ class SearchEngine:
         def _search_single(source_name: str):
             adapter = self.adapters[source_name]
             try:
-                return source_name, adapter.search_anime(query, limit=limit_per_source)
+                ciftler = adapter.search_anime(query, limit=limit_per_source) or []
+                return source_name, _alakaya_gore_sirala(query, ciftler,
+                                                         lambda c: c[1])
             except Exception as exc:
                 print(f"{source_name} arama hatası: {exc}")
                 return source_name, []
@@ -305,11 +328,13 @@ class SearchEngine:
             adapter = self.adapters[source_name]
             try:
                 if hasattr(adapter, "search_rich"):
-                    return source_name, adapter.search_rich(query, limit=limit_per_source)
-                pairs = adapter.search_anime(query, limit=limit_per_source) or []
-                return source_name, [
-                    {"slug": s, "title": t, "image": None} for s, t in pairs
-                ]
+                    kayitlar = adapter.search_rich(query, limit=limit_per_source) or []
+                else:
+                    pairs = adapter.search_anime(query, limit=limit_per_source) or []
+                    kayitlar = [{"slug": s, "title": t, "image": None}
+                                for s, t in pairs]
+                return source_name, _alakaya_gore_sirala(
+                    query, kayitlar, lambda k: k.get("title") or "")
             except Exception as exc:
                 print(f"{source_name} arama hatası: {exc}")
                 return source_name, []
