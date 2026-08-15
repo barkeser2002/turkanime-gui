@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List, Optional, Any, Dict, Callable
+import errno
 import json
 from tempfile import NamedTemporaryFile
 from os import remove
@@ -191,8 +192,20 @@ class AdapterVideo:
             proc.wait()  # İşlemin bitmesini bekle
             return proc
         except OSError as e:
-            # Binary uyumsuz olabilir, sistem mpv'yi dene
-            if e.winerror == 216:  # WinError 216: Uyumsuz binary
+            # Gömülü mpv çalıştırılamadı — sistem mpv'sine düş.
+            #
+            # `e.winerror` DOĞRUDAN okunamaz: o öznitelik yalnızca Windows'ta
+            # var. Linux/macOS'ta bu satır, asıl hatayı maskeleyen bir
+            # `AttributeError` fırlatıyordu ve yedeğe hiç geçilmiyordu — yani
+            # yedek tam olarak Windows dışı platformlarda ölü koddu. Yayın üç
+            # platforma da paket ürettiği için bu gerçek bir kusurdu.
+            #
+            # `getattr` her platformda çalışır. Windows'ta 216 "uyumsuz binary"
+            # demek; diğer platformlarda ENOEXEC (8) aynı anlama geliyor ve
+            # ikili hiç bulunamadığında da (ENOENT) sistem mpv'si denenmeli.
+            winerror = getattr(e, "winerror", None)
+            uyumsuz = winerror == 216 or e.errno in (errno.ENOEXEC, errno.ENOENT)
+            if uyumsuz:
                 print("bin/mpv.exe uyumsuz, sistem mpv deneniyor...")
                 sys_mpv = shutil.which("mpv")
                 if sys_mpv:
