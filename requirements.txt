@@ -16,3 +16,7 @@ beautifulsoup4>=4.12.0
 #              QtWebEngine kullanıyor, ek paket gerekmiyor.
 #   pypresence → yalnızca GUI'de (opsiyonel) → requirements-gui.txt
 # Üçü de koşulsuz kuruluyordu; CLI kullanıcısı bedelini boşuna ödüyordu.
+# Baslik eslestirmesinin KALITESINI belirliyor, opsiyonel degil:
+# yoksa title_match SequenceMatcher yedegine duser ve AniList
+# eslestirmesi "Frieren" gibi kisaltilmis adlarda None doner.
+rapidfuzz>=3.9

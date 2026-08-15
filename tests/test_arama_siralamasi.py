@@ -19,7 +19,8 @@ bonus veriyor.
 import pytest
 
 from turkanime_api.common.adapters import _alakaya_gore_sirala
-from turkanime_api.common.title_match import fuzzy_score, siralama_skoru
+from turkanime_api.common.title_match import (
+    _HAS_RF, fuzzy_score, siralama_skoru)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -82,17 +83,33 @@ def test_alakasiz_aday_dusuk():
     assert siralama_skoru("one piece", "Naruto") < 0.5
 
 
+def test_siralama_skoru_adaylari_ayirt_ediyor():
+    """Sıralamanın çalışması için skorların FARKLI olması şart.
+
+    Asıl gereklilik bu; `fuzzy_score`'un ne döndürdüğü ikincil.
+    """
+    adaylar = ["One Piece", "Koisuru One Piece", "Noroi no One Piece"]
+    assert len({round(siralama_skoru("one piece", a), 2) for a in adaylar}) == 3
+
+
+@pytest.mark.skipif(not _HAS_RF, reason="rapidfuzz yok; fuzzy_score yedek yolda")
 def test_fuzzy_score_bu_is_icin_yetersiz():
     """Neden ayrı bir fonksiyon gerektiğini kayda geçir.
 
-    Bu test `fuzzy_score`'u kusurlu ilan etmiyor — o "aynı seri mi?" sorusu
-    için doğru araç. Yalnızca sıralama için kullanılamayacağını sabitliyor;
-    biri gelip `siralama_skoru`'yu `fuzzy_score` ile değiştirmesin.
+    `fuzzy_score` kusurlu değil — "aynı seri mi?" sorusu için doğru araç.
+    Yalnızca SIRALAMA için kullanılamayacağını sabitliyor; biri gelip
+    `siralama_skoru`'yu onunla değiştirmesin.
+
+    DİKKAT — bu iddia yalnızca rapidfuzz varken geçerli: `partial_ratio`
+    sorgu adayın içinde geçtiğinde 1.0 verir. rapidfuzz yoksa `fuzzy_score`
+    `SequenceMatcher`'a düşer ve zaten ayırt eder, yani iddia anlamsızlaşır.
+    İlk hâli bu ayrımı yapmıyordu ve CI'da (rapidfuzz kurulu değilken)
+    kırmızı oldu — testin kendisi ortama bağlıydı. rapidfuzz artık gerçek
+    bir bağımlılık, ama test yine de kendi önkoşulunu beyan ediyor.
     """
     adaylar = ["One Piece", "Koisuru One Piece", "Noroi no One Piece"]
     assert len({round(fuzzy_score("one piece", a), 2) for a in adaylar}) == 1, \
         "fuzzy_score artık ayırt ediyorsa bu testi ve gerekçeyi gözden geçir"
-    assert len({round(siralama_skoru("one piece", a), 2) for a in adaylar}) == 3
 
 
 # ─────────────────────────────────────────────────────────────────────────────

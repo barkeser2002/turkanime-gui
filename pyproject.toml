@@ -34,6 +34,8 @@ include = [
 python = ">=3.9,<4"
 yt-dlp = { version = "*", extras = ["default", "curl-cffi"] }
 curl-cffi = ">=0.13"
+# Baslik eslestirme kalitesi buna bagli (bkz. requirements.txt notu).
+rapidfuzz = ">=3.9"
 pycryptodome = "*"
 appdirs = "*"
 questionary = "*"

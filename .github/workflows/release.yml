@@ -74,7 +74,7 @@ jobs:
           # PyYAML: test_release_workflow.py bu dosyayı ayrıştırıyor. Hiçbir
           # requirements dosyasında yok — kurulmazsa o 15 test SESSİZCE
           # atlanır (pytest.importorskip), yani kapı yalancı yeşil verir.
-          pip install PySide6 pytest pytest-qt PyYAML pylint
+          pip install PySide6 pytest pytest-qt PyYAML pylint rapidfuzz
 
       - name: pytest (ağ testleri hariç)
         env:
