@@ -164,9 +164,18 @@ class AdapterVideo:
         from ..common.utils import BIN_PATH
         from os.path import join, exists
         
-        # Önce bin/ klasöründeki mpv'yi dene, sonra sistem PATH'ini
-        mpv_path = join(BIN_PATH, "mpv.exe")
-        if not exists(mpv_path):
+        # Önce bin/ klasöründeki mpv'yi dene, sonra sistem PATH'ini.
+        # Uzantı sabit "mpv.exe" YAZILAMAZ: yayın Linux ve macOS paketi de
+        # üretiyor, o platformlarda gömülü ikili uzantısız "mpv" oluyor.
+        # Sabit ad yüzünden `exists()` hep False dönüyor ve paketle GELEN
+        # mpv hiç kullanılmıyordu — kullanıcı sisteminde mpv yoksa uygulama
+        # "MPV bulunamadı" diyordu, oysa ikili kutunun içindeydi.
+        mpv_path = next(
+            (aday for aday in (join(BIN_PATH, "mpv.exe"), join(BIN_PATH, "mpv"))
+             if exists(aday)),
+            None,
+        )
+        if not mpv_path:
             # Sistem PATH'inde mpv ara
             mpv_path = shutil.which("mpv")
             if not mpv_path:

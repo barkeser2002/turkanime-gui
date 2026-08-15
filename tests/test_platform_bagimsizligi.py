@@ -103,6 +103,41 @@ def test_sistem_mpv_de_yoksa_sessizce_donuyor(monkeypatch):
     assert video.oynat() is None
 
 
+@pytest.mark.parametrize("ikili", ["mpv.exe", "mpv"])
+def test_gomulu_mpv_her_platformda_bulunuyor(monkeypatch, tmp_path, ikili):
+    """Paketle gelen mpv, uzantısı ne olursa olsun kullanılmalı.
+
+    ESKİ HATA: yol `join(BIN_PATH, "mpv.exe")` olarak SABİTTİ. Yayın Linux
+    ve macOS paketi de üretiyor; o platformlarda ikili uzantısız "mpv"
+    oluyor, dolayısıyla `exists()` hep False dönüyor ve kutunun içindeki
+    mpv hiç kullanılmıyordu. Sistemde mpv kurulu değilse uygulama
+    "MPV bulunamadı" diyordu — oysa ikili paketin içindeydi.
+    """
+    from turkanime_api.sources import adapter as adapter_mod
+    from turkanime_api.common import utils as utils_mod
+
+    (tmp_path / ikili).write_text("sahte ikili", encoding="utf-8")
+    monkeypatch.setattr(utils_mod, "BIN_PATH", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda ad: None)  # sistemde mpv YOK
+
+    calisan = []
+
+    class Surec:
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(adapter_mod.sp, "Popen",
+                        lambda cmd, *a, **k: (calisan.append(cmd[0]), Surec())[1])
+
+    video = adapter_mod.AdapterVideo.__new__(adapter_mod.AdapterVideo)
+    video._url = "https://ornek.test/x.mp4"
+    video.referer = None
+    video.oynat()
+
+    assert calisan, "gömülü ikili bulunamadı, hiç çalıştırılmadı"
+    assert calisan[0].endswith(ikili), f"yanlış ikili: {calisan[0]}"
+
+
 @pytest.mark.parametrize("hata", [
     OSError(errno.EACCES, "Permission denied"),
     OSError(errno.EIO, "Input/output error"),
