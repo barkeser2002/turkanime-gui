@@ -17,6 +17,13 @@ açılışında ve her kayıt/temizleme sonrasında çalışıyor.
 AniList OAuth bilgileri buradan girilir ama `ayarlar.json`'a YAZILMAZ: istemci
 onları kendi dosyasında tutuyor (bkz. `prefs.anilist_yaz`). Client Secret alanı
 opsiyoneldir — boş bırakılınca giriş, sır gerektirmeyen Implicit akışa düşer.
+
+Cookie alındıktan sonra **oturum kimliği bağışı** teklif edilebiliyor. Buradaki
+sıralama bilinçli: çerez ÖNCE diske yazılır, bağış SONRA sorulur. Bağış
+diyaloğu ya da sunucu ne yaparsa yapsın kullanıcının kendi çerezi elinde kalır;
+bağışın başarısızlığı "kontrolü boşuna çözdüm" demek olmaz. Teklifin kendisi de
+iki kapıdan geçer: "kimlik paylas" ayarı açık olacak (varsayılan kapalı) VE
+kullanıcı diyaloğu onaylayacak — ayar tek başına hiçbir şey göndertmez.
 """
 from __future__ import annotations
 
@@ -214,6 +221,51 @@ class SettingsPage(QWidget):
         ol.addWidget(ohint)
         layout.addWidget(obox)
 
+        # ── Oturum kimliği bağışı ───────────────────────────────────────────
+        kbox = QFrame(); kbox.setObjectName("Panel")
+        kl = QVBoxLayout(kbox)
+        kl.setContentsMargins(16, 14, 16, 14)
+        kl.setSpacing(8)
+
+        kl.addWidget(QLabel("Oturum kimliği bağışı"))
+        khint = QLabel(
+            "Kapalıyken hiçbir kimlik gönderilmez. Açarsanız, çerez her "
+            "alındığında ne bağışladığınızı anlatan bir onay penceresi çıkar; "
+            "gönderim yalnızca o pencereyi onaylarsanız yapılır.")
+        khint.setObjectName("Muted")
+        khint.setWordWrap(True)
+        kl.addWidget(khint)
+
+        self.chkKimlikPaylas = QCheckBox(
+            "Çerez aldığımda oturum kimliğimi bağışlamayı sor")
+        kl.addWidget(self.chkKimlikPaylas)
+
+        kform = QFormLayout()
+        kform.setSpacing(8)
+        self.txtSunucu = QLineEdit()
+        self.txtSunucu.setPlaceholderText("https://sunucu.example (boş = kapalı)")
+        kform.addRow("Sunucu adresi", self.txtSunucu)
+        self.txtSunucuAnahtar = QLineEdit()
+        # Anahtar omuz üstünden okunmasın; adres/anahtar ikisi de boşken bağış
+        # ucu istemci tarafında zaten kapalı (bkz. `katki_dialog._uc`).
+        self.txtSunucuAnahtar.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txtSunucuAnahtar.setPlaceholderText("Sunucu API anahtarı")
+        kform.addRow("API anahtarı", self.txtSunucuAnahtar)
+        kl.addLayout(kform)
+
+        self.lblKimlik = QLabel()
+        self.lblKimlik.setObjectName("Muted")
+        self.lblKimlik.setWordWrap(True)
+        kl.addWidget(self.lblKimlik)
+
+        krow = QHBoxLayout()
+        self.btnBagisGeriCek = QPushButton("Bağışımı geri çek")
+        self.btnBagisGeriCek.clicked.connect(self._bagis_geri_cek)
+        krow.addWidget(self.btnBagisGeriCek)
+        krow.addStretch(1)
+        kl.addLayout(krow)
+        layout.addWidget(kbox)
+
         # ── Bypass ──────────────────────────────────────────────────────────
         bbox = QFrame(); bbox.setObjectName("Panel")
         bform = QFormLayout(bbox)
@@ -321,6 +373,12 @@ class SettingsPage(QWidget):
         self.txtOpenAniToken.setText(str(ayarlar.get("openani_token") or ""))
         self.txtOpenAniRefresh.setText(str(ayarlar.get("openani_refresh_token") or ""))
         self._show_cookie_state(str(ayarlar.get("tranime_cookie") or ""))
+        # Bağış anahtarının varsayılanı KAPALI: ayar dosyasında hiç yoksa
+        # (eski kurulum) açık görünmemeli.
+        self.chkKimlikPaylas.setChecked(bool(ayarlar.get("kimlik paylas", False)))
+        self.txtSunucu.setText(str(ayarlar.get("sunucu adresi") or ""))
+        self.txtSunucuAnahtar.setText(str(ayarlar.get("sunucu api anahtari") or ""))
+        self._show_kimlik_state(str(ayarlar.get("kimlik bagis id") or ""))
         self._reload_discord(bool(ayarlar.get("discord_rich_presence", True)))
         self._reload_anilist()
         # Kaynak modülleri çerez/jetonu süreç-içi global'de tutuyor ve her süreç
@@ -353,6 +411,9 @@ class SettingsPage(QWidget):
                 "flaresolverr_url": self.txtFlare.text().strip(),
                 "openani_token": self.txtOpenAniToken.text().strip(),
                 "openani_refresh_token": self.txtOpenAniRefresh.text().strip(),
+                "kimlik paylas": self.chkKimlikPaylas.isChecked(),
+                "sunucu adresi": self.txtSunucu.text().strip(),
+                "sunucu api anahtari": self.txtSunucuAnahtar.text().strip(),
             })
         except Exception as exc:
             self.lblStatus.error(f"Kaydedilemedi: {exc}")
@@ -424,6 +485,8 @@ class SettingsPage(QWidget):
         self._show_cookie_state(netscape)
         self.lblStatus.ok("TRAnimeİzle çerezi alındı ve kaydedildi.")
         self.btnCookie.setEnabled(True)
+        # Çerez ZATEN kaydedildi; bağış bundan sonra ve tamamen ayrı bir karar.
+        self._kimlik_bagisi_teklif(netscape)
 
     def _on_cookie_error(self, message: str) -> None:
         self.lblStatus.error(message)
@@ -440,6 +503,89 @@ class SettingsPage(QWidget):
         self._kimlikleri_uygula()
         self._show_cookie_state("")
         self.lblStatus.info("Çerez temizlendi.")
+
+    # ── Oturum kimliği bağışı ───────────────────────────────────────────────
+    @staticmethod
+    def _katki():
+        """`katki_dialog` modülü.
+
+        Modül olarak alınıyor (fonksiyon olarak değil): testler `bagis_gonder`/
+        `onay_al`'ı modül üzerinde değiştirebilsin, sayfa da her çağrıda güncel
+        hâlini görsün. Import fonksiyon içinde çünkü modül QtWidgets çekiyor.
+        """
+        from .. import katki_dialog
+        return katki_dialog
+
+    def _show_kimlik_state(self, bagis_id: str) -> None:
+        """Bağış durumunu yaz ve geri çekme düğmesini ona göre aç/kapa."""
+        bagis_id = str(bagis_id or "")
+        self.btnBagisGeriCek.setEnabled(bool(bagis_id))
+        if bagis_id:
+            self.lblKimlik.setText(
+                f"Bağış yapıldı — numara: {bagis_id}. "
+                "İstediğiniz an geri çekebilirsiniz.")
+            self.lblKimlik.setStyleSheet("color: #00b894;")
+        else:
+            self.lblKimlik.setText("Bağışlanmış oturum kimliği yok.")
+            self.lblKimlik.setStyleSheet("")
+
+    def _kimlik_bagisi_teklif(self, netscape: str) -> None:
+        """Ayar açıksa onay diyaloğunu göster; onay yoksa HİÇBİR ŞEY gönderme.
+
+        Erken dönüşlerin sırası önemli: ağa çıkan tek satır (`bagis_gonder`)
+        hem ayar hem onay kapısının ardındadır ve arada başka bir çıkış yolu
+        yoktur.
+        """
+        if not netscape:
+            return
+        try:
+            ayarlar: Dict[str, Any] = self._dosya().ayarlar or {}
+        except Exception:
+            return                      # ayar okunamıyorsa teklif de etme
+        if not bool(ayarlar.get("kimlik paylas", False)):
+            return                      # kapalı: diyalog bile açılmaz
+        katki = self._katki()
+        if not katki.onay_al(katki.KAYNAK_TRANIME, self):
+            self.lblStatus.info("Oturum kimliği bağışlanmadı.")
+            return
+        try:
+            bagis_id = katki.bagis_gonder(netscape, katki.KAYNAK_TRANIME, ayarlar)
+            self._dosya().set_ayar("kimlik bagis id", bagis_id)
+        except Exception as exc:
+            self.lblStatus.error(f"Kimlik bağışı gönderilemedi: {exc}")
+            return
+        self._show_kimlik_state(bagis_id)
+        self.lblStatus.ok("Oturum kimliği bağışlandı. "
+                          "Geri çekmek için “Bağışımı geri çek”.")
+
+    def _bagis_geri_cek(self) -> None:
+        """Bağışı sunucudan sil, sonra numarayı ayardan düş.
+
+        Sıra tersine dönemez: numara önce silinseydi ve silme isteği düşseydi
+        kayıt sunucuda kalır, kullanıcının onu silecek anahtarı ise kaybolurdu.
+        """
+        try:
+            ayarlar: Dict[str, Any] = self._dosya().ayarlar or {}
+        except Exception as exc:
+            self.lblStatus.error(f"Ayarlar okunamadı: {exc}")
+            return
+        bagis_id = str(ayarlar.get("kimlik bagis id") or "")
+        if not bagis_id:
+            self.lblStatus.info("Geri çekilecek bağış yok.")
+            return
+        try:
+            self._katki().bagis_geri_cek(bagis_id, ayarlar)
+        except Exception as exc:
+            self.lblStatus.error(f"Bağış geri çekilemedi: {exc}")
+            return
+        try:
+            self._dosya().set_ayar("kimlik bagis id", "")
+        except Exception as exc:
+            self.lblStatus.error(
+                f"Bağış sunucudan silindi ama numara yerelde kaldı: {exc}")
+            return
+        self._show_kimlik_state("")
+        self.lblStatus.ok("Bağışınız geri çekildi ve sunucudan silindi.")
 
     # ── Discord / bakım ─────────────────────────────────────────────────────
     def _reload_discord(self, acik: bool) -> None:

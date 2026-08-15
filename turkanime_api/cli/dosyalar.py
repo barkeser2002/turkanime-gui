@@ -167,7 +167,23 @@ class Dosyalar:
             "openani_token": "",
             "openani_refresh_token": "",
             "flaresolverr_url": "http://node-kyb.bariskeser.com:8191",
-            "cookie_tutorial_dismissed": False
+            "cookie_tutorial_dismissed": False,
+            # Oturum kimliği bağışı — VARSAYILAN KAPALI ve öyle kalmalı.
+            # Açıkken bile tek başına hiçbir şey göndermez: çerez alındığında
+            # yalnızca onay diyaloğunun GÖSTERİLMESİNE izin verir, gönderim
+            # kullanıcının o diyaloğu onaylamasına bağlıdır
+            # (bkz. `gui.qt.katki_dialog`).
+            "kimlik paylas": False,
+            # Sunucunun verdiği bağış numarası; geri çekmenin tek anahtarı.
+            # Bağışçıyı sunucuda tanımlayan tek şey bu olduğu için boşalması
+            # "bağışı artık silemiyorum" demektir — geri çekme başarılı olmadan
+            # temizlenmez.
+            "kimlik bagis id": "",
+            # Sunucu adresi/anahtarı koda gömülü DEĞİL: gömülü olsaydı
+            # istemcinin her kopyası aynı sunucuya kimlik göndermeye hazır
+            # gelirdi. Boş bırakılırsa bağış ucu istemci tarafında da kapalıdır.
+            "sunucu adresi": "",
+            "sunucu api anahtari": ""
         }
         # Gerekli dosyalar eğer daha önce yaratılmadıysa yarat.
         if not path.isdir(".git") and not path.isdir(self.ta_path):
