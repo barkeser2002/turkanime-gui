@@ -79,7 +79,13 @@ jobs:
       - name: pytest (ağ testleri hariç)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/
+        # `python -m pytest` — çıplak `pytest` DEĞİL. Aradaki fark bu kapıyı
+        # bir kez tamamen değersizleştirdi: `python -m` çalışma dizinini
+        # sys.path'e ekler, konsol betiği eklemez. Paket kurulu olmadığı için
+        # v10.0.0 etiketinde 35 test modülü "No module named 'turkanime_api'"
+        # ile toplanamadı — yerelde 855 test yeşilken CI kırmızıydı.
+        # Yerel komutla birebir aynı olması, "bende çalışıyor"u bitiriyor.
+        run: python -m pytest tests/
 
       - name: pylint (yalnızca hatalar)
         run: |

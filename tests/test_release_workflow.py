@@ -243,8 +243,12 @@ def test_test_isi_gercekten_pytest_ve_pylint_kosuyor():
         # Kurulum satırını sayma: "pip install … pytest" pytest'i ÇALIŞTIRMAZ.
         return any(s.split()[0] == arac for s in satirlar if s.split())
 
-    assert _calistiriyor("pytest"), "test işi pytest çalıştırmıyor"
-    assert _calistiriyor("pylint"), "test işi pylint çalıştırmıyor"
+    assert _calistiriyor("pytest") or any(
+        s.startswith("python -m pytest") for s in satirlar
+    ), "test işi pytest çalıştırmıyor"
+    assert _calistiriyor("pylint") or any(
+        s.startswith("python -m pylint") for s in satirlar
+    ), "test işi pylint çalıştırmıyor"
     # `|| true` yasağı YALNIZCA kapının kendisi için. Niyet "kapı
     # susturulamasın"dı, "hiçbir yerde || true olmasın" değil: sistem paketi
     # kurulumunda meşru — ayna arızası bir sürümü rehin almamalı (v10.0.0
@@ -255,6 +259,28 @@ def test_test_isi_gercekten_pytest_ve_pylint_kosuyor():
     assert not susturulan, (
         f"kapı `|| true` ile susturulmuş: {susturulan} — hiçbir zaman "
         "kırmızıya dönemez (main.yml'deki lint adımlarının hatası)"
+    )
+
+
+def test_pytest_paketi_import_edebilecek_sekilde_cagriliyor():
+    """CI'da paket import edilemezse kapı 35 toplama hatasıyla düşer.
+
+    ÖLÇÜLDÜ (v10.0.0 etiketi): `pytest tests/` ile koşulduğunda tüm test
+    modülleri `ModuleNotFoundError: No module named 'turkanime_api'` verdi,
+    oysa yerelde 855 test yeşildi. Fark tek kelimede: `python -m pytest`
+    çalışma dizinini `sys.path`'e ekler, konsol betiği eklemez.
+
+    Kabul edilen iki yol var: ya `python -m pytest`, ya paketi kuran bir
+    adım (`pip install -e .`). İkisi de yoksa kapı ilk koşuda patlar.
+    """
+    satirlar = _komut_satirlari("test")
+    python_m = any(s.startswith("python -m pytest") for s in satirlar)
+    kurulum = any("pip install" in s and (" -e ." in s or s.rstrip().endswith(" ."))
+                  for s in satirlar)
+    assert python_m or kurulum, (
+        "pytest paketi import edemeyecek şekilde çağrılıyor: ya "
+        "`python -m pytest` kullan ya da paketi kur (`pip install -e .`). "
+        f"Bulunan komutlar: {[s for s in satirlar if 'pytest' in s]}"
     )
 
 
