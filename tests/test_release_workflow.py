@@ -245,9 +245,16 @@ def test_test_isi_gercekten_pytest_ve_pylint_kosuyor():
 
     assert _calistiriyor("pytest"), "test işi pytest çalıştırmıyor"
     assert _calistiriyor("pylint"), "test işi pylint çalıştırmıyor"
-    assert not any("|| true" in s for s in satirlar), (
-        "adım `|| true` ile bitiyor — kapı hiçbir zaman kırmızıya dönemez "
-        "(main.yml'deki lint adımlarının hatası)"
+    # `|| true` yasağı YALNIZCA kapının kendisi için. Niyet "kapı
+    # susturulamasın"dı, "hiçbir yerde || true olmasın" değil: sistem paketi
+    # kurulumunda meşru — ayna arızası bir sürümü rehin almamalı (v10.0.0
+    # etiketinde `apt-get update` 8+ dakika asılı kaldı). İlk hâli bu ayrımı
+    # yapmıyordu ve tam o düzeltmeyi engelledi.
+    susturulan = [s for s in satirlar
+                  if "|| true" in s and ("pytest" in s or "pylint" in s)]
+    assert not susturulan, (
+        f"kapı `|| true` ile susturulmuş: {susturulan} — hiçbir zaman "
+        "kırmızıya dönemez (main.yml'deki lint adımlarının hatası)"
     )
 
 

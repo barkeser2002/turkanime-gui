@@ -46,10 +46,24 @@ jobs:
           python-version: '3.12'
 
       - name: Sistem bağımlılıkları (offscreen Qt)
+        # Ayna arızası bir SÜRÜMÜ engellememeli. Ölçüldü: v10.0.0 etiketinde
+        # `apt-get update` azure.archive.ubuntu.com'a erişemeyip 8+ dakika
+        # asılı kaldı (log baştan sona "Ign:" satırı) ve `bash -e` altında
+        # işi düşürecekti. Adım artık hataya dayanıklı ve süre sınırlı.
+        #
+        # Kütüphaneler gerçekten eksikse bu SESSİZ bir hata değil: PySide6
+        # import'u ya da ilk QApplication pytest'te yüksek sesle düşer, yani
+        # kapı görevini yapmaya devam eder. Riskli olan, kurulumun kendisinin
+        # yayını rehin almasıydı.
+        continue-on-error: true
+        timeout-minutes: 4
         run: |
-          sudo apt-get update
+          sudo apt-get update \
+            -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 || true
           sudo apt-get install -y --no-install-recommends \
-            libegl1 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2t64
+            libegl1 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2t64 || true
 
       - name: Bağımlılıklar
         run: |
