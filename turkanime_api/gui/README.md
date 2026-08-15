@@ -5,7 +5,7 @@ dönmek gerekirse `pre-ctk-removal` etiketi güvenlik ağıdır.
 ## Derleme (lokal)
 
 Önkoşullar:
-- Python 3.10–3.12
+- Python 3.9+ (`pyproject.toml`: `>=3.9,<4`; sınıflandırıcılarda 3.9 – 3.13)
 - Bağımlılıklar (GUI):
 
 ```
@@ -63,8 +63,10 @@ karantinasını kaldırmanız gerekebilir.
 
 ## CI / Release
 
-GitHub Actions, tag (vX.Y.Z) atıldığında üç işletim sistemi için derler ve
-release'e ekler:
+GitHub Actions, tag (vX.Y.Z) atıldığında **önce test kapısından geçirir**
+(`pytest tests/` + `pylint -E`), sonra üç işletim sistemi için derler ve
+release'e ekler. İş grafiği `test → build → {release, pypi}`; testler
+kırmızıysa etiket ne Release'e ne PyPI'a gider.
 - Windows: `turkanime-gui-windows.zip`
 - Linux: `turkanime-gui-linux.zip`
 - macOS: `turkanime-gui-macos.zip`

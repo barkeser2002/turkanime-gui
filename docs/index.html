@@ -222,6 +222,26 @@
       </div>
     </details>
 
+    <!-- V10.0.0.md Accordion -->
+    <details id="details-surum">
+      <summary>Sürüm Notları (v10.0.0)</summary>
+      <div class="content-wrapper">
+        <div id="content-surum" class="markdown-body">
+          <div class="loading-spinner">Yükleniyor...</div>
+        </div>
+      </div>
+    </details>
+
+    <!-- ANILIST_OAUTH.md Accordion -->
+    <details id="details-anilist">
+      <summary>AniList Girişi</summary>
+      <div class="content-wrapper">
+        <div id="content-anilist" class="markdown-body">
+          <div class="loading-spinner">Yükleniyor...</div>
+        </div>
+      </div>
+    </details>
+
     <!-- DISCLAIMER.md Accordion -->
     <details id="details-disclaimer">
       <summary>Sorumluluk Reddi (Disclaimer)</summary>
@@ -235,17 +255,29 @@
   </main>
 
   <script>
-    // Configuration for local repositories and GitHub Pages (uses relative paths if deployed)
-    const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-      ? '../' // Local testing (index.html is in docs/, md flies are in root)
-      : '../'; // On GitHub pages, if deployed from /docs folder but md files are at root.
-               // Adjust if your GitHub pages serves from root directly. Usually `repo/README.md` can be fetched from `../README.md` if the page is at `repo/docs/index.html`.
+    // Belgeler bu dosyanın YANINDAN yüklenir (docs/ içindeki kopyalar).
+    //
+    // Eskiden '../' kullanılıyordu, yani depo kökündeki .md dosyaları
+    // hedefleniyordu. GitHub Pages /docs klasöründen yayın yaptığında sitenin
+    // kökü docs/ olur ve '../' site kökünün DIŞINA çıkar — istek 404 döner,
+    // sayfada yalnızca hata mesajı kalır. './' her iki yapılandırmada da
+    // doğru çözülür: göreli yol her zaman index.html'in bulunduğu dizine göre
+    // hesaplanır ve o dizin docs/'tur.
+    //
+    // docs/ altındaki kopyalar kök dosyalardan mekanik olarak türetiliyor
+    // (yalnızca göreli bağlantılar farklı), bu yüzden ayrışma riski yok.
+    const baseUrl = './';
 
-    // Define the files to load and their corresponding target element IDs
+    // Yüklenecek belgeler. Yeni bir belge eklemek için önce main içine bir
+    // <details> bloğu koy, sonra aşağıya aynı kimlikle bir satır ekle.
+    // Eşleme artık dizi sırasına değil `details` kimliğine bağlı; araya belge
+    // eklemek eski satırları kaydırmıyor.
     const docFiles = [
-      { id: 'content-readme', file: 'README.md' },
-      { id: 'content-provider', file: 'ANIME_PROVIDER_GUIDE.md' },
-      { id: 'content-disclaimer', file: 'DISCLAIMER.md' }
+      { details: 'details-readme',     id: 'content-readme',     file: 'README.md' },
+      { details: 'details-provider',   id: 'content-provider',   file: 'ANIME_PROVIDER_GUIDE.md' },
+      { details: 'details-surum',      id: 'content-surum',      file: 'V10.0.0.md' },
+      { details: 'details-anilist',    id: 'content-anilist',    file: 'ANILIST_OAUTH.md' },
+      { details: 'details-disclaimer', id: 'content-disclaimer', file: 'DISCLAIMER.md' }
     ];
 
     // Function to load and render markdown
@@ -282,11 +314,8 @@
     detailsElements.forEach(details => {
       details.addEventListener('toggle', (e) => {
         if (details.open) {
-          // Identify which file to load based on the details ID
-          let targetConf = null;
-          if(details.id === 'details-readme') targetConf = docFiles[0];
-          else if(details.id === 'details-provider') targetConf = docFiles[1];
-          else if(details.id === 'details-disclaimer') targetConf = docFiles[2];
+          // Hangi belge yüklenecek — kimliğe göre, dizi sırasına göre değil.
+          const targetConf = docFiles.find(d => d.details === details.id) || null;
 
           if (targetConf) {
             const container = document.getElementById(targetConf.id);

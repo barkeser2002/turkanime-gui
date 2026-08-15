@@ -43,7 +43,7 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
-- **Testler:** 715 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Testler:** 723 otomatik test (pytest + pytest-qt), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 

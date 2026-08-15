@@ -310,8 +310,8 @@ def _search_remote(query: str, limit: int = 20, timeout: int = 60) -> List[Tuple
             timeout=timeout
         )
         response.raise_for_status()
-        results = response.json()
-        return results if isinstance(results, list) else []
+        # Bölüm ucuyla aynı sözleşme sorunu: sunucu sözlük döndürüyor.
+        return _ikiliye_cevir(response.json())[:limit]
     except Exception as e:
         print(f"[Anizle] Uzak sunucu arama hatası: {e}")
         return []
@@ -441,6 +441,39 @@ def _fetch_all_episodes_from_page(slug: str, timeout: int = 60) -> List[Tuple[st
         return _get_episodes_remote(slug, timeout)
 
 
+def _ikiliye_cevir(kayitlar: Any) -> List[Tuple[str, str]]:
+    """Uzak sunucu yanıtını `(slug, başlık)` ikililerine çevir.
+
+    Sunucu JSON sözlüğü döndürüyor:
+        arama   -> [{"id": "naruto", "title": "Naruto"}, …]
+        bölümler-> [{"id": "naruto-218-bolum", "title": "218. Bölüm", …}, …]
+
+    Tüketiciler ise `for slug, baslik in …` diyor (imza da
+    `List[Tuple[str, str]]`). Eskiden yanıt olduğu gibi döndürülüyordu ve
+    sözlük ikiye açılamadığı için `ValueError: too many values to unpack`
+    fırlıyordu. Uzak yol tam da ana site engellendiğinde devreye girdiği için
+    hata en çok ihtiyaç duyulan anda ortaya çıkıyordu.
+
+    Uzun süre görünmedi çünkü sunucudaki kazıyıcı bozuktu ve boş liste
+    dönüyordu; sunucu onarılınca hata canlıya çıktı.
+    """
+    if not isinstance(kayitlar, list):
+        return []
+    ikili: List[Tuple[str, str]] = []
+    for kayit in kayitlar:
+        if isinstance(kayit, dict):
+            slug = kayit.get("id") or kayit.get("slug") or kayit.get("episode_slug")
+            baslik = (kayit.get("title") or kayit.get("label")
+                      or kayit.get("episode_title") or slug)
+        elif isinstance(kayit, (list, tuple)) and len(kayit) >= 2:
+            slug, baslik = kayit[0], kayit[1]
+        else:
+            continue
+        if slug:
+            ikili.append((str(slug), str(baslik or slug)))
+    return ikili
+
+
 def _get_episodes_remote(slug: str, timeout: int = 60) -> List[Tuple[str, str]]:
     """Uzak sunucu üzerinden bölümleri al (fallback)."""
     try:
@@ -449,8 +482,7 @@ def _get_episodes_remote(slug: str, timeout: int = 60) -> List[Tuple[str, str]]:
             timeout=timeout
         )
         response.raise_for_status()
-        results = response.json()
-        return results if isinstance(results, list) else []
+        return _ikiliye_cevir(response.json())
     except Exception as e:
         print(f"[Anizle] Uzak sunucu bölüm hatası: {e}")
         return []
