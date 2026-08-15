@@ -25,6 +25,7 @@ from turkanime_server.crawler.eslestirme import bolum_slugu, slugla
 from turkanime_server.crawler.kaynaklar import (
     KaynakDefteri, KaynakTanimi, KaynakUclari, KosulluSonuc,
 )
+from turkanime_server.crawler import nezaket
 from turkanime_server.crawler.nezaket import (
     GunlukTavanAsildi, KaynakDinlenmede, NezaketBekcisi,
 )
@@ -426,6 +427,39 @@ def test_engellenme_kaynagi_kapatir_digerleri_calismaya_devam_eder(tmp_path):
     assert saglam.cagri["ara"] == 3, "sağlam kaynak çalışmaya devam etmeliydi"
     assert ozet.yarim_kaldi is True, "işi yarım kalan koşu sessiz kalmamalı"
     tarayici.kapat()
+
+
+def test_challenge_sayfasi_engellenme_sayiliyor(tmp_path):
+    """WAF/Cloudflare challenge sayfası "geçici hata" değil, engellenmedir.
+
+    Cloudflare'ın asıl sayfa başlığı "Just a moment"; bu iz yalnızca istemci
+    tarafındaki listede vardı. Sunucu kendi kopyasını tuttuğu için CF'e takılan
+    kaynak geçici hata sayılıp dinlendiriliyor ve tekrar tekrar deneniyordu —
+    hem boşuna hem nezaketsiz.
+    """
+    ayarlar = _ayarlar(tmp_path, tohumlar=("a", "b", "c"))
+    engellenen = SirayaGoreHata(1, RuntimeError("Just a moment... | anizle.co"))
+    saglam = SahteKaynak(_katalog("Naruto", "n1", bolum_sayisi=1))
+    tarayici = Tarayici(ayarlar, defter=_defter(anizle=engellenen, openani=saglam))
+    ozet = tarayici.calistir(arsiv_yaz=False)
+
+    assert ozet.engellenen == ["anizle"]
+    assert engellenen.cagri == 1, "challenge veren kaynağa tur boyunca dokunulmamalı"
+    tarayici.kapat()
+
+
+@pytest.mark.parametrize("iz", [
+    "Just a moment", "Checking your browser", "challenge-platform",
+    "Security Verification", "turn JavaScript on",
+])
+def test_istemciyle_ayni_challenge_izleri(iz):
+    """Sunucu ile istemcinin challenge listesi ayrışmamalı (tek kaynak)."""
+    assert nezaket.hata_turu(RuntimeError(f"Beklenmeyen sayfa: {iz}")) == nezaket.ENGELLENME
+
+
+def test_duz_ag_hatasi_challenge_sanilmiyor():
+    """Geniş iz listesi yanlış pozitif üretmemeli."""
+    assert nezaket.hata_turu(RuntimeError("bağlantı koptu")) == nezaket.GECICI
 
 
 def test_gunluk_tavan_dolan_kosu_yarim_sayilmiyor(tmp_path):

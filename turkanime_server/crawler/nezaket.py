@@ -51,10 +51,22 @@ _DURUM_DESENI = re.compile(
 )
 
 # Engellenmenin durum kodu olmayan hâlleri: WAF sayfası 200 ile de gelebilir.
-_ENGEL_IZLERI = (
+#
+# Challenge sayfası izlerini istemcinin listesinden alıyoruz: burada ikinci bir
+# kopya tutmak ayrışmaya yol açmıştı — Cloudflare'ın asıl sayfa başlığı olan
+# "Just a moment" yalnızca istemci listesinde vardı, dolayısıyla CF'e takılan
+# bir kaynak "engellenme" yerine "geçici hata" sayılıp dinlendirilip tekrar
+# tekrar deneniyordu (hem boşuna hem nezaketsiz).
+try:
+    from turkanime_api.common.cf_qt_solver import CHALLENGE_MARKERS as _CHALLENGE
+except Exception:                                   # sunucu tek başına çalışabilmeli
+    _CHALLENGE = ("Just a moment", "Checking your browser", "challenge-platform")
+
+_ENGEL_IZLERI = tuple({
+    *(m.lower() for m in _CHALLENGE),
     "captcha", "cloudflare", "access denied", "forbidden", "rate limit",
     "too many requests", "banned", "blocked", "erişim engellendi",
-)
+})
 
 
 class NezaketEngeli(Exception):
