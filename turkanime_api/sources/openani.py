@@ -135,9 +135,16 @@ class OpenAniAdapter:
         if not base:
             return []
         variants = [base]
-        # bilinen yaygın eklentileri dene
-        for suffix in ("-shippuden", "-season-1", "-1", "-2", "-tv", "-the-movie"):
+        # Genel devam/biçim ekleri. "-shippuden" buradan çıkarıldı: yalnızca
+        # Naruto'ya özgü, üstelik sitenin yazımı "shippuuden" — yani her sorguya
+        # eklenen ("one-piece-shippuden" gibi) anlamsız bir probe'du.
+        for suffix in ("-season-1", "-1", "-2", "-tv", "-the-movie"):
             variants.append(base + suffix)
+        # Uzun adlar sık sık kısaltılmış slug alıyor ("shingeki-no-kyojin").
+        # İlk iki kelimeyi de dene; tek kelimelik sorguda kopya üretmiyor.
+        parcalar = base.split("-")
+        if len(parcalar) > 2:
+            variants.append("-".join(parcalar[:2]))
         return variants
 
     def _light_get(self, url: str, headers: dict):
@@ -159,7 +166,20 @@ class OpenAniAdapter:
             return self.session.get(url, headers=headers, allow_redirects=False)
 
     def _probe_slug(self, slug: str) -> Optional[Dict[str, Any]]:
-        """Doğrudan /anime/<slug> URL'ini deneyip varsa anime kartını döndür."""
+        """Doğrudan /anime/<slug> URL'ini deneyip varsa anime kartını döndür.
+
+        Varlık sinyali sayfa **başlığı**: gerçek anime "One Piece | OpenAnime",
+        olmayan slug ise HTTP 500 + "undefined | OpenAnime" döndürüyor.
+
+        Eskiden doğrulama `const data` içinde slug aramaktı. O blok sayfaya
+        özel değil — sitenin her sayfasında duran 46 kayıtlık "son eklenenler"
+        katalogu. Sonuç iki yönlü yanlıştı: kataloğun içindeki her slug hangi
+        URL istenirse istensin "bulundu" sayılıyor, dışındaki her anime ise
+        sitede gerçekten varken bulunamıyordu. Ölçüm: naruto, bleach,
+        jujutsu-kaisen, death-note, shingeki-no-kyojin — hepsi sitede var,
+        hiçbiri eski kontrolden geçemiyordu. Arama pratikte 46 animeye
+        kilitlenmişti.
+        """
         url = self.PROVIDER_CONFIG["anime_url"].format(anime_id=slug)
         headers = {"User-Agent": self.PROVIDER_CONFIG["user_agent"]}
         try:
@@ -167,34 +187,9 @@ class OpenAniAdapter:
             if r.status_code != 200:
                 return None
             html = r.text if hasattr(r, "text") else r.content.decode("utf-8", "ignore")
-            # Sayfanın gerçekten o anime'ye ait olduğunu doğrula:
-            # const data içinde aynı slug geçmeli
-            m = re.search(r'const data = (\[.*?\]);', html, re.DOTALL)
-            if not m:
+            title = self._sayfa_basligi(html)
+            if not title:
                 return None
-            data_text = m.group(1)
-            if f'slug:"{slug}"' not in data_text and f'"slug":"{slug}"' not in data_text:
-                return None
-            # Başlık çıkar — slug'a en yakın english/turkish/romaji alanını bul.
-            # const data içinde her anime objesi { ... english:"X" ... slug:"Y" ... } formundadır.
-            title = slug.replace("-", " ").title()
-            slug_idx = data_text.find(f'slug:"{slug}"')
-            if slug_idx >= 0:
-                # Slug etrafındaki ±2000 karakteri tara
-                window = data_text[max(0, slug_idx - 2000):slug_idx + 200]
-                # En son geçen english > turkish > romaji başlığını al (en yakın)
-                best = None
-                for key in ("english", "turkish", "romaji"):
-                    for tm in re.finditer(rf'{key}:"([^"]+)"', window):
-                        best = (key, tm.group(1))
-                if best:
-                    t = best[1]
-                    try:
-                        t = t.encode("ascii", "ignore").decode("unicode_escape")
-                    except Exception:
-                        pass
-                    if t:
-                        title = t
             return {
                 "title": title,
                 "url": url,
@@ -203,6 +198,22 @@ class OpenAniAdapter:
             }
         except Exception:
             return None
+
+    @staticmethod
+    def _sayfa_basligi(html: str) -> Optional[str]:
+        """`<title>` içinden anime adı; sayfa geçersizse ``None``.
+
+        Site adı ayracı olarak hem "|" hem "-" kullanılabiliyor; adın kendisi
+        "|" içermediği için ilk parça güvenli.
+        """
+        m = re.search(r"<title[^>]*>([^<]*)</title>", html, re.IGNORECASE)
+        if not m:
+            return None
+        ham = m.group(1).strip()
+        ad = ham.split("|")[0].strip()
+        if not ad or ad.lower() in ("undefined", "null", "openanime"):
+            return None
+        return ad
 
     def search_anime(self, query: str) -> List[Dict[str, Any]]:
         """Anime arama işlemi.
