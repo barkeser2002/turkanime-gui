@@ -175,11 +175,23 @@ def indir_ve_dogrula(url: str, hedef_dizin: str, checksum: str = "",
             if ilerleme is not None:
                 ilerleme(inen, toplam)
 
-    if checksum:
-        if dosya_ozeti(yol).lower() != str(checksum).strip().lower():
-            _sil(yol)
-            raise IndirmeHatasi(
-                "İndirilen dosyanın SHA-256 özeti uyuşmuyor; dosya silindi.")
+    # Boş checksum "doğrulamayı atla" DEĞİL, "sürüm bilgisi eksik" demektir.
+    # Eskiden `if checksum:` yazıyordu ve boş string doğrulama bloğuna hiç
+    # girmiyordu — yayındaki `version.json` üç platformda da boş checksum
+    # taşıdığı için güncelleme kanalında bütünlük doğrulaması fiilen sıfırdı.
+    # Yayıncı tarafı da bunu üretebiliyor: artefakt eksikse özet "" yazılıyor.
+    # Kullanıcıya doğrulanmamış ikili çalıştırtmaktansa durmak doğru.
+    beklenen = str(checksum or "").strip()
+    if not beklenen:
+        _sil(yol)
+        raise IndirmeHatasi(
+            "Sürüm bilgisinde SHA-256 özeti yok; indirilen dosya "
+            "doğrulanamadığı için silindi. Sürümü GitHub Releases "
+            "sayfasından elle indirin.")
+    if dosya_ozeti(yol).lower() != beklenen.lower():
+        _sil(yol)
+        raise IndirmeHatasi(
+            "İndirilen dosyanın SHA-256 özeti uyuşmuyor; dosya silindi.")
     return yol
 
 

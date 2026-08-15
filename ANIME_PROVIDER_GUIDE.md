@@ -1,239 +1,235 @@
-# TürkAnime GUI - Anime Sağlayıcı Ekleme Rehberi
+# TürkAnime GUI — Anime Sağlayıcı Ekleme Rehberi
 
-Bu rehber, TürkAnime GUI'ya yeni anime sağlayıcıları nasıl ekleyeceğinizi açıklar.
+Bu rehber, TürkAnime GUI'ye yeni bir anime kaynağı eklemeyi anlatır.
+
+> **Bu rehber 10.0.0 ile yeniden yazıldı.** Önceki sürümü `sources/__init__.py`
+> içindeki `PROVIDERS` sözlüğüne ve `register_provider()` fonksiyonuna
+> yönlendiriyordu. **O yol artık kullanılmıyor:** `register_provider` /
+> `get_enabled_providers` üretim kodunda hiç çağrılmıyor ve `PROVIDERS`'ın
+> girdilerinin çoğu zaten `"adapter": None` diyor. Rehberi harfiyen uygulayan
+> biri, kaynağını çalışır sanıp arayüzde `UnsupportedSource` hatası alıyordu.
+> Aşağıdaki adımlar **gerçek** kayıt noktalarını kullanır.
 
 ## Gereksinimler
 
-- Python 3.8+
-- BeautifulSoup4
-- requests
-- py7zr (7z dosyaları için)
-- tarfile (Linux/macOS için)
+- **Python 3.9+** (`pyproject.toml`: `>=3.9,<4`; test edilen: 3.9 – 3.13)
+- `requests`, `curl_cffi`, `beautifulsoup4` — hepsi `requirements.txt`'te
+
+## Mimariye kısa bakış
+
+Bir kaynağın uygulamaya bağlanması **iki ayrı yerde** olur:
+
+| Ne | Nerede | Ne yapar |
+|----|--------|----------|
+| **Arama** | `turkanime_api/common/adapters.py` → `SearchEngine.adapters` | Kaynağı paralel aramaya dâhil eder |
+| **Bölüm + stream** | `turkanime_api/gui/qt/sources_bridge.py` | Arayüzün bölüm listesi ve oynatma/indirme yolu |
+
+İkisini de yapmazsan kaynak yarım kalır: aramada görünür ama bölümlerine
+tıklayınca `UnsupportedSource` alırsın.
+
+### İki entegrasyon biçimi
+
+`sources_bridge.py` iki stil tanıyor:
+
+- **Fonksiyon stili** (`FUNCTION_SOURCES`) — modül üç fonksiyon dışa verir:
+  arama, bölümler, stream'ler. **Yeni kaynaklar için önerilen budur.**
+  Örnekler: `sources/openani.py`, `sources/tranimaci.py`, `sources/animedepo.py`
+- **Builder stili** (`BUILDERS`) — kaynağa özgü bir kurucu fonksiyon, nesne
+  döndürür. Eski kaynaklar böyle: TürkAnime, TRAnimeİzle, AnimeciX, Anizle.
+
+Ayrıca `METADATA_ONLY = {"AniList"}` var: aramada yer alır ama video sunmaz.
+
+> `sources/adapter_template.py` dosyasına **dokunmayın.** 527 satır ve hiçbir
+> yerden import edilmiyor; içindeki çıplak `except:` bloğu kopyalayan her yeni
+> kaynağa taşınır. Örnek olarak gerçekten kullanılan bir kaynağı okuyun.
+
+---
 
 ## Adımlar
 
-### 1. Template'i Kopyalayın
+### 1. Kaynak modülünü yaz
 
-```bash
-cp turkanime_api/sources/adapter_template.py turkanime_api/sources/my_provider.py
-```
-
-### 2. Sağlayıcınızı Düzenleyin
-
-`my_provider.py` dosyasını açın ve aşağıdaki değişiklikleri yapın:
+`turkanime_api/sources/my_provider.py` oluştur. Fonksiyon stili için üç uç yeter:
 
 ```python
-class MyProviderAdapter(TemplateAnimeAdapter):
-    """My Provider için adapter."""
+"""My Provider kaynağı."""
+from __future__ import annotations
 
-    PROVIDER_CONFIG = {
-        "name": "My Provider",
-        "base_url": "https://myprovider.com",
-        "search_url": "https://myprovider.com/search?q={query}",
-        "anime_url": "https://myprovider.com/anime/{anime_id}",
-        "supported_resolutions": ["360p", "480p", "720p", "1080p"],
-        "rate_limit": 2,  # 2 saniye bekleme
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "timeout": 15,
-    }
-```
+from typing import Any, Dict, List, Tuple
 
-### 3. Metodları Implement Edin
+from ..common.cf_bypass import get_cf_session
 
-#### search_anime(query: str)
+BASE_URL = "https://myprovider.com"
+ZAMAN_ASIMI = 15
 
-Sağlayıcınızda anime arama işlemini gerçekleştirin:
 
-```python
-def search_anime(self, query: str) -> List[Dict[str, Any]]:
-    search_url = self.PROVIDER_CONFIG['search_url'].format(query=query)
-    response = self._make_request(search_url)
-
-    if not response:
+def search_my_provider(query: str, limit: int = 20) -> List[Tuple[str, str]]:
+    """(slug, başlık) ikilileri döndür."""
+    oturum = get_cf_session()
+    yanit = oturum.get(f"{BASE_URL}/search?q={query}", timeout=ZAMAN_ASIMI)
+    if yanit.status_code != 200:
         return []
+    # ... ayrıştır ...
+    return [("anime-slug", "Anime Adı")][:limit]
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    results = []
 
-    # Sağlayıcınızın HTML yapısına göre parse edin
-    for item in soup.find_all('div', class_='anime-item'):
-        title_elem = item.find('h3', class_='anime-title')
-        url_elem = item.find('a', class_='anime-link')
-        image_elem = item.find('img', class_='anime-image')
+def get_anime_episodes(slug: str) -> List[Tuple[str, str]]:
+    """(bölüm_id, bölüm_başlığı) ikilileri döndür."""
+    return [(f"{slug}/1", "1. Bölüm")]
 
-        if title_elem and url_elem:
-            results.append({
-                "title": title_elem.text.strip(),
-                "url": url_elem['href'],
-                "image": image_elem['src'] if image_elem else None,
-                "provider_data": {
-                    "item_id": item.get('data-id'),
-                    "search_query": query
-                }
-            })
 
-    return results
+def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
+    """Oynatılabilir uçlar."""
+    return [{
+        "url": "https://cdn.example/video.mp4",
+        "label": "1080p",
+        "type": "direct",          # ya da "hls"
+        "referer": BASE_URL + "/", # CDN referer istiyorsa ŞART
+    }]
 ```
 
-#### get_anime_details(anime_url: str)
+**Dikkat edilecekler:**
 
-Anime detaylarını getirin:
+- **`get_cf_session()` kullan.** Kendi `requests.Session`'ını kurma; CF zinciri
+  (curl_cffi → cloudscraper → FlareSolverr → QtWebEngine → requests) bu oturumun
+  içinde.
+- **`timeout` geç.** `CFSession.get(url, timeout=15)` destekleniyor; vermezsen
+  oturumun varsayılanı kullanılır.
+- **Engeli sessizce yutma.** HTTP 403/429/503 veya gövdede "Just a moment" gibi
+  bir iz varsa bu bir *engellenme*dir, boş sonuç değil. `cf_bypass` içindeki
+  `ENGEL_DURUMLARI` ve `CHALLENGE_MARKERS` sabitlerini kullan — kendi listeni
+  tutma, iki liste ayrıştığında hata sinsi oluyor.
+- **`referer` alanını doldur.** Birçok CDN kendi sitesi dışından gelen isteğe
+  403 döner. Alan boşsa istemci `turkanime.co`'yu varsayar ve stream kırılır.
+
+### 2. Aramaya kaydet
+
+`turkanime_api/common/adapters.py` içinde bir adaptör sınıfı yaz ve
+`SearchEngine.adapters` sözlüğüne ekle:
 
 ```python
-def get_anime_details(self, anime_url: str) -> Optional[Dict[str, Any]]:
-    response = self._make_request(anime_url)
+class MyProviderAdapter:
+    """My Provider arama adaptörü."""
 
-    if not response:
-        return None
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    return {
-        "title": soup.find('h1', class_='anime-title').text.strip(),
-        "description": soup.find('div', class_='anime-description').text.strip(),
-        "image": soup.find('img', class_='anime-poster')['src'],
-        "genres": [g.text for g in soup.find_all('span', class_='genre')],
-        "year": int(soup.find('span', class_='year').text),
-        "episodes": int(soup.find('span', class_='episodes').text),
-        "status": soup.find('span', class_='status').text,
-        "score": float(soup.find('span', class_='score').text),
-        "provider_data": {"anime_url": anime_url}
-    }
+    def search_anime(self, query: str, limit: int = 10):
+        from ..sources.my_provider import search_my_provider
+        return search_my_provider(query, limit=limit)
 ```
 
-#### get_episodes(anime_data: Dict[str, Any])
-
-Anime bölümlerini listeleyin:
-
 ```python
-def get_episodes(self, anime_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    anime_url = anime_data['provider_data']['anime_url']
-    response = self._make_request(anime_url)
-
-    if not response:
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    episodes = []
-
-    for item in soup.find_all('div', class_='episode-item'):
-        episodes.append({
-            "title": item.find('h4', class_='episode-title').text.strip(),
-            "episode_number": int(item.find('span', class_='episode-number').text),
-            "url": item.find('a', class_='episode-link')['href'],
-            "thumbnail": item.find('img', class_='episode-thumb')['src'],
-            "provider_data": {"episode_id": item.get('data-id')}
-        })
-
-    return episodes
-```
-
-#### get_video_urls(episode_data: Dict[str, Any])
-
-Video kaynaklarını getirin:
-
-```python
-def get_video_urls(self, episode_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    episode_url = episode_data['url']
-    response = self._make_request(episode_url)
-
-    if not response:
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    video_urls = []
-
-    # HTML5 video kaynakları
-    for source in soup.find_all('source'):
-        video_urls.append({
-            "url": source['src'],
-            "quality": source.get('data-quality', '720p'),
-            "format": "mp4",
-            "provider_data": {"source_type": "html5"}
-        })
-
-    # iframe/embed kaynakları
-    for iframe in soup.find_all('iframe'):
-        if 'video' in iframe.get('src', '').lower():
-            video_urls.append({
-                "url": iframe['src'],
-                "quality": "720p",
-                "format": "embed",
-                "provider_data": {"source_type": "iframe"}
-            })
-
-    return video_urls
-```
-
-### 4. Sağlayıcıyı Kaydedin
-
-`turkanime_api/sources/__init__.py` dosyasına import ekleyin:
-
-```python
-from .my_provider import MyProviderAdapter  # noqa: F401
-```
-
-Ve PROVIDERS sözlüğüne ekleyin:
-
-```python
-PROVIDERS = {
-    "animecix": {
-        "name": "AnimeciX",
-        "adapter": None,  # Eski sistem
-        "enabled": True,
-        "priority": 1
-    },
-    "my_provider": {
-        "name": "My Provider",
-        "adapter": MyProviderAdapter,
-        "enabled": True,
-        "priority": 2
-    }
+self.adapters = {
+    "AniList": AniListAdapter(),
+    "TürkAnime": TurkAnimeAdapter(),
+    "AnimeciX": AnimeciXAdapter(),
+    "Anizle": AnizleAdapter(),
+    "TRAnimeİzle": TRAnimeAdapter(),
+    "AnimeDepo": AnimeDepoAdapter(),
+    "OpenAnime": OpenAnimeAdapter(),
+    "Tranimaci": TranimaciAdapter(),
+    "My Provider": MyProviderAdapter(),      # ← yeni
 }
 ```
 
-### 5. Test Edin
+Sözlükteki **anahtar** arayüzde görünen addır; sonraki adımda da aynı anahtarı
+kullanacaksın. İkisi tutmazsa kaynak aramada çıkar, bölümleri gelmez.
 
-Sağlayıcınızı test etmek için basit bir test yazın:
+> Sonuçlar `common/title_match.siralama_skoru` ile alakaya göre sıralanır;
+> kaynağın kendi sırası eşit skorda korunur. Ek bir şey yapman gerekmiyor.
+
+### 3. Bölüm ve stream'e kaydet
+
+`turkanime_api/gui/qt/sources_bridge.py` içinde tembel bir yükleyici ekle ve
+`FUNCTION_SOURCES`'a kaydet:
 
 ```python
-if __name__ == "__main__":
-    adapter = MyProviderAdapter()
-
-    # Arama testi
-    results = adapter.search_anime("attack on titan")
-    print(f"Bulunan sonuçlar: {len(results)}")
-
-    if results:
-        # Detay testi
-        details = adapter.get_anime_details(results[0]['url'])
-        print(f"Anime: {details['title']}")
-
-        # Bölüm testi
-        episodes = adapter.get_episodes(details)
-        print(f"Bölümler: {len(episodes)}")
-
-        if episodes:
-            # Video testi
-            videos = adapter.get_video_urls(episodes[0])
-            print(f"Video kaynakları: {len(videos)}")
+def _my_provider():
+    from ...sources.my_provider import (
+        get_anime_episodes as episodes, get_episode_streams as streams,
+    )
+    return episodes, streams
 ```
+
+```python
+FUNCTION_SOURCES = {
+    "OpenAnime": {...},
+    "Tranimaci": {...},
+    "My Provider": {                          # ← Adım 2'deki anahtarın AYNISI
+        "loader": _my_provider,
+        "player": "MYPROVIDER",
+        "ep_url": lambda ep: f"https://myprovider.com/izle/{ep}",
+    },
+}
+```
+
+> Yükleyici neden fonksiyon içinde import ediyor? Modül düzeyinde import,
+> arayüz açılışında bütün kaynakları (ve bağımlılıklarını) yüklerdi. Tembel
+> yükleme, kaynak gerçekten kullanılana kadar bedeli ödemiyor.
+
+### 4. Sunucu tarafı (isteğe bağlı)
+
+Arşiv sunucusu ayrı ve **private** bir depoda:
+[turkanime-server](https://github.com/barkeser2002/turkanime-server). Kaynağın
+arşiv tarayıcısında da gezilmesini istiyorsan oradaki `crawler/kaynaklar.py`
+tablosuna eklenmesi gerekir. Tarayıcı bu depodaki adaptörleri yeniden kullanır;
+ikinci bir kazıyıcı yazılmaz.
+
+### 5. Test et
+
+Önce hızlı bir elle deneme:
+
+```bash
+python -c "from turkanime_api.sources.my_provider import search_my_provider; print(search_my_provider('one piece')[:5])"
+```
+
+Sonra otomatik testler (ağa çıkmaz):
+
+```bash
+python -m pytest tests/
+```
+
+Ağa çıkan adaptör betiğine de eklemen önerilir:
+
+```bash
+python tests/adapters-test-all.py --source my_provider
+```
+
+> Betik şu an yalnızca `animecix`, `anizle`, `tranime`, `animedepo` kaynaklarını
+> tanıyor. Yeni kaynağı eklemek isteyenler `tests/adapters-test-all.py`
+> içindeki takım tablosunu genişletmeli.
+
+---
 
 ## İpuçları
 
-1. **Rate Limiting**: Sağlayıcınızın rate limit'lerine uyun
-2. **Error Handling**: Ağ hatalarını graceful bir şekilde handle edin
-3. **User Agent**: Gerçekçi user agent kullanın
-4. **Timeouts**: Uygun timeout değerleri belirleyin
-5. **HTML Parsing**: Sağlayıcının HTML yapısını iyi analiz edin
-6. **Video Formats**: Farklı video formatlarını destekleyin (mp4, m3u8, vb.)
-7. **Caching**: Sık kullanılan verileri cache'leyin
+1. **Hız sınırına uy.** Kaynak başına ardışık istekler arasına gecikme koy;
+   sabit ritim bot imzasıdır, araya jitter ekle.
+2. **Hatayı sınıflandır.** Geçici (ağ), kalıcı (404) ve engellenme (403/429/503
+   veya challenge sayfası) farklı davranış ister. Hepsini `except: return []`
+   ile yutmak, kullanıcıya "kaynak çalışmıyor" demekten başka bir şey bırakmaz.
+3. **Gerçekçi User-Agent** kullan; `cf_bypass.USER_AGENTS` listesi hazır.
+4. **Zaman aşımı ver.** Timeout'suz `urlopen`/`get` çağrısı soket varsayılanına
+   düşer ve süresiz asılabilir.
+5. **Farklı formatları destekle** — `mp4` (`"type": "direct"`) ve `m3u8`
+   (`"type": "hls"`).
+6. **Ölü ucu sessizce döndürme.** Uç 404 veriyorsa kullanıcıya sebebini söyle;
+   `sources/openani.py` içindeki `_uc_calisiyor()` bu deseni gösteriyor.
+7. **Sabit kodlanmış CDN'den kaçın.** Site düğüm değiştirdiğinde kod
+   değişikliği gerekmesin; adresi sayfadan çıkar ya da ortam değişkeniyle
+   geçersiz kılınabilir yap (`sources/animedepo.py::ORTAM_ANAHTARI` örneği).
 
-## Örnek Sağlayıcılar
+## Örnek olarak okunacak kaynaklar
 
-- [AnimeciX](https://animecix.net) - Mevcut implementasyon
-- [TürkAnime](https://turkanime.tv) - Orijinal sağlayıcı
+| Dosya | Neden iyi örnek |
+|-------|-----------------|
+| `turkanime_api/sources/animedepo.py` | En sade fonksiyon stili; statik arşiv okuma |
+| `turkanime_api/sources/openani.py` | HTML'den JSON çıkarımı, uç doğrulama, teşhis mesajı |
+| `turkanime_api/sources/tranimaci.py` | Proof-of-work WAF ve JS kapısını aşma |
+| `turkanime_api/sources/anizle.py` | Çok kademeli CF bypass kullanımı |
 
 ## Destek
 
-Sorularınız için GitHub Issues kullanın
+Sorular ve öneriler için
+[GitHub Issues](https://github.com/barkeser2002/turkanime-gui/issues).
+
+> Bu depo **CC BY-NC-ND 4.0** ile lisanslıdır; katkı göndermeden önce
+> [LICENSE](LICENSE) dosyasını okuyun.

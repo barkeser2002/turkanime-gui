@@ -55,14 +55,29 @@ def _gomulu_betik() -> str:
     return eslesme.group(1)
 
 
-def _kos(tmp_path: Path, ref_name: str, ref_type: str) -> dict:
-    """Gömülü betiği izole bir dizinde çalıştır ve sonucu topla."""
+def _kos(tmp_path: Path, ref_name: str, ref_type: str,
+         artefakt: bool = True) -> dict:
+    """Gömülü betiği izole bir dizinde çalıştır ve sonucu topla.
+
+    `artefakt=True` gerçek bir yayını modelliyor: `dist/` altında GUI ve CLI
+    paketleri var. Betik artık GUI paketi eksikse sürümü hiç yayınlamıyor
+    (checksum'suz sürüm = doğrulanamaz güncelleme kanalı), bu yüzden dosyalar
+    olmadan sürüm türetme yolları hiç çalışmıyor.
+    """
     kok = tmp_path / f"kos-{ref_type}-{re.sub(r'[^a-zA-Z0-9]', '_', ref_name)}"
     kok.mkdir(parents=True)
     betik = kok / "gen.py"
     betik.write_text(_gomulu_betik(), encoding="utf-8")
     cikti = kok / "github_output.txt"
     cikti.touch()
+
+    if artefakt:
+        dist = kok / "dist"
+        dist.mkdir()
+        for ad in ("turkanime-gui-windows.zip", "turkanime-gui-linux.zip",
+                   "turkanime-gui-macos.zip", "turkanime-cli-windows.exe",
+                   "turkanime-cli-linux", "turkanime-cli-macos"):
+            (dist / ad).write_bytes(b"sahte paket " + ad.encode())
 
     sonuc = subprocess.run(
         [sys.executable, str(betik)], cwd=str(kok), capture_output=True,
@@ -277,6 +292,44 @@ def test_pypi_sirri_depodaki_adla_eslesiyor():
     assert "secrets.PYPI_TOKEN" in deger, (
         f"workflow depodaki sır adını (PYPI_TOKEN) okumuyor: {deger!r}"
     )
+
+
+def test_checksumsuz_surum_yayinlanmiyor(tmp_path):
+    """GUI paketi üretilmemişse sürüm hiç yayınlanmamalı.
+
+    `ozet()` dosya yoksa "" döndürüyor ve eskiden bu değer version.json'a
+    olduğu gibi yazılıyordu. Sonuç: sürüm yayınlanmış görünür ama istemci
+    onu doğrulayamaz. Yayındaki version.json tam bu durumda — üç platformda
+    da checksum boş. İstemci tarafı artık böyle bir kaydı reddediyor
+    (updater.indir_ve_dogrula); yayıncı tarafı da üretmemeli.
+    """
+    sonuc = _kos(tmp_path, "v10.0.0", "tag", artefakt=False)
+    assert sonuc["kod"] != 0, "paket yokken sürüm yayınlandı"
+    assert sonuc["payload"] is None, "checksum'suz version.json yazıldı"
+    assert "::error::" in (sonuc["stdout"] + sonuc["stderr"])
+
+
+def test_uretilen_checksumlar_gercek_dosyadan(tmp_path):
+    """Özetler sahte değil, diskteki paketin gerçek SHA-256'sı olmalı."""
+    import hashlib
+
+    sonuc = _kos(tmp_path, "v10.0.0", "tag")
+    assert sonuc["payload"], sonuc["stderr"]
+    beklenen = hashlib.sha256(b"sahte paket turkanime-gui-linux.zip").hexdigest()
+    assert sonuc["payload"]["platforms"]["linux"]["checksum"] == beklenen
+
+
+def test_hicbir_platform_bos_checksumla_yayinlanmiyor(tmp_path):
+    sonuc = _kos(tmp_path, "v10.0.0", "tag")
+    for isim, veri in sonuc["payload"]["platforms"].items():
+        assert veri["checksum"], f"{isim} boş checksum ile yayınlandı"
+
+
+def test_gui_artefakt_adi_istemcinin_bekledigi_bicimde():
+    """`arsiv_mi()` `.zip` bekliyor; yayınlanan version.json `.exe` gösteriyordu."""
+    betik = _gomulu_betik()
+    assert 'turkanime-gui-{isim}.zip' in betik or "turkanime-gui-" in betik
+    assert ".zip" in betik, "GUI artefaktı zip olarak adlandırılmıyor"
 
 
 def test_pypi_sirri_yoksa_sessizce_gecilmiyor():

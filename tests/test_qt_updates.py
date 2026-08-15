@@ -234,10 +234,38 @@ def test_dogru_checksum_kabul_ediliyor(tmp_path, local_server):
         assert fp.read() == PAKET
 
 
-def test_checksum_yoksa_dogrulama_atlaniyor(tmp_path, local_server):
-    """`version.json` bazı sürümlerde boş özet yayımlıyor; indirme yine de geçer."""
+def test_checksum_yoksa_indirme_reddediliyor(tmp_path, local_server):
+    """DAVRANIŞ DEĞİŞTİ: boş özet artık "doğrulamayı atla" değil, hata.
+
+    Eski sözleşme (`if checksum:`) boş string'de doğrulama bloğuna hiç
+    girmiyordu ve bu test onu sabitliyordu. Ama yayındaki `version.json`
+    üç platformda da boş checksum taşıyor — yani güncelleme kanalında
+    bütünlük doğrulaması fiilen sıfırdı. Yayıncı tarafı da bunu üretebiliyor:
+    artefakt eksik kaldığında CI özet alanına "" yazıyordu.
+
+    Kullanıcıya doğrulanmamış bir ikili çalıştırtmaktansa durmak doğru.
+    Yayıncı tarafındaki delik de kapatıldı (release.yml artık GUI paketi
+    eksikse sürümü hiç yayınlamıyor), yani bu yol pratikte tetiklenmemeli.
+    """
     url = local_server(body=PAKET) + "paket.bin"
-    assert os.path.isfile(updater.indir_ve_dogrula(url, str(tmp_path), ""))
+    with pytest.raises(updater.IndirmeHatasi, match="özet"):
+        updater.indir_ve_dogrula(url, str(tmp_path), "")
+    assert os.listdir(tmp_path) == [], "doğrulanamayan paket diskte bırakılmamalı"
+
+
+@pytest.mark.parametrize("bos", [None, "", "   "])
+def test_bos_sayilan_checksum_degerleri(tmp_path, local_server, bos):
+    """None ve yalnızca boşluk da "özet yok" sayılmalı."""
+    url = local_server(body=PAKET) + "paket.bin"
+    with pytest.raises(updater.IndirmeHatasi):
+        updater.indir_ve_dogrula(url, str(tmp_path), bos)
+
+
+def test_bosluklu_checksum_hala_kabul_ediliyor(tmp_path, local_server):
+    """Gerçek özetin etrafındaki boşluk/BÜYÜK harf indirmeyi düşürmemeli."""
+    url = local_server(body=PAKET) + "paket.bin"
+    yol = updater.indir_ve_dogrula(url, str(tmp_path), f"  {OZET.upper()}  ")
+    assert os.path.isfile(yol)
 
 
 # ── Servis: indirme konumu ve kurulum akışı ──────────────────────────────────

@@ -283,7 +283,13 @@ jobs:
           dist = pathlib.Path("dist")
 
           def ozet(ad: str) -> str:
-              """Dosyanın SHA-256'sı + yanına .sha256 yaz. Dosya yoksa boş."""
+              """Dosyanın SHA-256'sı + yanına .sha256 yaz. Dosya yoksa boş.
+
+              Boş dönmek TEHLİKELİ: istemci artık boş özeti "sürüm bilgisi
+              eksik" sayıp indirmeyi reddediyor (updater.py), ama yine de
+              yayınlanmış bir sürümün doğrulanamaz olması istenmez. GUI
+              paketi eksikse aşağıda iş durduruluyor; CLI için uyarı yeter.
+              """
               yol = dist / ad
               if not yol.is_file():
                   print(f"UYARI: {ad} yok, özet boş bırakılıyor")
@@ -297,9 +303,12 @@ jobs:
               return imza
 
           platformlar = {}
+          eksik_gui = []
           for isim, uzanti in (("windows", ".exe"), ("linux", ""), ("macos", "")):
               gui, cli = f"turkanime-gui-{isim}.zip", f"turkanime-cli-{isim}{uzanti}"
               gui_ozet, cli_ozet = ozet(gui), ozet(cli)
+              if etiket_mi and not gui_ozet:
+                  eksik_gui.append(gui)
               platformlar[isim] = {
                   # Üst düzey url/checksum = uygulama içi güncelleyicinin okuduğu
                   # alanlar. Ana ürün GUI olduğu için oraya GUI paketi konuyor.
@@ -322,6 +331,15 @@ jobs:
               print("::notice::Etiket dışı çalıştırma — version.json yazılmadı, "
                     "güncelleme kanalına dokunulmadı.")
               raise SystemExit(0)
+
+          # Checksum'suz bir sürüm yayınlamak, güncelleme kanalını doğrulanamaz
+          # hâle getirir. İstemci böyle bir kaydı reddediyor (updater.py), yani
+          # sürüm yayınlanmış görünür ama kimse güncelleyemez. Yayındaki
+          # version.json tam bu durumda: üç platformda da checksum boş.
+          if eksik_gui:
+              raise SystemExit(
+                  "::error::GUI paketi üretilmemiş, checksum'suz sürüm "
+                  f"yayınlanamaz: {', '.join(eksik_gui)}")
 
           # changelog güncelleme diyaloğunda gösteriliyor; sürüm notunun başlığı
           # + release bağlantısı yeterli, dosyanın tamamı o kutuya sığmıyor.
