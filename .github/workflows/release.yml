@@ -27,10 +27,57 @@ permissions:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
+  # Test kapısı — HER ŞEYDEN ÖNCE
+  # ─────────────────────────────────────────────────────────────────────────
+  # Bu iş eklenene kadar yayın akışında tek bir test koşmuyordu: etiket
+  # doğrudan GitHub Release'e ve PyPI'a gidiyordu. `main.yml` var ama GitHub'da
+  # devre dışı (`disabled_manually`), yani ona güvenilemez — kapı burada,
+  # yayın yolunun kendi üstünde olmalı.
+  test:
+    name: Test kapısı
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Sistem bağımlılıkları (offscreen Qt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2t64
+
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          # py7zr yalnızca Windows paketleme için; Linux tekerlek derlemesi
+          # gereksiz yere uzun sürüyor.
+          grep -v py7zr requirements.txt > req2.txt && pip install -r req2.txt
+          # PyYAML: test_release_workflow.py bu dosyayı ayrıştırıyor. Hiçbir
+          # requirements dosyasında yok — kurulmazsa o 15 test SESSİZCE
+          # atlanır (pytest.importorskip), yani kapı yalancı yeşil verir.
+          pip install PySide6 pytest pytest-qt PyYAML pylint
+
+      - name: pytest (ağ testleri hariç)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/
+
+      - name: pylint (yalnızca hatalar)
+        run: |
+          pylint -E turkanime_api turkanime_server \
+            --disable=import-error,no-name-in-module
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Build matrix — Windows / Linux / macOS
   # ─────────────────────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.os }})
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -412,10 +459,15 @@ jobs:
 
       - name: Publish to PyPI
         env:
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+          # Depoda tanımlı sır `PYPI_TOKEN`. Eskiden yalnızca `PYPI_API_TOKEN`
+          # okunuyordu; ad tutmadığı için yayın adımı UYARI basıp `exit 0` ile
+          # geçiyordu — yani etiket atılır, release oluşur, PyPI'a hiçbir şey
+          # gitmez ve iş yeşil görünür. İkisi de kabul ediliyor.
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN || secrets.PYPI_API_TOKEN }}
         run: |
           if [[ -z "${POETRY_PYPI_TOKEN_PYPI}" ]]; then
-            echo "::warning::PYPI_API_TOKEN sırrı tanımlı değil — PyPI yüklemesi atlanıyor."
-            exit 0
+            echo "::error::PyPI sırrı yok (PYPI_TOKEN veya PYPI_API_TOKEN)."
+            echo "Etiket atıldı ama paket yayınlanmadı — sessizce geçmiyoruz."
+            exit 1
           fi
           poetry publish --no-interaction

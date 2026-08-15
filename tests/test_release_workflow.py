@@ -176,3 +176,114 @@ def test_mevcut_tag_tetikleyicileri_korundu():
 def test_build_isi_elle_calistirmada_da_kosuyor():
     """Elle çalıştırma bir derleme denemesi olarak kullanılabilmeli."""
     assert "if" not in _workflow()["jobs"]["build"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test kapısı — hiçbir şey testten geçmeden yayınlanmasın
+# ─────────────────────────────────────────────────────────────────────────────
+def test_yayin_yolunda_test_kapisi_var():
+    """Etiket, testler geçmeden GitHub Release ve PyPI'a gitmemeli.
+
+    Kapı eklenene kadar `grep pytest|pylint release.yml` sıfır sonuç veriyordu:
+    709 test yayın akışının hiçbir noktasında koşmuyordu. `main.yml` var ama
+    GitHub'da devre dışı, yani ona güvenilemez — kapı yayın yolunun kendi
+    üstünde olmak zorunda.
+    """
+    isler = _workflow()["jobs"]
+    assert "test" in isler, "release.yml'de test işi yok"
+
+    def _bagimli(ad: str) -> set:
+        g = isler[ad].get("needs") or []
+        return {g} if isinstance(g, str) else set(g)
+
+    assert "test" in _bagimli("build"), "build test işine bağlı değil"
+    # release ve pypi build üzerinden dolaylı olarak teste bağlı
+    for is_adi in ("release", "pypi"):
+        assert _bagimli(is_adi) & {"test", "build"}, f"{is_adi} kapısız"
+
+
+def _komut_satirlari(is_adi: str) -> list:
+    """İşin `run` bloklarındaki GERÇEK komut satırları — yorumlar hariç.
+
+    Ham metinde arama yapmak yanıltıcı: `# PyYAML: …` gibi bir yorum ya da
+    `pip install … pytest` gibi bir KURULUM satırı, "pytest çalışıyor mu?"
+    sorusunu yanlışlıkla olumlu yanıtlıyor. (İlk yazdığım iki kontrol tam
+    bu yüzden hiçbir şey sınamıyordu; mutasyon testi yakaladı: pytest adımı
+    tamamen silindiğinde bile yeşil kalıyorlardı.)
+    """
+    satirlar = []
+    for adim in _workflow()["jobs"][is_adi]["steps"]:
+        for ham in str(adim.get("run", "")).splitlines():
+            s = ham.strip()
+            if s and not s.startswith("#"):
+                satirlar.append(s)
+    return satirlar
+
+
+def test_test_isi_gercekten_pytest_ve_pylint_kosuyor():
+    """İşin adı "test" olması yetmez; içinde gerçekten koşan bir şey olmalı."""
+    satirlar = _komut_satirlari("test")
+
+    def _calistiriyor(arac: str) -> bool:
+        # Kurulum satırını sayma: "pip install … pytest" pytest'i ÇALIŞTIRMAZ.
+        return any(s.split()[0] == arac for s in satirlar if s.split())
+
+    assert _calistiriyor("pytest"), "test işi pytest çalıştırmıyor"
+    assert _calistiriyor("pylint"), "test işi pylint çalıştırmıyor"
+    assert not any("|| true" in s for s in satirlar), (
+        "adım `|| true` ile bitiyor — kapı hiçbir zaman kırmızıya dönemez "
+        "(main.yml'deki lint adımlarının hatası)"
+    )
+
+
+def test_test_isi_pyyaml_kuruyor():
+    """PyYAML kurulmazsa BU DOSYADAKİ testler sessizce atlanır.
+
+    `pytest.importorskip("yaml")` eksik bağımlılıkta testi "geçti" saymaz ama
+    "atladı" sayar — kapı yalancı yeşil verir.
+    """
+    kurulumlar = [s for s in _komut_satirlari("test") if "pip install" in s]
+    assert kurulumlar, "test işinde pip install satırı yok"
+    assert any("pyyaml" in s.lower() for s in kurulumlar), (
+        f"PyYAML kurulmuyor: {kurulumlar}"
+    )
+
+
+def test_qt_testleri_offscreen_kosuyor():
+    """Runner'da ekran yok; `QT_QPA_PLATFORM` verilmezse Qt testleri çöker."""
+    adimlar = _workflow()["jobs"]["test"]["steps"]
+    ortamlar = [a.get("env", {}) for a in adimlar if a.get("env")]
+    assert any(o.get("QT_QPA_PLATFORM") == "offscreen" for o in ortamlar)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PyPI sırrı
+# ─────────────────────────────────────────────────────────────────────────────
+def test_pypi_sirri_depodaki_adla_eslesiyor():
+    """Sır adı tutmazsa yayın adımı sessizce atlanır.
+
+    Depoda tanımlı sır `PYPI_TOKEN`; workflow yalnızca `PYPI_API_TOKEN`
+    okuyordu. Sonuç: etiket atılır, release oluşur, iş YEŞİL görünür ve
+    PyPI'a hiçbir şey gitmez. En sinsi hata sınıfı — başarı gibi görünen
+    başarısızlık.
+    """
+    adim = _adim("pypi", "Publish to PyPI")
+    # DEĞERE bak, sözlüğün tamamına değil: ortam değişkeninin ADI
+    # `POETRY_PYPI_TOKEN_PYPI` ve bu ad zaten "PYPI_TOKEN" alt dizesini
+    # içeriyor — sözlüğü stringe çevirip aramak her koşulda geçerdi.
+    # (Bu kontrolün ilk hâli tam olarak bu yüzden hiçbir şey sınamıyordu;
+    # mutasyon testi yakaladı.)
+    deger = adim.get("env", {}).get("POETRY_PYPI_TOKEN_PYPI", "")
+    assert "secrets.PYPI_TOKEN" in deger, (
+        f"workflow depodaki sır adını (PYPI_TOKEN) okumuyor: {deger!r}"
+    )
+
+
+def test_pypi_sirri_yoksa_sessizce_gecilmiyor():
+    """Sır eksikse iş KIRMIZI olmalı, uyarı basıp `exit 0` değil."""
+    betik = _adim("pypi", "Publish to PyPI")["run"]
+    assert "exit 1" in betik, (
+        "sır yokken `exit 0` ile geçiliyor — yayınlanmamış bir sürüm "
+        "yayınlanmış gibi görünür"
+    )
+    assert "::error::" in betik, "eksik sır uyarı değil hata olarak raporlanmalı"
