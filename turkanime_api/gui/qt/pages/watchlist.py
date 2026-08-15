@@ -2,7 +2,7 @@
 
 Eski GUI'deki `show_watchlist` + `load_watchlist` + `create_watchlist_card`
 üçlüsünün karşılığı. Kart ızgarası keşif sayfasıyla aynı bileşenleri kullanır
-(`AnimeCard`, `ScrollableGrid`); tek fark kartın altına eklenen ilerleme
+(`AnimeCard`, `CardGrid`); tek fark kartın altına eklenen ilerleme
 çubuğu, kullanıcı skoru ve durum rozetidir.
 
 Eski sürümde giriş yapılmamış kullanıcı yalnızca kırmızı bir durum satırı
@@ -23,7 +23,8 @@ from ..anilist import (
     DURUM_ETIKETI, DURUM_RENGI, DURUMLAR, AniListService,
 )
 from ..theme import ACCENT, TEXT_MUTED
-from ..widgets import AnimeCard, ScrollableGrid, StatusLabel
+from ..widgets import AnimeCard, StatusLabel
+from ._grid import CardGrid
 from ..workers import run_bg
 from .discover import anime_title, cover_url
 
@@ -179,7 +180,7 @@ class WatchlistPage(QWidget):
         pl.addLayout(row)
         layout.addWidget(self.pnlLogin)
 
-        self.results = ScrollableGrid()
+        self.results = CardGrid()
         layout.addWidget(self.results, 1)
 
     # ── Durum ───────────────────────────────────────────────────────────────

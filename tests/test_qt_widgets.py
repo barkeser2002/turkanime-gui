@@ -4,37 +4,14 @@ from __future__ import annotations
 import pytest
 
 from turkanime_api.gui.qt.widgets import (
-    CARD_MIN_WIDTH, CARD_PAD, POSTER_RATIO, AnimeCard, ElidedLabel,
-    ResponsiveGrid, ScrollableGrid, StatusLabel,
+    CARD_PAD, POSTER_RATIO, AnimeCard, ElidedLabel, StatusLabel,
 )
 
 
-@pytest.mark.parametrize("width,expected_min", [(400, 1), (900, 3), (1400, 5)])
-def test_grid_columns_scale_with_width(qtbot, width, expected_min):
-    grid = ResponsiveGrid()
-    qtbot.addWidget(grid)
-    grid.resize(width, 600)
-    cols = grid._calc_columns()
-    assert cols >= expected_min
-    assert cols * CARD_MIN_WIDTH <= width + CARD_MIN_WIDTH
 
 
-def test_grid_never_returns_zero_columns(qtbot):
-    """Sıfır sütun ZeroDivision/boş ızgara demek; daralt da olsa en az 1."""
-    grid = ResponsiveGrid()
-    qtbot.addWidget(grid)
-    grid.resize(10, 100)
-    assert grid._calc_columns() >= 1
 
 
-def test_grid_set_items_and_clear(qtbot):
-    grid = ScrollableGrid()
-    qtbot.addWidget(grid)
-    cards = [AnimeCard(f"Anime {i}", "AnimeDepo") for i in range(7)]
-    grid.set_items(cards)
-    assert grid.grid.count() == 7
-    grid.clear()
-    assert grid.grid.count() == 0
 
 
 def test_card_click_emits_payload(qtbot):
@@ -192,48 +169,8 @@ def test_kapak_inmeden_once_yer_tutucu_var(qtbot):
     assert "Cowboy Bebop" in card.lblThumb.text()
 
 
-def test_grid_sutun_esnemesi_daralinca_sifirlaniyor(qtbot):
-    """ESKİ HATA: sütun sayısı düşünce eski sütunların stretch'i kalıyor,
-    boş sütunlar yer kapıp kartları daraltıyordu."""
-    grid = ResponsiveGrid()
-    qtbot.addWidget(grid)
-    grid.set_items([AnimeCard(f"A{i}", "Kaynak") for i in range(9)])
-    grid.resize(1400, 800)
-    grid._relayout()
-    genis = grid._columns
-
-    grid.resize(500, 800)
-    grid._relayout()
-
-    assert grid._columns < genis
-    esneyen = [c for c in range(grid._grid.columnCount())
-               if grid._grid.columnStretch(c)]
-    assert esneyen == list(range(grid._columns))
 
 
-def test_izgara_daralinca_sutun_azaltiyor(qtbot):
-    """ESKİ HATA: kartların `minimumWidth`i ızgaranın minimum genişliğini de
-    büyütüyordu; pencere daralınca `self.width()` küçülemediği için sütun
-    sayısı bir daha asla azalmıyor, en sağdaki sütun görünüm alanının dışında
-    kalıyordu (yatay kaydırma kapalı)."""
-    g = ScrollableGrid()
-    qtbot.addWidget(g)
-    cards = [AnimeCard(f"Anime {i}", "8.0", image_url=f"http://x/{i}.jpg")
-             for i in range(9)]
-    g.set_items(cards)
-    g.resize(1200, 800)
-    g.show()
-    qtbot.waitExposed(g)
-    qtbot.waitUntil(lambda: g.grid._columns >= 4, timeout=2000)
-    genis = g.grid._columns
-
-    g.resize(640, 800)
-    qtbot.waitUntil(lambda: g.grid._columns < genis, timeout=2000)
-    # Sütun sayacı değişir değişmez geometri henüz güncellenmemiş olabilir;
-    # asıl ölçüt kartların görünüm alanına sığması.
-    qtbot.waitUntil(
-        lambda: max(c.geometry().right() for c in cards) < g.viewport().width(),
-        timeout=2000)
 
 
 def test_status_label_states(qtbot):

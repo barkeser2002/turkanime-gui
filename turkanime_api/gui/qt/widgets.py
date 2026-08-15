@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
+    QFrame, QHBoxLayout, QLabel, QSizePolicy,
     QStyle, QStyleOption, QVBoxLayout, QWidget,
 )
 
@@ -302,130 +302,14 @@ class AnimeCard(QFrame):
         super().mousePressEvent(event)
 
 
-class ResponsiveGrid(QWidget):
-    """Genişliğe göre sütun sayısını yeniden hesaplayan ızgara.
-
-    Eski GUI'deki `_calculate_columns` + `_update_*_grid` davranışının Qt
-    karşılığı; yeniden yerleşim yalnızca sütun sayısı değiştiğinde yapılır.
-    """
-
-    def __init__(self, min_item_width: int = CARD_MIN_WIDTH,
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self._min_item_width = min_item_width
-        self._items: List[QWidget] = []
-        self._columns = 0
-        self._avail = 0            # dışarıdan bildirilen kullanılabilir genişlik
-
-        self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(GRID_SPACING)
-        self._grid.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-    # ── Genel API ───────────────────────────────────────────────────────────
-    def set_items(self, items: List[QWidget]) -> None:
-        self.clear()
-        self._items = items
-        for item in items:
-            item.setParent(self)
-        self._columns = 0          # yeniden yerleşimi zorla
-        self._relayout()
-
-    def clear(self) -> None:
-        while self._grid.count():
-            entry = self._grid.takeAt(0)
-            widget = entry.widget()
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
-        self._items = []
-        self._columns = 0
-
-    def count(self) -> int:
-        return len(self._items)
-
-    def set_available_width(self, width: int) -> None:
-        """Izgaranın gerçekte kullanabileceği genişliği bildir.
-
-        ESKİ HATA: sütun sayısı `self.width()`ten hesaplanıyordu. Kartların
-        `minimumWidth`i yüzünden ızgaranın kendi minimum genişliği sütun
-        sayısıyla birlikte büyür; pencere daralınca widget bu minimumun altına
-        İNEMEZ, dolayısıyla `self.width()` küçülmez ve sütun sayısı bir daha
-        asla azalmazdı. Sonuç: yatay kaydırma kapalı olduğu için en sağdaki
-        sütun kırpılıyor ("son sütun dar") ve kartlar taşıyordu.
-        """
-        width = int(width)
-        if width <= 0 or width == self._avail:
-            return
-        self._avail = width
-        self._relayout()
-
-    # ── İç işleyiş ──────────────────────────────────────────────────────────
-    def _calc_columns(self) -> int:
-        usable = max(self._avail or self.width(), self._min_item_width)
-        cols = max(1, (usable + GRID_SPACING) // (self._min_item_width + GRID_SPACING))
-        return int(cols)
-
-    def _relayout(self) -> None:
-        cols = self._calc_columns()
-        if cols == self._columns or not self._items:
-            return
-        self._columns = cols
-
-        while self._grid.count():
-            self._grid.takeAt(0)
-
-        # ESKİ HATA: `setColumnStretch` layout'ta KALICI. Sütun sayısı 5'ten
-        # 3'e düşünce eski 4. ve 5. sütunlar esnemeye devam ediyor, boş oldukları
-        # hâlde yer kapıyordu; kartlar daralıyor ve son sütun dar görünüyordu.
-        for c in range(self._grid.columnCount()):
-            self._grid.setColumnStretch(c, 0)
-
-        for index, item in enumerate(self._items):
-            self._grid.addWidget(item, index // cols, index % cols)
-        for c in range(cols):
-            self._grid.setColumnStretch(c, 1)
-
-    def resizeEvent(self, event):  # noqa: N802 (Qt imzası)
-        super().resizeEvent(event)
-        self._relayout()
-
-
-class ScrollableGrid(QScrollArea):
-    """`ResponsiveGrid`'i dikey kaydırma içinde sunan sarmalayıcı.
-
-    CTk'deki `CTkScrollableFrame` idyomunun Qt karşılığı.
-    """
-
-    def __init__(self, min_item_width: int = CARD_MIN_WIDTH,
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        container = QWidget()
-        outer = QVBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        self.grid = ResponsiveGrid(min_item_width)
-        outer.addWidget(self.grid)
-        outer.addStretch(1)
-
-        self.setWidget(container)
-
-    def set_items(self, items: List[QWidget]) -> None:
-        self.grid.set_items(items)
-        self.grid.set_available_width(self.viewport().width())
-
-    def clear(self) -> None:
-        self.grid.clear()
-
-    def resizeEvent(self, event):  # noqa: N802 (Qt imzası)
-        super().resizeEvent(event)
-        # Izgara kendi genişliğine bakarak daralamaz (bkz. `set_available_width`);
-        # ölçüt görünüm alanının genişliğidir — dikey kaydırma çubuğu hariç.
-        self.grid.set_available_width(self.viewport().width())
+# NOT: ResponsiveGrid ve ScrollableGrid buradan KALDIRILDI.
+# Sutun sayisini kendi genisliginden hesapliyorlardi; QScrollArea
+# icerigi kendi asgarisinin altina sikistirmadigi icin olcu, olctugu
+# seye geri besleniyordu ve sutun sayisi bir daha azalmiyordu (1600px
+# -> 700px gecisinde 844px tasma, olculdu). Yerine pages/_grid.py
+# icindeki CardGrid geldi: sutunlari viewport genisliginden hesapliyor.
+# Iki ayri izgara uygulamasi tutmak, ayni hatanin birinde duzelip
+# otekinde kalmasi demekti.
 
 
 class StatusLabel(QLabel):
@@ -449,5 +333,5 @@ class StatusLabel(QLabel):
         self.setText(text)
 
 
-__all__ = ["AnimeCard", "ElidedLabel", "ResponsiveGrid", "ScrollableGrid",
+__all__ = ["AnimeCard", "ElidedLabel",
            "StatusLabel", "CARD_MIN_WIDTH", "CARD_PAD", "POSTER_RATIO"]
