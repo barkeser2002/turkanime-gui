@@ -6,13 +6,16 @@ curl_cffi==0.7.4
 beautifulsoup4==4.12.3
 rapidfuzz==3.9.7
 
-# Aşağıdakiler API sunucusunun değil, tarayıcı/yayıncı profillerinin
-# bağımlılığı. Tarayıcı `turkanime_api.sources.*` adaptörlerini kullanıyor;
-# `turkanime_api/__init__.py` daha ilk satırında `objects` (→ yt_dlp) ve
-# `bypass` (→ appdirs, Crypto) çekiyor. Üçü olmadan konteyner ImportError ile
-# anında çıkıyor, arşiv hiç üretilmiyor ve yayıncı her turda "arsiv-eksik"
-# diyordu. yt-dlp yalnızca import zinciri yüzünden gerekli — tarayıcı video
-# indirmiyor, bu yüzden `[default]` extra'sı bilinçli olarak alınmıyor.
-yt-dlp==2026.7.4
-appdirs==1.4.4
-pycryptodome==3.23.0
+# yt-dlp / appdirs / pycryptodome BİLİNÇLİ OLARAK YOK.
+#
+# Eskiden üçü de buradaydı ama hiçbiri sunucu kodunda kullanılmıyordu; yalnızca
+# import zinciri yüzünden kuruluyorlardı: `turkanime_api/__init__.py` koşulsuz
+# `objects` (→ yt_dlp) ve `bypass` (→ appdirs, Crypto) çekiyordu, dolayısıyla
+# `turkanime_api.common.episode_parser` gibi masum bir modülü import etmek bile
+# tüm indirme yığınını sürüklüyordu. Zincir tembelleştirildi; tarayıcı video
+# indirmediği için artık gerçekten gereksizler.
+#
+# Geri eklemeden önce ölç: `tests/test_sunucu_bagimliliklari.py` her sunucu
+# modülünü import edip bu üçünün sys.modules'a girmediğini doğruluyor. Test
+# kırmızıya döndüyse zincir yeniden sızmış demektir — çözüm paketi geri
+# eklemek değil, sızıntıyı bulmak.

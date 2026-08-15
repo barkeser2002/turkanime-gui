@@ -171,6 +171,22 @@ DAGITIM: Dict[str, str] = {
     "yt_dlp": "yt-dlp",
 }
 
+# Fonksiyon içi importlar kural olarak sayılıyor (bkz. `_zorunlu_importlar`):
+# `kaynaklar.py`'ın tembel yükleyicileri koşuda mutlaka çağrılıyor, o paketler
+# imajda bulunmak zorunda. Aşağıdaki kenarlar bu kuralın **belgelenmiş**
+# istisnası: crawler'ın hiç çağırmadığı metotların içindeki importlar.
+#
+# Statik grafik "çağrılıyor mu" sorusunu yanıtlayamaz; yanıtı ölçüm veriyor:
+# `tests/test_sunucu_bagimliliklari.py` her sunucu modülünü ayrı süreçte
+# import edip yt_dlp/appdirs/Crypto'nun `sys.modules`'a girmediğini
+# doğruluyor. Yeni bir muafiyet eklemeden önce oraya da kanıt ekle.
+ERISILMEYEN_KENARLAR: Set[tuple] = {
+    # `OpenAniAdapter.create_anime_object` / `create_episode_object`.
+    # `kaynaklar.py:74` openani'den yalnızca search/episodes/streams
+    # fonksiyonlarını alıyor; adapter sınıfı sunucu kodunda hiç geçmiyor.
+    ("turkanime_api.sources.openani", "turkanime_api.objects"),
+}
+
 
 def _modul_yolu(ad: str) -> Path | None:
     p = KOK / Path(*ad.split("."))
@@ -186,6 +202,7 @@ def _zorunlu_importlar(agac: ast.AST) -> List[ast.stmt]:
 
     Fonksiyon içi importlar **dahil**: `kaynaklar.py`'ın tembel yükleyicileri
     koşuda mutlaka çağrılıyor, yani o paketler de imajda bulunmak zorunda.
+    Hiç çağrılmadığı ölçümle gösterilen tek tük kenar için `ERISILMEYEN_KENARLAR`.
     """
     out: List[ast.stmt] = []
 
@@ -239,6 +256,12 @@ def ucuncu_parti(baslangic: Iterable[str]) -> Dict[str, Set[str]]:
         agac = ast.parse(yol.read_text(encoding="utf-8"), filename=str(yol))
         for dugum in _zorunlu_importlar(agac):
             for hedef in _hedefler(dugum, ad, yol):
+                # `_hedefler` hem modülü hem `modül.Ad` biçimini üretiyor;
+                # muafiyet ikisini de kapsamalı, yoksa ikinci biçim aynı
+                # modülü grafiğe geri sokar.
+                if any(a == ad and (hedef == h or hedef.startswith(h + "."))
+                       for a, h in ERISILMEYEN_KENARLAR):
+                    continue
                 kok = hedef.split(".")[0]
                 if kok in ("turkanime_api", "turkanime_server"):
                     parcalar = hedef.split(".")
@@ -282,6 +305,39 @@ def test_crawlerin_cektigi_paketler_requirementsta_var():
         "crawler bu paketleri import ediyor ama imajda kurulu değil: "
         + ", ".join(f"{d} (çeken: {sorted(cekilen[m])[0]})"
                     for d in eksik for m in cekilen if DAGITIM[m] == d))
+
+
+def test_erisilmeyen_kenar_muafiyeti_bayatlamiyor():
+    """Muafiyet gerçek bir kenarı örtmeli; kod değişince sessizce kalmamalı.
+
+    Kenar kaynaktan kalktıysa muafiyet artık hiçbir şeyi korumuyor ama testi
+    zayıflatmaya devam ediyor — bir sonraki geliştirici aynı importu modül
+    düzeyine geri taşıdığında grafik testi susardı.
+    """
+    for modul, hedef in ERISILMEYEN_KENARLAR:
+        yol = _modul_yolu(modul)
+        assert yol is not None, f"muaf tutulan modül yok: {modul}"
+        agac = ast.parse(yol.read_text(encoding="utf-8"), filename=str(yol))
+        hedefler = {h for d in _zorunlu_importlar(agac)
+                    for h in _hedefler(d, modul, yol)}
+        assert hedef in hedefler, (
+            f"{modul} artık {hedef} import etmiyor — ERISILMEYEN_KENARLAR'dan "
+            "bu satırı sil, yoksa gerçek bir bağımlılığı gizler."
+        )
+
+
+def test_muaf_kenar_modul_duzeyine_kaymamis():
+    """Muaf import fonksiyon içinde kalmalı; modül düzeyine çıkarsa gerçek olur."""
+    for modul, hedef in ERISILMEYEN_KENARLAR:
+        yol = _modul_yolu(modul)
+        agac = ast.parse(yol.read_text(encoding="utf-8"), filename=str(yol))
+        tepe = {h for d in ast.iter_child_nodes(agac)
+                if isinstance(d, (ast.Import, ast.ImportFrom))
+                for h in _hedefler(d, modul, yol)}
+        assert hedef not in tepe, (
+            f"{modul} {hedef}'i modül düzeyinde import ediyor — bu artık "
+            "ertelenmiş değil, konteyner açılışta ImportError verir."
+        )
 
 
 def test_api_sunucusunun_paketleri_de_requirementsta():

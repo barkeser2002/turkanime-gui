@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import json
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from bs4 import BeautifulSoup
 
 # Koşulsuz import: eskiden yalnızca CF bypass yoksa içe aktarılıyordu, yani
@@ -19,7 +19,14 @@ from bs4 import BeautifulSoup
 # hem uyarıyı hem kırılganlığı bitiriyor (requests zaten zorunlu bağımlılık).
 import requests
 
-from ..objects import Anime, Bolum
+# `..objects` yt_dlp'yi (71 modül, ~0.5 sn) ve `..bypass` üzerinden Crypto'yu
+# çeker. `Anime`/`Bolum` bu modülde yalnızca `OpenAniAdapter`'ın iki fabrika
+# metodunda kullanılıyor; arama/bölüm/stream uçlarını çağıran sunucu tarayıcısı
+# onlara hiç dokunmuyor. `from __future__ import annotations` sayesinde
+# anotasyonlar string olduğu için tip yalnızca denetleyiciye görünüyor,
+# çalışma anında import metodun içinde yapılıyor.
+if TYPE_CHECKING:
+    from ..objects import Anime, Bolum
 
 # CF Bypass modülünü içe aktar
 try:
@@ -576,6 +583,7 @@ class OpenAniAdapter:
 
     def create_anime_object(self, anime_data: Dict[str, Any]) -> Anime:
         """Adapter verisinden Anime objesi oluştur."""
+        from ..objects import Anime  # tembel: modül düzeyinde yt_dlp çekiyor
         slug = anime_data.get('provider_data', {}).get('slug', 'bilinmeyen-anime')
         anime = Anime(slug)
 
@@ -592,6 +600,7 @@ class OpenAniAdapter:
 
     def create_episode_object(self, episode_data: Dict[str, Any], anime: Anime) -> Bolum:
         """Adapter verisinden Bolum objesi oluştur."""
+        from ..objects import Bolum  # tembel: modül düzeyinde yt_dlp çekiyor
         slug = episode_data.get('provider_data', {}).get('episode_id', 'bolum-0')
         title = episode_data.get('title', f"Bölüm {episode_data.get('episode_number', 0)}")
         
