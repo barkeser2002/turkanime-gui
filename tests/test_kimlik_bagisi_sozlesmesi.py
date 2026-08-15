@@ -147,6 +147,58 @@ def test_sifresiz_adrese_kimlik_gonderilmiyor(monkeypatch, adres):
     assert not patlama, "istek yine de gönderildi — çerez ağa çıktı"
 
 
+@pytest.mark.parametrize("adres", ["http://ornek.test", "ftp://ornek.test"])
+def test_sifresiz_adrese_geri_cekme_de_gitmiyor(monkeypatch, adres):
+    """Kural yalnızca gönderime değil, geri çekmeye de uygulanmalı.
+
+    DELETE isteği `bagis_id` taşıyor ve o numara geri çekmenin tek anahtarı;
+    şifresiz gidip yakalanırsa başkası bağışı iptal edebilir. İki uç aynı
+    `_uc` üzerinden geçtiği için kural ortak — bu test o ortaklığın kazara
+    bozulmasını yakalar.
+    """
+    patlama = []
+    import requests
+    monkeypatch.setattr(requests, "delete",
+                        lambda *a, **k: patlama.append(1) or SahteYanit(200, {}))
+    ayar = {"sunucu adresi": adres, "sunucu api anahtari": "k"}
+    with pytest.raises(kd.KatkiHatasi):
+        kd.bagis_geri_cek("b" * 32, ayar)
+    assert not patlama, "geri çekme isteği şifresiz gitti"
+
+
+def test_yerel_muafiyeti_ad_cozumlemesi_yapmiyor(monkeypatch):
+    """Muafiyet DNS'e sormamalı.
+
+    "Bu ad 127.0.0.1'e mi çözülüyor?" diye sormak, saldırganın kontrolündeki
+    bir adı yerele çözdürerek muafiyeti kazanmasına izin verirdi (DNS rebinding).
+    Karar yalnızca yazılı host değerine bakıyor; ağa hiç çıkılmıyor.
+    """
+    import socket
+
+    cagrildi = []
+
+    def yasak(*a, **k):
+        cagrildi.append(a)
+        raise AssertionError("ad çözümlemesi yapıldı")
+
+    monkeypatch.setattr(socket, "gethostbyname", yasak)
+    monkeypatch.setattr(socket, "getaddrinfo", yasak)
+
+    ayar = {"sunucu adresi": "http://ornek.test", "sunucu api anahtari": "k"}
+    with pytest.raises(kd.KatkiHatasi):
+        kd.bagis_gonder("cerez", kd.KAYNAK_TRANIME, ayar)
+    assert not cagrildi
+
+
+def test_hata_metni_ne_yapilacagini_soyluyor():
+    """Reddedince kullanıcı ne yapacağını bilmeli; "hata" demek yetmez."""
+    ayar = {"sunucu adresi": "http://ornek.test", "sunucu api anahtari": "k"}
+    with pytest.raises(kd.KatkiHatasi) as hata:
+        kd.bagis_gonder("cerez", kd.KAYNAK_TRANIME, ayar)
+    metin = str(hata.value)
+    assert "https" in metin, f"çözüm söylenmiyor: {metin}"
+
+
 @pytest.mark.parametrize("adres", [
     "https://turkanimeapi.bariskeser.com",
     "http://localhost:16554",
