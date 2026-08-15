@@ -145,6 +145,49 @@ def test_timeout_verilmezse_oturum_varsayilani(kwarg_yakalayici):
     assert gorulen["curl"]["timeout"] == 17
 
 
+@pytest.mark.parametrize("basamak", ["curl", "cloudscraper", "requests"])
+def test_her_basamak_ayri_ayri_timeout_u_kabul_ediyor(monkeypatch, basamak):
+    """Her taşımayı TEK BAŞINA sına.
+
+    İlk hâlinde bu test yalnızca curl_cffi'yi kapsıyordu: o başarınca zincir
+    duruyor, cloudscraper hiç çalışmıyordu. Düzeltme de tam oradan atlanmıştı —
+    canlı koşuda "cloudscraper hatası: got multiple values for keyword
+    argument 'timeout'" hâlâ görünüyordu. Kademeleri tek tek açmak şart.
+    """
+    gorulen: dict = {}
+
+    def yakala(url, **kw):
+        gorulen.update(kw)
+        return yanit(200)
+
+    # Varsayılan: hepsi kapalı; yalnızca sınanan basamak açık.
+    monkeypatch.setattr(cf, "HAS_CURL_CFFI", False)
+    monkeypatch.setattr(cf, "HAS_CLOUDSCRAPER", False)
+    monkeypatch.setattr(cf, "HAS_QTWEBENGINE", False)
+
+    if basamak == "curl":
+        class S:
+            def __init__(self, *a, **k):
+                self.cookies: dict = {}
+            get = staticmethod(yakala)
+            post = staticmethod(yakala)
+        monkeypatch.setattr(cf, "HAS_CURL_CFFI", True)
+        monkeypatch.setattr(cf, "curl_requests", type("M", (), {"Session": S}))
+    elif basamak == "cloudscraper":
+        class S:
+            cookies = type("C", (), {"get_dict": staticmethod(dict)})()
+            get = staticmethod(yakala)
+            post = staticmethod(yakala)
+        monkeypatch.setattr(cf, "HAS_CLOUDSCRAPER", True)
+        monkeypatch.setattr(cf.CFSession, "_get_cloud_session", lambda self: S())
+    else:
+        monkeypatch.setattr(cf.requests, "get", yakala)
+
+    resp = oturum(timeout=30).get("https://ornek.test/", timeout=7)
+    assert resp.status_code == 200, f"{basamak} basamağı timeout kwargı ile kırıldı"
+    assert gorulen.get("timeout") == 7, f"{basamak}: çağıranın değeri kullanılmadı"
+
+
 def test_post_da_timeout_u_kabul_ediyor(kwarg_yakalayici):
     gorulen = kwarg_yakalayici(yanit(200))
     resp = oturum(timeout=30).post("https://ornek.test/", timeout=9, data={"a": 1})

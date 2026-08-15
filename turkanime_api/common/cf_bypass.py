@@ -400,9 +400,9 @@ class CFSession:
         try:
             session = self._get_cloud_session()
             if method.upper() == "GET":
-                resp = session.get(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = session.get(url, headers=headers, **kwargs)
             else:
-                resp = session.post(url, headers=headers, timeout=self.timeout, **kwargs)
+                resp = session.post(url, headers=headers, **kwargs)
             
             if resp.status_code not in ENGEL_DURUMLARI and resp.status_code < 500:
                 self._last_method = "cloudscraper"
