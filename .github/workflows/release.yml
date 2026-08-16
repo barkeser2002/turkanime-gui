@@ -92,6 +92,39 @@ jobs:
           pylint -E turkanime_api turkanime_server \
             --disable=import-error,no-name-in-module
 
+      # Etiket ile depodaki sürüm tutmuyorsa HİÇBİR ŞEY yayımlanmasın.
+      #
+      # Sürüm senkronu (`poetry version` + `sed version.py`) yalnızca PyPI
+      # işinde koşuyor ve o iş kendi checkout'unda çalışıyor. `build` işi
+      # depoda YAZILI olan `version.py`yi paketliyor. Yani sürüm yükseltmeyi
+      # unutmak, "v10.1.0" etiketli bir release'in içinden kendini 10.0.0
+      # sanan bir uygulama çıkması demek — ve bunu kimse fark etmez, çünkü
+      # her adım kendi başına başarılı.
+      #
+      # Otomatik düzeltmek yerine DURDURUYORUZ: sürüm numarası bir karardır,
+      # sürüm notları da (`docs/V<sürüm>.md`) ona göre yazılır. Sessizce
+      # düzeltilen bir sürüm, notları olmayan bir sürüm olurdu.
+      - name: Etiket ↔ sürüm denetimi
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          ETIKET="${GITHUB_REF_NAME#v}"
+          KOD=$(python -c "import turkanime_api.version as v; print(v.__version__)")
+          PROJE=$(python -c "
+          import re, pathlib
+          m = re.search(r'^version = \"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(encoding='utf-8'), re.M)
+          print(m.group(1) if m else '')
+          ")
+          echo "etiket=$ETIKET  version.py=$KOD  pyproject=$PROJE"
+          hata=0
+          [ "$ETIKET" = "$KOD" ]   || { echo "::error::turkanime_api/version.py '$KOD' diyor, etiket '$ETIKET'."; hata=1; }
+          [ "$ETIKET" = "$PROJE" ] || { echo "::error::pyproject.toml '$PROJE' diyor, etiket '$ETIKET'."; hata=1; }
+          if [ ! -f "docs/V${ETIKET}.md" ]; then
+            echo "::error::docs/V${ETIKET}.md yok — release gövdesi ve uygulama içi değişiklik listesi boş kalır."
+            hata=1
+          fi
+          exit $hata
+
   # ─────────────────────────────────────────────────────────────────────────
   # Build matrix — Windows / Linux / macOS
   # ─────────────────────────────────────────────────────────────────────────

@@ -122,3 +122,46 @@ def test_her_platform_icin_dogru_ikili_adi(os_adi, beklenen):
     satir = next((s for s in adim.splitlines() if os_adi in s), "")
     assert satir, f"{os_adi} dalı yok"
     assert f"EXE={beklenen} " in satir + " ", f"{os_adi}: {satir.strip()}"
+
+
+# ── Etiket ↔ sürüm kapısı ───────────────────────────────────────────────────
+def _test_isi() -> str:
+    """`test` işinin YAML metni."""
+    metin = AKIS.read_text(encoding="utf-8")
+    bas = metin.index("  test:")
+    son = metin.index("  build:", bas)
+    return metin[bas:son]
+
+
+def test_etiket_surum_denetimi_test_isinde():
+    """Denetim `build`den ÖNCE koşan işte olmalı.
+
+    Sürüm senkronu (`poetry version` + `sed version.py`) yalnızca PyPI işinde
+    yapılıyor ve o iş kendi checkout'unda çalışıyor; `build` işi depoda YAZILI
+    `version.py`yi paketliyor. Yani sürüm yükseltmeyi unutmak, "v10.1.0"
+    etiketli bir release'in içinden kendini 10.0.0 sanan bir uygulama çıkması
+    demek. Kapı, hiçbir şey yayımlanmadan önce durdurmalı.
+    """
+    isi = _test_isi()
+    assert "Etiket ↔ sürüm denetimi" in isi, (
+        "etiket/sürüm denetimi `test` işinde yok — yanlış etiketli bir sürüm "
+        "sessizce yayımlanabilir")
+
+
+@pytest.mark.parametrize("kaynak", ["version.py", "pyproject.toml", "docs/V"])
+def test_denetim_uc_kaynagi_da_kontrol_ediyor(kaynak):
+    """Sürüm üç yerde yazılı; üçü de etiketle tutmalı, notlar da var olmalı."""
+    assert kaynak in _test_isi(), f"{kaynak} denetlenmiyor"
+
+
+def test_denetim_hatada_gercekten_duruyor():
+    """`exit $hata` olmadan `::error::` basmak işi düşürmez — sadece boyar."""
+    isi = _test_isi()
+    assert "exit $hata" in isi, "hata bayrağı işi düşürmüyor"
+
+
+def test_denetim_yalnizca_etiket_kosusunda():
+    """`workflow_dispatch` ile elle koşuda etiket yok; kapı orada takılmamalı."""
+    isi = _test_isi()
+    bas = isi.index("Etiket ↔ sürüm denetimi")
+    assert "startsWith(github.ref, 'refs/tags/')" in isi[bas:bas + 300]
