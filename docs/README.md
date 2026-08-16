@@ -26,9 +26,12 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
   **7'si video sunar**; AniList yalnızca meta veri ve kullanıcı listesi sağlar.
 - **Alakaya göre sıralama:** Sonuçlar sorguya yakınlığa göre dizilir. "one piece"
   aramasında ilk sıra One Piece olur — "Koisuru One Piece" değil.
-- **Gömülü Cloudflare atlatma:** Uzak bir FlareSolverr'a bağımlı kalmadan,
-  uygulamanın içindeki Chromium (QtWebEngine) ayrı süreçte challenge çözüyor.
-  FlareSolverr adresi isteyen için ayarlarda duruyor.
+- **Gömülü Cloudflare atlatma:** Uygulamanın içindeki Chromium (QtWebEngine)
+  ayrı süreçte challenge çözüyor; uzak bir FlareSolverr olmadan da çalışır.
+  **Dikkat:** yine de kutudan çıktığı hâlde `flaresolverr_url` ayarı BOŞ
+  DEĞİL, projenin sunucusu (`node-kyb.bariskeser.com:8191`) yazılı gelir ve
+  zincirin 3. kademesi oraya uğrar. İstemiyorsanız Ayarlar → FlareSolverr
+  URL alanını boşaltın; zincir gömülü çözücüyle çalışmaya devam eder.
 - **Çok kaynaklı bölüm birleştirme:** Aynı anime birden çok kaynakta varsa
   bölümler `(sezon, bölüm)` anahtarıyla tek listede birleşir.
 - **Gelişmiş indirme sistemi:** Bölüm başına ilerleme çubukları, otomatik
@@ -181,7 +184,7 @@ python -m turkanime_api.gui.qt
 ```
 1. curl_cffi      (TLS fingerprint taklidi)
 2. cloudscraper   (JS Challenge çözümü — zorunlu bağımlılık, her kurulumda var)
-3. FlareSolverr   (Uzak headless browser — opsiyonel, tanımlıysa)
+3. FlareSolverr   (Uzak headless browser — VARSAYILAN OLARAK DOLU gelir)
 4. QtWebEngine    (Yerel gömülü Chromium, ayrı süreçte)
 5. requests       (Son çare)
 ```
@@ -220,7 +223,9 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
   Test edilen sürümler: 3.9 – 3.13.
 - **FFmpeg, mpv, aria2c, yt-dlp:** Hazır Windows paketinde gömülü gelir;
   kaynaktan çalıştırıyorsan uygulama içindeki sihirbaz indirip kurar.
-- **FlareSolverr:** Opsiyonel — tanımlı değilse zincir gömülü QtWebEngine'e düşer.
+- **FlareSolverr:** Varsayılan ayarda projenin sunucusu yazılıdır, yani
+  kurulumdan sonra 3. kademe uzak bir sunucuya gider. Alanı boşaltırsanız
+  zincir doğrudan gömülü QtWebEngine'e düşer ve hiçbir istek dışarı çıkmaz.
 - **İnternet bağlantısı:** Kaynaklara erişim ve AniList senkronu için.
 
 ## 🧪 Testler

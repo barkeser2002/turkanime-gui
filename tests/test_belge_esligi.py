@@ -147,3 +147,38 @@ def test_cloudscraper_iddiasi_pyproject_ile_tutuyor(yol):
         assert "pip kurulumunda gelmez" not in govde, (
             f"{yol.name}: cloudscraper zorunlu bağımlılık ama README gelmediğini "
             "söylüyor")
+
+
+@pytest.mark.parametrize("yol", [KOK_README, DOCS_README])
+def test_flaresolverr_varsayilani_dogru_anlatiliyor(yol):
+    """Varsayılan dolu mu boş mu — belge koda uymalı.
+
+    GİZLİLİK MESELESİ: `flaresolverr_url` varsayılanı BOŞ DEĞİL, projenin
+    sunucusu yazılı geliyor. Yani taze bir kurulum, Cloudflare zincirinin
+    3. kademesinde istekleri uzak bir sunucudan geçiriyor. README ise
+    "Opsiyonel — tanımlı değilse zincir gömülü QtWebEngine'e düşer" diyerek
+    varsayılanın boş olduğunu ima ediyordu. Kullanıcı, trafiğinin nereye
+    gittiğini belgeden öğrenebilmeli.
+
+    Test iki yönlü: varsayılan doluysa belge bunu söylemeli; biri varsayılanı
+    boşaltırsa bu sefer "varsayılan dolu" cümlesi yalan olur ve test onu da
+    yakalar.
+    """
+    import re as _re
+
+    kaynak = (KOK / "turkanime_api" / "cli" / "dosyalar.py").read_text(encoding="utf-8")
+    m = _re.search(r'"flaresolverr_url":\s*"([^"]*)"', kaynak)
+    assert m, "flaresolverr_url varsayılanı okunamadı"
+    varsayilan = m.group(1).strip()
+
+    metin = yol.read_text(encoding="utf-8")
+    if varsayilan:
+        assert "VARSAYILAN OLARAK DOLU" in metin, (
+            f"{yol.name}: varsayılan {varsayilan!r} (boş değil) ama belge "
+            "opsiyonel/boş gibi anlatıyor")
+        konak = varsayilan.split("//")[-1].split("/")[0]
+        assert konak in metin, (
+            f"{yol.name}: isteklerin gittiği konak ({konak}) belgede yazmıyor")
+    else:
+        assert "VARSAYILAN OLARAK DOLU" not in metin, (
+            f"{yol.name}: varsayılan artık boş; belge hâlâ dolu olduğunu söylüyor")
