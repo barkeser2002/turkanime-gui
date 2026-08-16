@@ -1,11 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec — TürkAnime GUI (PySide6 + QtWebEngine).
 
-ÖNEMLİ: Bu spec **onedir** üretir (tek klasör), onefile değil. QtWebEngine bir
-Chromium runtime'ı taşır (`QtWebEngineProcess`, `resources/*.pak`, `icudtl.dat`,
-`qtwebengine_locales/`) ve onefile modunda bu alt-süreç çalışma anında
-güvenilir biçimde bulunamıyor. Dağıtım için `dist/turkanime-gui/` klasörünü
-zip'leyin.
+ÖNEMLİ: Bu spec varsayılan olarak **onefile** üretir — tek bir
+`dist/turkanime-gui[.exe]`, yanında `_internal/` yok. `TURKANIME_ONEFILE=0`
+ile onedir'e döner (`dist/turkanime-gui/` klasörü). Bkz. `TEK_DOSYA`.
+
+Burada eskiden "onefile modunda QtWebEngine alt-süreci güvenilir biçimde
+bulunamıyor" yazıyordu. Ölçüldü, doğru çıkmadı: tek dosya paketinde
+`QtWebEngineProcess.exe` ve `resources/*.pak` açılım dizininde yerinde
+duruyor ve arayüz açılıyor. Tek dosyanın gerçek bedeli başka:
+
+  * her açılışta arşiv geçici dizine açılıyor — ~9 sn, 550 MB / 4601 dosya;
+  * CF çözücü alt-süreci (`sys.executable --cf-qt-solver`) KENDİ açılımını
+    yapıyor, ebeveynin dizinini paylaşmıyor (ölçüldü), yani her Cloudflare
+    duvarı ~9 sn daha;
+  * süreç zorla sonlandırılırsa açılım dizini silinmiyor, ~550 MB kalıyor.
+
+onedir'de üç maliyet de sıfır. Tek dosya bilinçli bir tercih, teknik bir
+zorunluluk değil.
 
 Ad neden `turkanime-qt` değil: Faz 9'dan sonra tek arayüz kaldı, "qt" artık
 ayırt edici bir bilgi taşımıyor. Depo, PyPI paketi, giriş noktası ve release

@@ -43,7 +43,7 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
-- **Testler:** 723 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Testler:** 988 otomatik test (pytest + pytest-qt), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 
@@ -119,9 +119,11 @@ turkanime-cli
 > `[gui]` ekstrası PySide6'yı (ve opsiyonel `pypresence`'ı) kurar. Sade
 > `pip install turkanime-gui` yalnızca terminal sürümünü çalıştırır.
 >
-> **Not:** pip ile kurulan sürümde `cloudscraper` gelmez; Cloudflare zinciri
-> 5 yerine 4 kademeyle çalışır (bkz. [Cloudflare Bypass Zinciri](#cloudflare-bypass-zinciri)).
-> Beş kademenin tamamı için hazır paketi ya da kaynaktan kurulumu kullan.
+> **Not (düzeltildi):** Burada eskiden "pip ile kurulan sürümde `cloudscraper`
+> gelmez, Cloudflare zinciri 5 yerine 4 kademeyle çalışır" yazıyordu. Doğru
+> değil: `cloudscraper` hem `pyproject.toml` hem `requirements.txt` içinde
+> **zorunlu** bağımlılık. Her kurulum biçimi beş kademenin tamamını taşıyor
+> (bkz. [Cloudflare Bypass Zinciri](#cloudflare-bypass-zinciri)).
 
 ### 3. Kaynak Koddan
 ```bash
@@ -178,7 +180,7 @@ python -m turkanime_api.gui.qt
 ### Cloudflare Bypass Zinciri
 ```
 1. curl_cffi      (TLS fingerprint taklidi)
-2. cloudscraper   (JS Challenge çözümü — pip kurulumunda gelmez)
+2. cloudscraper   (JS Challenge çözümü — zorunlu bağımlılık, her kurulumda var)
 3. FlareSolverr   (Uzak headless browser — opsiyonel, tanımlıysa)
 4. QtWebEngine    (Yerel gömülü Chromium, ayrı süreçte)
 5. requests       (Son çare)
@@ -209,7 +211,7 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 |-------|-----------|
 | **TRAnimeİzle çerez istiyor** | Çerez alınmadan bu kaynak bölüm döndürmez. Ayarlar → "Tarayıcıdan Al" ile bir kez alınır. |
 | **OpenAnime stream 404** | Arama ve bölüm listesi çalışıyor, ama CDN uçları `not_found` dönüyor. `api.openani.me` kimlik doğrulama ("Vanguard") istiyor. Uygulama bu durumda sessiz kalmaz, sebebi yazar. |
-| **pip kurulumunda 4 kademeli CF zinciri** | `cloudscraper` PyPI bağımlılıklarında yok; hazır paket ve kaynaktan kurulum 5 kademenin tamamını taşır. |
+| ~~**pip kurulumunda 4 kademeli CF zinciri**~~ | Geçersiz: `cloudscraper` zorunlu bağımlılık (`pyproject.toml`, `requirements.txt`); her kurulum 5 kademenin tamamını taşır. |
 | **Anizle bölüm başına sınırlı kaynak** | Site video.js/HLS'e geçti; bazı bölümlerde tek stream dönebiliyor. |
 
 ## 🔧 Sistem Gereksinimleri
@@ -239,7 +241,7 @@ python -m pytest tests/
 
 > **`PyYAML` neden gerekli:** `tests/test_release_workflow.py` yayın
 > workflow'unu ayrıştırıyor ve PyYAML yoksa `importorskip` ile **sessizce
-> atlanıyor**. Kurmadan koşarsan 15 test hiç çalışmaz ama paket yine yeşil
+> atlanıyor**. Kurmadan koşarsan o dosyanın tamamı hiç çalışmaz ama paket yeşil
 > görünür. PyYAML hiçbir `requirements` dosyasında yer almıyor, elle kurulmalı.
 
 Kaynak adaptörleri gerçek ağa çıkan ayrı bir betikle sınanır. Bu betik

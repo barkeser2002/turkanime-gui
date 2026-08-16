@@ -19,9 +19,14 @@ PyInstaller ile (spec):
 python -m PyInstaller turkanime-gui.spec --noconfirm
 ```
 
-Çıktı `dist/turkanime-gui/` klasörüne üretilir. **onedir**'dir, onefile değil:
-QtWebEngine onefile'da kırılgan (`QtWebEngineProcess` çalışma anında
-bulunamıyor), bu yüzden klasör zip'lenerek dağıtılır.
+Çıktı tek dosya: `dist/turkanime-gui.exe` (Linux/macOS'ta uzantısız). Yanında
+`_internal/` klasörü yoktur. `TURKANIME_ONEFILE=0` ile derlersen eski davranışa
+döner ve `dist/turkanime-gui/` klasörü üretilir.
+
+Tek dosyanın bedeli ölçüldü: her açılışta ~9 sn arşiv açılımı (550 MB / 4601
+dosya) ve CF çözücü alt-süreci kendi açılımını yaptığı için her Cloudflare
+duvarında ~9 sn daha. Geliştirirken sık sık açıp kapatıyorsan `TURKANIME_ONEFILE=0`
+gözle görülür biçimde rahat.
 
 Spec'in yaptığı boyut budaması (bozarsanız paket ~130 MB şişer):
 - Kullanılmayan Qt modülleri (`_DROP`) — 3D, Charts, Designer, Sql, Test…

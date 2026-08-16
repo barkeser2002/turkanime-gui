@@ -93,7 +93,8 @@ pip install -r requirements-gui.txt || echo warn: requirements-gui install faile
 pip install pyinstaller || echo warn: pyinstaller install failed
 :: Faz 9: eski pyinstaller.spec (CustomTkinter) silindi. Tek GUI spec'i bu.
 :: Faz 10: spec adi turkanime-qt.spec -> turkanime-gui.spec olarak degisti.
-:: onedir uretir -> dist\turkanime-gui\ (QtWebEngine onefile'da kirilgan).
+:: Varsayilan ONEFILE -> dist\turkanime-gui.exe (tek dosya, _internal yok).
+:: TURKANIME_ONEFILE=0 ile onedir'e doner -> dist\turkanime-gui\
 python -m PyInstaller turkanime-gui.spec --noconfirm || echo warn: PyInstaller GUI build failed
 
 echo Building CLI (Windows)...

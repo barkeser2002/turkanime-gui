@@ -95,3 +95,55 @@ def test_baglanan_belgeler_gercekten_var(yol):
         if not (taban / hedef).resolve().exists():
             eksik.append(hedef)
     assert not eksik, f"{yol.name}: olmayan belgelere bağlantı: {eksik}"
+
+
+# ── Sayısal iddialar ────────────────────────────────────────────────────────
+@pytest.mark.parametrize("yol", [KOK_README, DOCS_README])
+def test_test_sayisi_abartilmiyor(yol):
+    """README'nin verdiği test sayısı gerçekten toplanandan FAZLA olmasın.
+
+    "723 otomatik test" yazıyordu; gerçek sayı 988'e çıkmıştı. Sayı sessizce
+    eskiyor ve kimse fark etmiyor. Burada eşitlik değil ÜST SINIR aranıyor:
+    test eklemek testi kırmasın, ama olduğundan çok göstermek kırsın —
+    yanlış olan yön o.
+    """
+    metin = yol.read_text(encoding="utf-8")
+    m = re.search(r"(\d[\d.]*)\s*otomatik test", metin)
+    assert m, f"{yol.name}: test sayısı ifadesi bulunamadı"
+    iddia = int(m.group(1).replace(".", ""))
+
+    import subprocess
+    import sys
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q",
+         "-p", "no:cacheprovider", str(KOK / "tests")],
+        cwd=KOK, capture_output=True, text=True, encoding="utf-8",
+        errors="replace",
+        env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    g = re.search(r"(\d+) tests? collected", r.stdout)
+    if not g:
+        pytest.skip("toplanan test sayısı okunamadı")
+    gercek = int(g.group(1))
+    assert iddia <= gercek, (
+        f"{yol.name}: {iddia} test olduğu yazıyor ama {gercek} toplanıyor — "
+        "README olduğundan fazlasını gösteriyor")
+
+
+@pytest.mark.parametrize("yol", [KOK_README, DOCS_README])
+def test_cloudscraper_iddiasi_pyproject_ile_tutuyor(yol):
+    """"pip kurulumunda cloudscraper gelmez" deniyordu; zorunlu bağımlılık.
+
+    İddia yanlış olmakla kalmıyordu, kullanıcıyı gereksiz yere hazır pakete
+    yönlendiriyordu. Bağımlılık kaldırılırsa bu test iddianın yeniden
+    yazılmasını zorunlu kılar.
+    """
+    zorunlu = "cloudscraper" in (KOK / "pyproject.toml").read_text(encoding="utf-8")
+    govde = "\n".join(
+        s for s in yol.read_text(encoding="utf-8").splitlines()
+        if not s.lstrip().startswith(">")           # düzeltme notu hariç
+    )
+    if zorunlu:
+        assert "pip kurulumunda gelmez" not in govde, (
+            f"{yol.name}: cloudscraper zorunlu bağımlılık ama README gelmediğini "
+            "söylüyor")

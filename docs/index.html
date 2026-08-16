@@ -275,10 +275,36 @@
     const docFiles = [
       { details: 'details-readme',     id: 'content-readme',     file: 'README.md' },
       { details: 'details-provider',   id: 'content-provider',   file: 'ANIME_PROVIDER_GUIDE.md' },
-      { details: 'details-surum',      id: 'content-surum',      file: 'V10.0.0.md' },
+      // Sürüm notu dosyası SABİT DEĞİL: her yayında adı değişiyor
+      // (V10.0.0.md -> V10.1.0.md -> ...). Sabit kodlandığı sürece yeni
+      // sürümün notları sitede hiç görünmüyordu — dosya depoda vardı ama
+      // sayfa eskisini istiyordu. Adı `version.json`den türetiliyor; o dosyayı
+      // yayın akışı zaten her etikette güncelliyor. `null` = çalışma anında
+      // çözülecek (bkz. `surumNotuDosyasi`).
+      { details: 'details-surum',      id: 'content-surum',      file: null },
       { details: 'details-anilist',    id: 'content-anilist',    file: 'ANILIST_OAUTH.md' },
       { details: 'details-disclaimer', id: 'content-disclaimer', file: 'DISCLAIMER.md' }
     ];
+
+    // Sürüm notu dosyasının adı `version.json`den geliyor. Yedeği bilerek
+    // V10.0.0.md: version.json okunamazsa boş bölüm göstermektense var olduğu
+    // kesin bir belgeyi göstermek daha iyi.
+    const SURUM_NOTU_YEDEK = 'V10.0.0.md';
+    let _surumNotu = null;
+
+    async function surumNotuDosyasi() {
+      if (_surumNotu) return _surumNotu;
+      try {
+        const r = await fetch(baseUrl + 'version.json', { cache: 'no-store' });
+        if (r.ok) {
+          const v = (await r.json()).version;
+          if (v) _surumNotu = 'V' + String(v).replace(/^v/i, '') + '.md';
+        }
+      } catch (e) {
+        /* ağ/ayrıştırma hatası: yedeğe düş */
+      }
+      return (_surumNotu = _surumNotu || SURUM_NOTU_YEDEK);
+    }
 
     // Function to load and render markdown
     async function loadMarkdown(targetId, filename) {
@@ -321,7 +347,13 @@
             const container = document.getElementById(targetConf.id);
             // Check if it's already loaded (if innerHTML no longer contains the spinner class)
             if (container.innerHTML.includes('loading-spinner')) {
-              loadMarkdown(targetConf.id, targetConf.file);
+              // `file: null` olan girdi (sürüm notu) adını çalışma anında
+              // `version.json`den çözüyor; ötekiler doğrudan yükleniyor.
+              if (targetConf.file) {
+                loadMarkdown(targetConf.id, targetConf.file);
+              } else {
+                surumNotuDosyasi().then(ad => loadMarkdown(targetConf.id, ad));
+              }
             }
           }
           
