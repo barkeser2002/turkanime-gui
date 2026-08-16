@@ -197,11 +197,11 @@ def indir_ve_dogrula(url: str, hedef_dizin: str, checksum: str = "",
 
 # ── Kurulum sonrası ─────────────────────────────────────────────────────────
 def arsiv_mi(dosya_yolu: str) -> bool:
-    """Artefakt tek dosya değil, açılması gereken bir arşiv mi?
+    """Artefakt doğrudan çalıştırılabilir değil, açılması gereken bir arşiv mi?
 
-    GUI paketi onedir olduğu için CI artık her platformda `.zip` yayımlıyor
-    (bkz. `release.yml`). Bunu bilmeyen talimat "yeni dosyayı eskisinin yerine
-    kopyalayın" diyordu — kullanıcı bir zip'i exe'nin üstüne kopyalayamaz.
+    GUI paketi her platformda `.zip` olarak yayımlanıyor (bkz. `release.yml`).
+    Bunu bilmeyen talimat "yeni dosyayı eskisinin yerine kopyalayın" diyordu —
+    kullanıcı bir zip'i exe'nin üstüne kopyalayamaz.
     """
     return os.path.splitext(str(dosya_yolu or ""))[1].lower() == ".zip"
 
@@ -215,20 +215,33 @@ def kurulum_talimati(dosya_yolu: str, isletim: Optional[str] = None) -> str:
     isletim = isletim or get_os()
     dizin = os.path.dirname(dosya_yolu)
     if arsiv_mi(dosya_yolu):
-        # Onedir paketinde çalıştırılabilir, yanındaki kütüphanelerle birlikte
-        # anlam taşır; bu yüzden dosya değil KLASÖR değiştiriliyor.
+        # v10.1.0'dan itibaren paket TEK DOSYA: zip'in içinde bir klasör değil,
+        # tek bir çalıştırılabilir var (bkz. `turkanime-gui.spec`, `TEK_DOSYA`).
+        #
+        # Metin bu sürümde düzeltildi. Öncesinde "çıkardığınız KLASÖRÜ eskisinin
+        # yerine koyun" diyordu; artık ortada öyle bir klasör yok, dolayısıyla
+        # kullanıcı tarif edilen adımı hiç yapamazdı.
+        #
+        # Yükseltenler için ek bir ayrıntı var: 10.0.0 kurulumunun yanında
+        # `_internal/` klasörü duruyor. Tek dosya onu okumaz, yani zararsızdır;
+        # ama yarım gigabaytlık ölü ağırlıktır ve "hangisi güncel" sorusunu
+        # doğurur. Silinebileceği açıkça söyleniyor.
         adimlar = ["1. Çalışan uygulamayı kapatın",
                    f"2. İndirilen arşiv: {dosya_yolu}",
-                   "3. Arşivi bir klasöre çıkarın (sağ tık → Tümünü ayıkla)",
-                   "4. Eski uygulama klasörünü yedekleyin, sonra silin",
-                   "5. Çıkardığınız klasörü eskisinin yerine koyun"]
+                   "3. Arşivi çıkarın (sağ tık → Tümünü ayıkla) — "
+                   "içinde tek bir uygulama dosyası var",
+                   "4. Eski uygulama dosyasını yedekleyin",
+                   "5. Yeni dosyayı eskisinin yerine koyun",
+                   "6. Eski kurulumdan kalan \"_internal\" klasörü varsa "
+                   "artık gereksizdir, silebilirsiniz",
+                   "7. Uygulamayı yeniden başlatın"]
         if isletim in ("linux", "macos"):
-            adimlar[2] = f"3. Arşivi çıkarın: unzip {dosya_yolu}"
-            adimlar.append("6. Çalıştırma izni verin: "
-                           "chmod +x <klasör>/turkanime-gui")
-            adimlar.append("7. Uygulamayı yeniden başlatın")
-        else:
-            adimlar.append("6. Uygulamayı yeniden başlatın")
+            adimlar[2] = (f"3. Arşivi çıkarın: unzip {dosya_yolu} — "
+                          "içinde tek bir uygulama dosyası var")
+            adimlar.insert(6, "6. Çalıştırma izni verin: chmod +x turkanime-gui")
+            # Ekleme sonrası numaralar kaydı; baştan numaralandır.
+            adimlar = [f"{i}. {s.split('. ', 1)[1]}"
+                       for i, s in enumerate(adimlar, 1)]
         return "\n".join(adimlar)
     if isletim == "windows":
         return ("1. Çalışan uygulamayı kapatın\n"
