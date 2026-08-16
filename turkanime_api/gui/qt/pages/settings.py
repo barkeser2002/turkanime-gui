@@ -27,7 +27,7 @@ kullanıcı diyaloğu onaylayacak — ayar tek başına hiçbir şey göndertmez
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -378,7 +378,7 @@ class SettingsPage(QWidget):
         self.chkKimlikPaylas.setChecked(bool(ayarlar.get("kimlik paylas", False)))
         self.txtSunucu.setText(str(ayarlar.get("sunucu adresi") or ""))
         self.txtSunucuAnahtar.setText(str(ayarlar.get("sunucu api anahtari") or ""))
-        self._show_kimlik_state(str(ayarlar.get("kimlik bagis id") or ""))
+        self._show_kimlik_state(self._bagis_kimlikleri(ayarlar))
         self._reload_discord(bool(ayarlar.get("discord_rich_presence", True)))
         self._reload_anilist()
         # Kaynak modülleri çerez/jetonu süreç-içi global'de tutuyor ve her süreç
@@ -516,14 +516,44 @@ class SettingsPage(QWidget):
         from .. import katki_dialog
         return katki_dialog
 
-    def _show_kimlik_state(self, bagis_id: str) -> None:
+    @staticmethod
+    def _bagis_kimlikleri(ayarlar: Dict[str, Any]) -> List[str]:
+        """Ayardaki bağış numaralarını LİSTE olarak ver.
+
+        Ayar neden liste: çerezin süresi dolduğunda kullanıcı yeniden bağış
+        yapar — zaten bu özelliğin var olma sebebi bu. Numara tek bir dizgede
+        tutulunca ikinci bağış birincinin üstüne yazıyordu ve eski numara yok
+        oluyordu. O numara geri çekmenin TEK anahtarı (sunucu bağışçıyı
+        tanımıyor, "bağışlarımı listele" ucu yok ve olamaz), dolayısıyla ilk
+        bağış 30 günlük ömrünü doldurana kadar geri çekilemez kalıyordu —
+        oysa onay metni "istediğin an geri çekebilirsin" diye söz veriyor.
+
+        Eski kurulumlarda değer düz dizgi; okurken listeye çevriliyor ki
+        10.0.0'dan yükselen kullanıcının numarası kaybolmasın.
+        """
+        ham = ayarlar.get("kimlik bagis id") or []
+        if isinstance(ham, str):
+            ham = [ham] if ham.strip() else []
+        return [str(x).strip() for x in ham if str(x).strip()]
+
+    def _show_kimlik_state(self, kimlikler: Any) -> None:
         """Bağış durumunu yaz ve geri çekme düğmesini ona göre aç/kapa."""
-        bagis_id = str(bagis_id or "")
-        self.btnBagisGeriCek.setEnabled(bool(bagis_id))
-        if bagis_id:
+        if isinstance(kimlikler, str):
+            kimlikler = [kimlikler] if kimlikler.strip() else []
+        kimlikler = [str(k).strip() for k in (kimlikler or []) if str(k).strip()]
+        self.btnBagisGeriCek.setEnabled(bool(kimlikler))
+        if len(kimlikler) == 1:
             self.lblKimlik.setText(
-                f"Bağış yapıldı — numara: {bagis_id}. "
+                f"Bağış yapıldı — numara: {kimlikler[0]}. "
                 "İstediğiniz an geri çekebilirsiniz.")
+            self.lblKimlik.setStyleSheet("color: #00b894;")
+        elif kimlikler:
+            # Çoğul hâl gizlenmiyor: kullanıcı kaç kaydı olduğunu bilmeli,
+            # "geri çek" düğmesi hepsini birden siliyor.
+            self.lblKimlik.setText(
+                f"{len(kimlikler)} bağış kaydı var — numaralar: "
+                + ", ".join(kimlikler)
+                + ". \"Bağışımı geri çek\" hepsini birden siler.")
             self.lblKimlik.setStyleSheet("color: #00b894;")
         else:
             self.lblKimlik.setText("Bağışlanmış oturum kimliği yok.")
@@ -550,11 +580,27 @@ class SettingsPage(QWidget):
             return
         try:
             bagis_id = katki.bagis_gonder(netscape, katki.KAYNAK_TRANIME, ayarlar)
-            self._dosya().set_ayar("kimlik bagis id", bagis_id)
         except Exception as exc:
             self.lblStatus.error(f"Kimlik bağışı gönderilemedi: {exc}")
             return
-        self._show_kimlik_state(bagis_id)
+
+        # Gönderim ile kaydetme AYRI try blokları. Eskiden aynı bloktaydılar:
+        # `bagis_gonder` başarılı olup `set_ayar` düşerse kullanıcıya
+        # "gönderilemedi" deniyordu — yalan. Bağış sunucudaydı, numarası ise
+        # hiçbir yerde. Artık kaydetme düşerse numara EKRANA yazılıyor;
+        # kullanıcının onu bir yere not edip sonra geri çekme şansı olsun.
+        kimlikler = self._bagis_kimlikleri(ayarlar)
+        if bagis_id not in kimlikler:
+            kimlikler.append(bagis_id)
+        try:
+            self._dosya().set_ayar("kimlik bagis id", kimlikler)
+        except Exception as exc:
+            self.lblStatus.error(
+                f"Bağış SUNUCUYA ULAŞTI ama numarası kaydedilemedi ({exc}). "
+                f"Geri çekebilmek için bu numarayı saklayın: {bagis_id}")
+            self._show_kimlik_state(kimlikler)
+            return
+        self._show_kimlik_state(kimlikler)
         self.lblStatus.ok("Oturum kimliği bağışlandı. "
                           "Geri çekmek için “Bağışımı geri çek”.")
 
@@ -569,23 +615,42 @@ class SettingsPage(QWidget):
         except Exception as exc:
             self.lblStatus.error(f"Ayarlar okunamadı: {exc}")
             return
-        bagis_id = str(ayarlar.get("kimlik bagis id") or "")
-        if not bagis_id:
+        kimlikler = self._bagis_kimlikleri(ayarlar)
+        if not kimlikler:
             self.lblStatus.info("Geri çekilecek bağış yok.")
             return
+
+        # Hepsi tek tek deneniyor; biri düşerse ötekiler yine de silinsin.
+        # Silinemeyen numara ayarda KALIR — atılırsa o kayıt bir daha geri
+        # çekilemez, çünkü numara geri çekmenin tek anahtarı.
+        kalan, hatalar = [], []
+        katki = self._katki()
+        for bid in kimlikler:
+            try:
+                katki.bagis_geri_cek(bid, ayarlar)
+            except Exception as exc:
+                kalan.append(bid)
+                hatalar.append(f"{bid}: {exc}")
         try:
-            self._katki().bagis_geri_cek(bagis_id, ayarlar)
-        except Exception as exc:
-            self.lblStatus.error(f"Bağış geri çekilemedi: {exc}")
-            return
-        try:
-            self._dosya().set_ayar("kimlik bagis id", "")
+            self._dosya().set_ayar("kimlik bagis id", kalan)
         except Exception as exc:
             self.lblStatus.error(
-                f"Bağış sunucudan silindi ama numara yerelde kaldı: {exc}")
+                f"Bağış(lar) sunucudan silindi ama numara yerelde kaldı: {exc}")
             return
-        self._show_kimlik_state("")
-        self.lblStatus.ok("Bağışınız geri çekildi ve sunucudan silindi.")
+        self._show_kimlik_state(kalan)
+        if hatalar:
+            silinen = len(kimlikler) - len(kalan)
+            # Hiçbiri silinemediyse "0/1 bağış geri çekildi" demek anlamsız;
+            # kullanıcının duyması gereken şey işlemin olmadığı.
+            bas = ("Bağış geri çekilemedi." if silinen == 0 else
+                   f"{silinen}/{len(kimlikler)} bağış geri çekildi.")
+            self.lblStatus.error(
+                bas + " Geri çekilemeyenlerin numarası saklandı, tekrar "
+                "deneyebilirsiniz: " + "; ".join(hatalar))
+            return
+        self.lblStatus.ok("Bağışınız geri çekildi ve sunucudan silindi."
+                          if len(kimlikler) == 1 else
+                          f"{len(kimlikler)} bağış geri çekildi ve sunucudan silindi.")
 
     # ── Discord / bakım ─────────────────────────────────────────────────────
     def _reload_discord(self, acik: bool) -> None:

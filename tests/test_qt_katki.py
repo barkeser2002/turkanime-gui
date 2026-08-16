@@ -71,7 +71,7 @@ def test_kimlik_paylasimi_varsayilan_kapali(izole_ev):
     """Yeni kurulumda bağış kapalı olmalı; açmak kullanıcının kararı."""
     ayarlar = Dosyalar().ayarlar
     assert ayarlar["kimlik paylas"] is False
-    assert ayarlar["kimlik bagis id"] == ""
+    assert ayarlar["kimlik bagis id"] == []
     # Sunucu adresi/anahtarı koda gömülü değil.
     assert ayarlar["sunucu adresi"] == ""
     assert ayarlar["sunucu api anahtari"] == ""
@@ -91,7 +91,7 @@ def test_ayar_kapaliyken_onay_bile_sorulmuyor(sayfa, casus):
 
     assert kayit["onay_sorusu"] == 0
     assert kayit["gonderim"] == []
-    assert Dosyalar().ayarlar.get("kimlik bagis id") == ""
+    assert SettingsPage._bagis_kimlikleri(Dosyalar().ayarlar) == []
 
 
 def test_onay_verilmezse_hicbir_sey_gonderilmiyor(sayfa, casus):
@@ -105,7 +105,7 @@ def test_onay_verilmezse_hicbir_sey_gonderilmiyor(sayfa, casus):
 
     assert kayit["onay_sorusu"] == 1        # soruldu
     assert kayit["gonderim"] == []          # ama gönderilmedi
-    assert Dosyalar().ayarlar.get("kimlik bagis id") == ""
+    assert SettingsPage._bagis_kimlikleri(Dosyalar().ayarlar) == []
     # Çerez yine de kaydedilmiş olmalı: bağışın reddi kontrolü boşa çıkarmaz.
     assert ".AitrWeb.Session" in Dosyalar().ayarlar.get("tranime_cookie", "")
 
@@ -120,7 +120,7 @@ def test_onay_verilirse_gonderiliyor_ve_numara_saklaniyor(sayfa, casus):
 
     assert [d for d, _ in kayit["gonderim"]] == [CEREZ]
     assert kayit["gonderim"][0][1] == katki_dialog.KAYNAK_TRANIME
-    assert Dosyalar().ayarlar["kimlik bagis id"] == "BAGIS-1234"
+    assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
     assert sayfa.btnBagisGeriCek.isEnabled() is True
 
 
@@ -135,7 +135,7 @@ def test_gonderim_basarisizsa_numara_yazilmiyor(sayfa, casus):
     sayfa._on_cookie_ready(CEREZ)
 
     assert len(kayit["gonderim"]) == 1
-    assert Dosyalar().ayarlar.get("kimlik bagis id") == ""
+    assert SettingsPage._bagis_kimlikleri(Dosyalar().ayarlar) == []
     assert "gönderilemedi" in sayfa.lblStatus.text()
 
 
@@ -210,14 +210,14 @@ def test_reddedilen_diyalog_onay_dondurmuyor(qtbot, monkeypatch):
 # ── Geri çekme ──────────────────────────────────────────────────────────────
 def test_geri_cekme_numarayi_temizliyor(sayfa, casus):
     kayit, _ = casus
-    Dosyalar().set_ayar("kimlik bagis id", "BAGIS-1234")
+    Dosyalar().set_ayar("kimlik bagis id", ["BAGIS-1234"])
     sayfa.reload()
     assert sayfa.btnBagisGeriCek.isEnabled() is True
 
     sayfa._bagis_geri_cek()
 
     assert kayit["geri_cekme"] == ["BAGIS-1234"]
-    assert Dosyalar().ayarlar["kimlik bagis id"] == ""
+    assert Dosyalar().ayarlar["kimlik bagis id"] == []
     assert sayfa.btnBagisGeriCek.isEnabled() is False
     assert "geri çekildi" in sayfa.lblStatus.text()
 
@@ -226,13 +226,13 @@ def test_geri_cekme_basarisizsa_numara_kaliyor(sayfa, casus):
     """Sunucudan silinemediyse yerel numara durmalı: tek silme anahtarı o."""
     kayit, ayar = casus
     ayar["geri_cekme_hatasi"] = "Sunucuya ulaşılamadı."
-    Dosyalar().set_ayar("kimlik bagis id", "BAGIS-1234")
+    Dosyalar().set_ayar("kimlik bagis id", ["BAGIS-1234"])
     sayfa.reload()
 
     sayfa._bagis_geri_cek()
 
     assert kayit["geri_cekme"] == ["BAGIS-1234"]
-    assert Dosyalar().ayarlar["kimlik bagis id"] == "BAGIS-1234"
+    assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
     assert "geri çekilemedi" in sayfa.lblStatus.text()
 
 

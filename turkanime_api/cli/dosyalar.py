@@ -174,11 +174,17 @@ class Dosyalar:
             # kullanıcının o diyaloğu onaylamasına bağlıdır
             # (bkz. `gui.qt.katki_dialog`).
             "kimlik paylas": False,
-            # Sunucunun verdiği bağış numarası; geri çekmenin tek anahtarı.
-            # Bağışçıyı sunucuda tanımlayan tek şey bu olduğu için boşalması
-            # "bağışı artık silemiyorum" demektir — geri çekme başarılı olmadan
-            # temizlenmez.
-            "kimlik bagis id": "",
+            # Sunucunun verdiği bağış numaraları; geri çekmenin tek anahtarı.
+            # Bağışçıyı sunucuda tanımlayan tek şey bunlar olduğu için bir
+            # numaranın kaybolması "o bağışı artık silemiyorum" demektir —
+            # geri çekme başarılı olmadan listeden düşürülmez.
+            #
+            # LİSTE, tek dizgi değil: çerezin süresi dolunca kullanıcı yeniden
+            # bağışlıyor (özelliğin var olma sebebi bu). Tek dizgide ikinci
+            # bağış birincinin üstüne yazıyor ve eski numara yok oluyordu.
+            # Eski kurulumlardaki düz dizgi okunurken listeye çevriliyor
+            # (bkz. `gui.qt.pages.settings.SettingsPage._bagis_kimlikleri`).
+            "kimlik bagis id": [],
             # Sunucu adresi/anahtarı koda gömülü DEĞİL: gömülü olsaydı
             # istemcinin her kopyası aynı sunucuya kimlik göndermeye hazır
             # gelirdi. Boş bırakılırsa bağış ucu istemci tarafında da kapalıdır.
