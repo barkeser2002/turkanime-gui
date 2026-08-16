@@ -52,15 +52,22 @@ muhatabı değildir.
 
 Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 
-| Kaynak | Adres |
-|--------|-------|
-| TürkAnime | [turkanime.co](https://turkanime.co) |
-| AnimeciX | [animecix.tv](https://animecix.tv) |
-| Anizle | [anizm.pro](https://anizm.pro) |
-| TRAnimeİzle | [tranimeizle.co](https://tranimeizle.co) |
+| Kaynak | Adres(ler) |
+|--------|------------|
+| TürkAnime | [www.turkanime.co](https://www.turkanime.co) |
+| AnimeciX | [animecix.tv](https://animecix.tv) · API: [mangacix.net](https://mangacix.net) |
+| Anizle | [anizm.pro](https://anizm.pro) · API: [anizle.org](https://anizle.org) · oynatıcı: [anizmplayer.com](https://anizmplayer.com) |
+| TRAnimeİzle | [www.tranimeizle.io](https://www.tranimeizle.io) |
 | OpenAnime | [openani.me](https://openani.me) |
 | Tranimaci | [tranimaci.com](https://tranimaci.com) |
-| AnimeDepo | GitLab üzerinde barındırılan statik arşiv |
+| AnimeDepo | [gitlab.com/AnimeDepo/animedepo](https://gitlab.com/AnimeDepo/animedepo) — statik arşiv |
+
+> Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
+> `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce
+> TRAnimeİzle satırında sitenin taşınmadan önceki uzantısı yazılıydı. Bir DMCA
+> bildiriminin yanlış alan adına gönderilmesi, hiç gönderilmemesiyle aynı
+> kapıya çıkar — bu yüzden adresler artık elle tutulmuyor. Ölü alan adları
+> belgede bilerek tekrarlanmıyor: başkasının eline geçmiş olabilirler.
 
 Ayrıca **AniList** yalnızca meta veri (başlık, kapak, kullanıcı listesi) için
 kullanılır; video içeriği sunmaz.
