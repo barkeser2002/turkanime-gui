@@ -12,7 +12,7 @@
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V10.0.0](docs/V10.0.0.md)
+**Sürüm notları:** [V10.1.0](docs/V10.1.0.md) · [V10.0.0](docs/V10.0.0.md)
 
 TürkAnime GUI **tamamen arayüz odaklı** bir anime keşif, izleme ve indirme
 uygulaması. Arayüz **PySide6 + QtWebEngine** üzerine kurulu; V10.0.0 ile
@@ -88,9 +88,20 @@ sayfasından platformuna uyanı indir:
 | `turkanime-cli-windows.exe` / `-linux` / `-macos` | Terminal sürümü (tek dosya) |
 | `*.sha256` | Yayımlanan dosyanın SHA-256 özeti |
 
-Arayüz paketi **zip**'tir (tek exe değil): QtWebEngine bir Chromium çalışma
-zamanı taşıyor ve tek dosyaya sıkıştırıldığında alt-süreci bulamıyor. Zip'i bir
-klasöre çıkar, `turkanime-gui.exe` ile başlat.
+Arayüz paketi **zip**'tir ama içinde **tek bir çalıştırılabilir dosya** vardır
+(v10.1.0'dan itibaren; `_internal/` klasörü yok). Zip'i aç, `turkanime-gui.exe`
+ile başlat. 10.0.0'dan yükseltiyorsan eski kurulumun yanındaki `_internal/`
+klasörü artık gereksizdir, silebilirsin.
+
+Zip kullanılmasının sebebi dosyanın bölünmesi değil, indirme sayfasının ve
+otomatik güncelleyicinin `.zip` adlarına bağlı olması.
+
+> Burada eskiden "QtWebEngine tek dosyaya sıkıştırıldığında alt-sürecini
+> bulamıyor" yazıyordu. Ölçüldü ve doğru çıkmadı: tek dosya paketinde
+> `QtWebEngineProcess.exe` açılım dizininde yerinde duruyor ve arayüz açılıyor.
+> Tek dosyanın gerçek bedeli başka: her açılışta ~9 sn arşiv açılımı, ve
+> Cloudflare çözücü alt-süreci kendi açılımını yaptığı için her duvarda ~9 sn
+> daha. Ayrıntı: [V10.1.0 sürüm notları](docs/V10.1.0.md).
 
 ### 2. PyPI Üzerinden
 ```bash
