@@ -2,7 +2,7 @@
 name = "turkanime-gui"
 # Sürümün asıl kaynağı turkanime_api/version.py; burası poetry literal
 # istediği için ikinci kopya. tests/test_qt_updates.py ikisini karşılaştırıyor.
-version = "10.0.0"
+version = "10.1.0"
 description = "Türkanime video oynatıcı ve indirici"
 authors = ["barkeser2002 <bariskeser@bariskeser.com>", "Junicchi <junicchi@waifu.club>"]
 readme = "README.md"
