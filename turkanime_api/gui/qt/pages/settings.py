@@ -912,6 +912,14 @@ class SettingsPage(QWidget):
             uyarilar.append(
                 "Yerel arşiv yok: TürkAnime araması ve bölüm listeleri internetten "
                 "gelir. Çevrimdışı kullanmak için tüm arşivi indirin.")
+        # Güncelleme ya da silme eski kopyayı gizli bir ada taşıyıp siliyor;
+        # silme yarıda kaldıysa (kilitli dosya, izin) ~0,5 GB'lık gizli klasör
+        # kalıyor. Eskiden bu hata yutuluyordu, kullanıcı hiç bilmiyordu.
+        kalintilar = list(getattr(durum, "kalintilar", ()) or ())
+        if kalintilar:
+            uyarilar.append(
+                "Eski arşivin silinemeyen kopyası var (uygulama kapalıyken elle "
+                "silebilirsiniz): " + ", ".join(str(k) for k in kalintilar))
         return uyarilar
 
     def _arsiv_dugmelerini_guncelle(self) -> None:
@@ -1101,7 +1109,9 @@ class SettingsPage(QWidget):
             self.lblArsivDurum.error(f"Arşiv klasörü kaydedilemedi: {exc}")
             return
         # Konum süreç boyunca bir kez çözülüp önbellekleniyor; sıfırlanmazsa
-        # yeni klasör ancak yeniden başlatınca kullanılırdı.
+        # yeni klasör ancak yeniden başlatınca kullanılırdı. GUI thread'inde
+        # güvenli: `sifirla` hiçbir G/Ç'yi beklemiyor (arka planda yavaş
+        # aynalara takılmış bir arama pencereyi dondurmaz).
         animedepo.sifirla()
         adet = f"{sayi:,}".replace(",", ".")
         self.lblArsivDurum.ok(f"Arşiv klasörü ayarlandı ({adet} anime): {secilen}")

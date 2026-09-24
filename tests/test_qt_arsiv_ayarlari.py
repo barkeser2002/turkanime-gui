@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
@@ -197,6 +198,48 @@ def test_gecersiz_secilen_klasor_uyarisi(qtbot, sayfa, konumlar):
     assert gorunur(sayfa.lblArsivUyari)
     uyari = sayfa.lblArsivUyari.text()
     assert str(konumlar.secilen) in uyari and "geçerli bir arşiv değil" in uyari
+
+
+def test_silinemeyen_eski_kopya_uyarida_gorunuyor(qtbot, sayfa, konumlar):
+    """ESKİ HATA: güncellemede eski kopya silinemezse (`rmtree(ignore_errors=
+    True)`) gizli adlı ~0,5 GB klasör sessizce kalıyordu."""
+    arsiv_yaz(konumlar.indirilen)
+    kalinti = konumlar.indirilen.with_name(".cevrimdisi_arsiv-eski-1a2b3c4d")
+    arsiv_yaz(kalinti)
+
+    durumu_bekle(qtbot, sayfa)
+
+    assert gorunur(sayfa.lblArsivUyari)
+    uyari = sayfa.lblArsivUyari.text()
+    assert "silinemeyen" in uyari and str(kalinti) in uyari
+
+
+def test_varsayilana_don_suren_arsiv_okumasini_beklemiyor(qtbot, sayfa, konumlar, monkeypatch):
+    """ESKİ HATA: "Varsayılana dön" GUI thread'inde `animedepo.sifirla()`
+    çağırıyor ve `sifirla`, arka planda aynalardan dizin okuyan aramanın
+    tuttuğu kilidi bekliyordu: yavaş aynada pencere ~30 sn donuyordu."""
+    girdi, birak = threading.Event(), threading.Event()
+
+    class YavasOturum:
+        def get(self, *_a, **_k):
+            girdi.set()
+            birak.wait(10)
+            raise ConnectionError("ayna yanıt vermedi")
+
+    monkeypatch.setattr(animedepo, "_session", YavasOturum)
+    arka = threading.Thread(target=animedepo.dizin, daemon=True)
+    arka.start()
+    assert girdi.wait(BEKLE / 1000), "arka plan okuması aynaya ulaşmadı"
+    try:
+        bas = time.monotonic()
+        sayfa.btnArsivVarsayilan.click()
+        sure = time.monotonic() - bas
+    finally:
+        birak.set()
+        arka.join(BEKLE / 1000)
+
+    assert sure < 0.5, f"GUI thread'i {sure:.2f} sn dondu"
+    assert "Zaten varsayılan" in sayfa.lblArsivDurum.text()
 
 
 def test_indirilen_varken_dugmeler_guncelle_ve_sil(qtbot, sayfa, konumlar):

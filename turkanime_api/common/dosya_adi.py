@@ -22,6 +22,7 @@ ve tam olması listeye bağlı değildir.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Any
 
@@ -57,7 +58,14 @@ def guvenli_ad(ham: Any, yedek: str = YEDEK_AD,
     # eler; `strip` ikisini tek adımda halleder.
     ad = ad.strip(" .")
     if len(ad) > uzunluk:
-        ad = ad[:uzunluk].strip(" .")
+        # Düz kesme iki farklı adı AYNI dosyaya çeviriyordu: arşivde 36 bölüm
+        # slug'ı 120 karakterden uzun ve 29'u aynı serinin başka bir bölümüyle
+        # ilk 120 karakteri paylaşıyor — ikinci bölüm birincinin üstüne iner
+        # ya da yt-dlp "zaten var" deyip atlardı. Tam adın kısa özeti sona
+        # eklenir: sınır korunur, ayrık adlar ayrık kalır, aynı ad hep aynı
+        # sonucu verir (aria2c ilerleme okuması aynı adı yeniden hesaplıyor).
+        ozet = hashlib.sha1(ad.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+        ad = f"{ad[:max(1, uzunluk - len(ozet) - 1)].rstrip(' .')}-{ozet}"
     if not ad:
         return yedek
     if ad.split(".")[0].upper() in AYRILMIS_ADLAR:

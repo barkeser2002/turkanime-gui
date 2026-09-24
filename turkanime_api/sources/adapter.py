@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Any, Dict, Callable
 import errno
+import hashlib
 import json
 from tempfile import NamedTemporaryFile
 from os import remove
@@ -17,9 +18,25 @@ from ..common.dosya_adi import guvenli_alt_yol
 from ..common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 
-def _slugify(text: str) -> str:
+# Başlıktan ÜRETİLEN slug'ın üst sınırı. Kaynağın kendi verdiği slug'a
+# uygulanmaz (bkz. `AdapterBolum`): o bir kimlik, kesilirse kimlik olmaktan çıkar.
+SLUG_SINIRI = 80
+
+
+def _slugify(text: str, azami: Optional[int] = SLUG_SINIRI) -> str:
     """Basit ve güvenli bir slug üretici: ASCII'ye indirger,
-    boşlukları '-' yapar, gereksizleri temizler."""
+    boşlukları '-' yapar, gereksizleri temizler.
+
+    ``azami``: uzunluk sınırı; ``None`` kesmez. Sınırı aşan slug düz kesilmez,
+    sonuna tam slug'ın kısa özeti eklenir. Düz kesmek iki farklı slug'ı AYNI
+    yapıyordu: arşivde 633 bölüm slug'ı 80 karakterden uzun ve 394'ü aynı
+    animenin başka bir bölümüyle ilk 80 karakteri paylaşıyor ("…-youna-mo").
+    Slug izleme geçmişinin anahtarı ve indirme dosyasının adı olduğu için
+    sonuç: bütün bölümler aynı dosyaya iniyor, biri izlenince hepsi
+    "izlendi" görünüyordu. Özet sayesinde kesilen slug'lar da ayrık kalır ve
+    aynı girdi her zaman aynı slug'ı verir (Python'un `hash`'i gibi süreçten
+    sürece değişmez).
+    """
     if not text:
         return ""
     # Unicode -> ASCII transliterasyon
@@ -29,7 +46,10 @@ def _slugify(text: str) -> str:
     t = re.sub(r"\s+", "-", t)
     t = re.sub(r"[^a-z0-9\-]", "-", t)
     t = re.sub(r"-+", "-", t).strip("-")
-    return t[:80]
+    if azami is not None and len(t) > azami:
+        ozet = hashlib.sha1(t.encode("ascii")).hexdigest()[:8]
+        t = f"{t[:max(1, azami - len(ozet) - 1)].rstrip('-')}-{ozet}"
+    return t
 
 
 @dataclass
@@ -289,7 +309,11 @@ class AdapterBolum:
         # "naruto-1-bolum"u) o kullanılır: izleme geçmişi ve eski indirmelerin
         # dosya adları o slug'la duruyor. Yine `_slugify`'dan geçer — değer
         # arşivden geliyor; indirme yolu ayrıca `guvenli_alt_yol` ile korunuyor.
-        verilen = _slugify(slug) if slug else ""
+        # KESİLMEZ (`azami=None`): sitenin slug'ı hiç kısaltılmamıştı; 80'de
+        # kesmek uzun adlı serilerde bölümleri birbirine karıştırıyordu (aynı
+        # geçmiş anahtarı, aynı indirme dosyası). Dosya adı uzunluğu diske
+        # dokunulan yerde, `guvenli_alt_yol`'da sınırlanıyor.
+        verilen = _slugify(slug, azami=None) if slug else ""
         self.slug = verilen or _slugify(f"{anime.title}-{title}" if anime else title)
         # `fansubs` akışları getirmek zorunda (fansub adları akışların içinde).
         # CLI hemen ardından `best_video` çağırıyor; aynı listeyi ikinci kez

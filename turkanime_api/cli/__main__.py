@@ -40,6 +40,20 @@ def log_error(e):
         pass
 
 
+def _hata_sebebi(e: BaseException) -> None:
+    """Arşiv hatasının Türkçe sebebini göster ("uzak aynalar yanıt vermedi…").
+
+    Yalnızca arşiv hataları (`ArsivHatasi` ailesi): mesajları kullanıcıya
+    yazılmış Türkçe cümleler. Rastgele bir istisnanın metni ("division by
+    zero") kullanıcıya bir şey anlatmaz, o yalnızca error.log'a gider.
+    Kaçış şart: mesajda yol ve "[...]" olabilir, rich onu biçim etiketi sanar.
+    """
+    from rich.markup import escape
+    from ..common.arsiv_paketi import ArsivHatasi
+    if isinstance(e, ArsivHatasi):
+        rprint(f"[yellow]{escape(str(e))}[/yellow]")
+
+
 def select_download_folder(current_path):
     """İndirme klasörünü seçtir: pencere açılabiliyorsa easygui, yoksa metin istemi.
 
@@ -145,6 +159,7 @@ def _anime_sec(kaynak) -> Optional[Tuple[str, str]]:
     except Exception as e:
         log_error(e)
         rprint("[red][strong]Arama yapılırken bir hata oluştu.[/strong][/red]")
+        _hata_sebebi(e)
         sleep(1.5)
         return None
     if not bulunan:
@@ -453,6 +468,7 @@ def main():
             # (Timeout, SSLError…) hataları ayrı ayrı sayılmaya değmez.
             log_error(e)
             rprint(f"[red][strong]{kaynak.etiket} okunamıyor.[/strong][/red]")
+            _hata_sebebi(e)
             rprint("[yellow]Menüden 'Kaynak seç' ile başka bir kaynağa "
                    "geçebilirsiniz.[/yellow]")
             sleep(2)

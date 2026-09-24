@@ -19,6 +19,13 @@ from ._grid import CardGrid
 
 # Kaynak başına gösterilecek azami sonuç
 LIMIT_PER_SOURCE = 10
+# Durum satırında bir kaynağın hata sebebi en çok bu kadar karakter.
+HATA_SEBEBI_SINIRI = 300
+
+
+def _kisalt(metin: str, sinir: int = HATA_SEBEBI_SINIRI) -> str:
+    metin = " ".join(str(metin).split())
+    return metin if len(metin) <= sinir else metin[:sinir - 1].rstrip() + "…"
 
 
 class SearchPage(QWidget):
@@ -170,17 +177,34 @@ class SearchPage(QWidget):
             if eklenen:
                 per_source.append(f"{gorunen_ad(source)}: {eklenen}")
 
+        # Hata veren kaynaklar (`AramaSonuclari.hatalar`). "Sonuç yok" ile
+        # "aranamadı" farklı: TürkAnime arşivi okunamadığında (aynalar kapalı,
+        # önbellek boş — paketli uygulamada ağ gidince olağan) eskiden yalnızca
+        # "sonuç bulunamadı" görünüyordu. Sahte motorlar düz dict döndürüyor.
+        hatalar = getattr(results, "hatalar", None) or {}
+
         if not cards:
             # Önceki aramanın kartları ekranda kalmamalı: "sonuç bulunamadı"
             # yazarken altta eski sonuçları göstermek doğrudan yalan olurdu.
             self._cards = []
             self.results.clear()
-            self.lblStatus.error(f"“{self._query}” için sonuç bulunamadı.")
+            metin = f"“{self._query}” için sonuç bulunamadı."
+            if hatalar:
+                # Sonuç yokken sebep önemli: kullanıcı ağı ya da arşivi düzeltebilir.
+                # Kırpılıyor: bazı ağ hataları (curl) sayfa dolusu metin taşıyor.
+                metin += " Aranamayan kaynak: " + "; ".join(
+                    f"{gorunen_ad(ad)} — {_kisalt(sebep)}"
+                    for ad, sebep in sorted(hatalar.items()))
+            self.lblStatus.error(metin)
             return
 
         self._cards = cards
         self.results.set_items(list(cards))
-        self.lblStatus.ok(f"{len(cards)} sonuç — " + ", ".join(per_source))
+        metin = f"{len(cards)} sonuç — " + ", ".join(per_source)
+        if hatalar:
+            # Sonuç varken yalnızca adlar: satırı sebeplerle doldurmayalım.
+            metin += " · aranamayan: " + ", ".join(gorunen_ad(ad) for ad in sorted(hatalar))
+        self.lblStatus.ok(metin)
 
         # Görseller kartlar yerleştikten SONRA, arka planda indirilir.
         for card, url in pending_thumbs:

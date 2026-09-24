@@ -51,7 +51,7 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
-- **Testler:** 1.205 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Testler:** 1.238 otomatik test (pytest + pytest-qt), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 
@@ -202,11 +202,20 @@ tarihini gösterir. Bu bilgi sayfa açılınca arka planda okunur; ağa çıkıl
   ~0,5 GB). İlerleme çubuğu ve **"İptal"** düğmesi var; GitLab'a
   ulaşılamazsa GitHub paketine geçilir. İndirilmiş bir kopya varsa düğmenin
   adı **"Arşivi güncelle"** olur: eski kopya, yenisi doğrulanıp yerine konana
-  kadar silinmez; iptal ya da hata olursa yerinde kalır.
+  kadar silinmez; iptal ya da hata olursa yerinde kalır. İptal bağlanırken de
+  hemen işler. Disk dolarsa ya da klasöre yazılamazsa GitHub'a geçilmez
+  (aynı diske aynı boyutta paket inecekti); hata diski anlatır.
+  `cevrimdisi_arsiv` başka bir diske sembolik bağsa arşiv bağın gösterdiği
+  yere kurulur, bağ korunur. Eski kopya silinemezse (kilitli dosya) gizli
+  `.cevrimdisi_arsiv-eski-*` klasörü burada uyarı olarak görünür.
 - **"Klasör seç…"** elinizdeki bir kopyayı gösterir (içinde `dizin.json`
   olmalı, seçerken denetlenir). **"Varsayılana dön"** bu seçimi unutur.
 - **"İndirilen arşivi sil"** onay sorar ve yalnızca `cevrimdisi_arsiv`
   klasörünü siler; seçtiğiniz klasöre ve depodaki `arsiv/`'e dokunmaz.
+
+Arşiv hiçbir yerden okunamazsa (yerel kopya yok, aynalar yanıt vermiyor,
+önbellek boş) arama "bulunamadı" demez: arama sayfası ve CLI, TürkAnime'nin
+aranamadığını sebebiyle söyler.
 
 Arşivdeki video kayıtlarının yaklaşık dörtte biri yalnızca turkanime.tv'nin
 kendi oynatıcısıyla açılabiliyordu; site kapandığı için bunlar ve `DEAD_`
@@ -324,8 +333,8 @@ python tests/adapters-test-all.py --skip-streams
 |------|---------|
 | **Arayüz (pytest-qt)** | Keşif/arama/detay/bölüm/indirme sayfaları, oynatma, izleme listesi, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
 | **Arama** | Alakaya göre sıralama, çok kaynaklı arama zaman aşımı, başlık eşleştirme |
-| **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, iptal, eskiyi koruyan takas), Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme) |
-| **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
+| **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, bağlanırken de işleyen iptal, eskiyi koruyan takas, disk hatasında yedeğe geçmeme, sembolik bağlı hedef), sıfırlamanın GUI'yi dondurmaması, okunamayan arşivin aramada söylenmesi, eşitleme aracının yanlış hedefi reddetmesi, Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme, silinemeyen eski kopya uyarısı) |
+| **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; ad çakışması import anında hata; uzun bölüm slug'ları kesilmeden ayrık (geçmiş anahtarı, dosya adı); üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
 | **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi |
 | **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası |
 | **Çekirdek** | Bölüm birleştirme ve ayrıştırma, indirme yolu güvenliği, atomik JSON yazımı, ağ izolasyonu |

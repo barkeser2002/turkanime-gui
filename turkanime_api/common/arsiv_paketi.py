@@ -18,17 +18,22 @@ dokunan her göreli yol `goreli_parcalar`'dan geçiyor ve tar üyeleri açılmad
 """
 from __future__ import annotations
 
+import errno
 import fnmatch
 import json
 import os
+import queue
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, TypeVar
 
 DIZIN_DOSYASI = "dizin.json"
 MANIFEST_DOSYASI = "KAYNAK.json"
@@ -74,6 +79,60 @@ class GuvensizUye(ArsivHatasi):
 
 class IptalEdildi(ArsivHatasi):
     """Kullanıcı işlemi iptal etti."""
+
+
+class YerelDiskHatasi(ArsivHatasi):
+    """Yerel diske yazılamadı: disk dolu, izin yok, klasör kullanımda…
+
+    Paketin ya da kaynağın suçu DEĞİL; ayrı bir sınıf olmasının sebebi bu.
+    `sources.animedepo.tam_arsiv_indir` her hatayı "bu kaynak olmadı" sayıp
+    yedeğe geçiyordu: GitLab'dan ~230 MB indikten sonra disk dolunca GitHub'ın
+    ~231 MB'lık paketini de baştan indiriyor, aynı yerde aynı sebeple
+    düşüyordu. Kullanıcıya da "paket bozuk" deniyordu. Bu hata yedeğe
+    geçirmez ve mesajı diski anlatır.
+    """
+
+
+# Bu kadar sık iptal denetlenir (sn). Ağ bekleyişleri (bağlanma, ilk bayt,
+# takılan akış) yardımcı thread'de sürerken çağıran thread en geç bu aralıkla
+# iptale bakar; düğmeye basıldıktan sonra "İptal ediliyor…" bu kadar sürer.
+IPTAL_ARALIGI = 0.1
+
+_T = TypeVar("_T")
+_YOK = object()
+
+# errno → kullanıcıya gösterilecek sebep. Sistem mesajları dile ve platforma
+# göre değişiyor ("No space left on device"); tanıdık olanlar Türkçe söylenir.
+_DISK_SEBEPLERI = {
+    errno.ENOSPC: "diskte yer kalmadı",
+    errno.EACCES: "yazma izni yok ya da dosya başka bir programda açık",
+    errno.EPERM: "yazma izni yok",
+    errno.EROFS: "disk salt okunur",
+    errno.EBUSY: "klasör başka bir program tarafından kullanılıyor",
+}
+if hasattr(errno, "EDQUOT"):
+    _DISK_SEBEPLERI[errno.EDQUOT] = "disk kotası doldu"
+
+
+def disk_mesaji(islem: str, yol: Any, hata: OSError) -> str:
+    """"yerel disk hatası: <yol> yazılamadı — diskte yer kalmadı" biçiminde metin."""
+    sebep = _DISK_SEBEPLERI.get(getattr(hata, "errno", None)) or hata.strerror or str(hata)
+    return f"yerel disk hatası: {yol} {islem} — {sebep}"
+
+
+@contextmanager
+def yerel_disk(islem: str, yol: Any) -> Iterator[None]:
+    """Bloktaki `OSError`'u `YerelDiskHatasi`'na çevir.
+
+    YALNIZCA yerel dosya işlemlerinin (aç, yaz, klasör kur, taşı) çevresinde
+    kullanılır. Ağ hataları da `OSError` olabildiği için (requests ve
+    curl_cffi istisnaları `OSError`'dan türüyor) bu sarmalayıcı bir ağ
+    okumasını ASLA kapsamamalı; yoksa kopan bağlantı "disk dolu" görünür.
+    """
+    try:
+        yield
+    except OSError as hata:
+        raise YerelDiskHatasi(disk_mesaji(islem, yol, hata)) from hata
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +283,122 @@ def iptal_denetle(iptal: Any) -> None:
         raise IptalEdildi("işlem iptal edildi")
 
 
+def _sessizce(fn: Callable[..., Any], *argumanlar: Any) -> None:
+    try:
+        fn(*argumanlar)
+    except Exception:                    # temizlik en iyi çaba; asıl sonucu gölgelemesin
+        pass
+
+
+def iptal_edilebilir(islem: Callable[[], _T], iptal: Any,
+                     birak: Optional[Callable[[_T], Any]] = None,
+                     aralik: float = IPTAL_ARALIGI) -> _T:
+    """``islem()``'i yardımcı thread'de çalıştır; beklerken iptal gelirse hemen dön.
+
+    NEDEN: `session.get(..., stream=True)` bağlanana ya da sunucu ilk baytı
+    gönderene kadar BLOKLAR (bağlanma sınırı 15 sn; GitLab paketi anında
+    ürettiği için ilk bayt daha da gecikebilir) ve bu sürede iptal
+    denetlenemez. Kullanıcı "İptal"e bastıktan sonra düğmeler o kadar süre
+    kilitli kalıyordu. Burada istek başka thread'de sürer, çağıran thread
+    ``aralik`` saniyede bir iptale bakar ve iptalde `IptalEdildi` fırlatır.
+
+    İptalden SONRA gelen sonucu kimse okumayacak: ``birak(sonuc)`` onu
+    temizler (akış yanıtını kapatır; kapatılmazsa bağlantı açık kalır).
+    ``iptal`` None ise thread açılmaz, ``islem()`` doğrudan çağrılır.
+    """
+    if iptal is None:
+        return islem()
+    kilit = threading.Lock()
+    kutu: Dict[str, Any] = {}
+    bitti = threading.Event()
+
+    def calis() -> None:
+        try:
+            sonuc = islem()
+        except BaseException as hata:        # çağıran thread'de yeniden fırlatılır
+            with kilit:
+                kutu["hata"] = hata
+            bitti.set()
+            return
+        with kilit:
+            terk = kutu.get("terk", False)
+            if not terk:
+                kutu["sonuc"] = sonuc
+        if terk and birak is not None:
+            _sessizce(birak, sonuc)
+        bitti.set()
+
+    threading.Thread(target=calis, name="arsiv-baglanti", daemon=True).start()
+    while not bitti.wait(aralik):
+        if iptal.is_set():
+            with kilit:
+                kutu["terk"] = True
+                gec = kutu.pop("sonuc", _YOK)
+            if gec is not _YOK and birak is not None:
+                # Tam bu arada gelmiş: kapatma da bekleyebilir (curl akışı
+                # kapanırken çalışan aktarımın bitmesini bekliyor), çağıranı
+                # tutmasın.
+                threading.Thread(target=_sessizce, args=(birak, gec), daemon=True).start()
+            raise IptalEdildi("işlem iptal edildi")
+    if "hata" in kutu:
+        raise kutu["hata"]
+    return kutu["sonuc"]
+
+
+def _parcalar(yanit: Any, parca: int, iptal: Any,
+              aralik: float = IPTAL_ARALIGI) -> Iterator[bytes]:
+    """Yanıt gövdesinin parçaları; ``iptal`` verildiyse bekleyiş iptalle kesilir.
+
+    `iter_content` bir sonraki parça gelene kadar BLOKLAR. Takılan bir
+    bağlantıda bu, curl'ün "hiç veri gelmiyor" sınırına (60 sn) kadar sürer ve
+    iptal ancak sonra görülürdü. Parçaları yardımcı thread okuyup kuyruğa
+    koyar; bu jeneratör kuyruktan ``aralik`` zaman aşımıyla alır, her boşlukta
+    iptale bakar. Tüketici durunca (iptal, disk hatası, bitiş) yardımcıya
+    "dur" denir; ağ bekleyişinden döndüğü ilk anda kendiliğinden biter.
+    Kuyruk küçük tutuluyor: ağ diskten hızlıysa bellekte yığılma olmasın.
+    """
+    if iptal is None:
+        yield from yanit.iter_content(chunk_size=parca)
+        return
+    kuyruk: "queue.Queue[Tuple[str, Any]]" = queue.Queue(maxsize=8)
+    dur = threading.Event()
+
+    def koy(oge: Tuple[str, Any]) -> bool:
+        while not dur.is_set():
+            try:
+                kuyruk.put(oge, timeout=aralik)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def uret() -> None:
+        try:
+            for veri in yanit.iter_content(chunk_size=parca):
+                if not koy(("veri", veri)):
+                    return
+            koy(("bitti", None))
+        except BaseException as hata:        # ağ hatası tüketicide fırlatılır
+            koy(("hata", hata))
+
+    threading.Thread(target=uret, name="arsiv-indirme", daemon=True).start()
+    try:
+        while True:
+            try:
+                tur, deger = kuyruk.get(timeout=aralik)
+            except queue.Empty:
+                iptal_denetle(iptal)
+                continue
+            if tur == "veri":
+                yield deger
+            elif tur == "hata":
+                raise deger
+            else:
+                return
+    finally:
+        dur.set()
+
+
 def _uzunluk(basliklar: Any) -> Optional[int]:
     try:
         deger = int((basliklar or {}).get("Content-Length") or 0)
@@ -239,21 +414,38 @@ def govdeyi_indir(yanit: Any, hedef_dosya: Path, ilerleme: Optional[IlerlemeFn] 
     ``ilerleme(indirilen, toplam)`` her parçada çağrılır; ``toplam`` sunucu
     `Content-Length` vermediyse ``None`` (GitLab'ın arşiv ucu paketi anında
     ürettiği için vermiyor — arayüz belirsiz ilerleme göstermeli).
-    İptal her parçada denetlenir: ~230 MB'lık bir indirme bitmeden durabilmeli.
+    İptal her parçada ve parça BEKLENİRKEN de denetlenir (bkz. `_parcalar`):
+    ~230 MB'lık bir indirme bitmeden, takılan bir bağlantıda da durabilmeli.
+
+    Dosyayı açma/yazma/kapama hataları `YerelDiskHatasi` olur (disk dolu);
+    okuma (ağ) hataları olduğu gibi geçer — ikisini karıştırmamak için
+    `yerel_disk` yalnızca dosya işlemlerini sarıyor.
     """
     toplam = _uzunluk(getattr(yanit, "headers", None))
     indirilen = 0
     if ilerleme:
         ilerleme(0, toplam)
-    with open(hedef_dosya, "wb") as fp:
-        for veri in yanit.iter_content(chunk_size=parca):
+    with yerel_disk("açılamadı", hedef_dosya):
+        fp = open(hedef_dosya, "wb")  # pylint: disable=consider-using-with
+    akis = _parcalar(yanit, parca, iptal)
+    try:
+        for veri in akis:
             iptal_denetle(iptal)
             if not veri:
                 continue
-            fp.write(veri)
+            with yerel_disk("yazılamadı", hedef_dosya):
+                fp.write(veri)
             indirilen += len(veri)
             if ilerleme:
                 ilerleme(indirilen, toplam)
+    except BaseException:
+        _sessizce(fp.close)              # asıl hatayı kapama hatası gölgelemesin
+        raise
+    finally:
+        akis.close()                     # yardımcı thread'e "dur" (iptal/hata)
+    # Tamponda kalan son parça kapanırken yazılıyor: disk tam burada dolabilir.
+    with yerel_disk("yazılamadı", hedef_dosya):
+        fp.close()
     iptal_denetle(iptal)
     if toplam is not None and indirilen < toplam:
         raise ArsivHatasi(f"indirme yarım kaldı ({indirilen}/{toplam} bayt)")
@@ -299,6 +491,30 @@ def _uye_yolu(uye: tarfile.TarInfo, ust_desen: str,
     return goreli
 
 
+def _uyeyi_yaz(kaynak: Any, yol: Path, parca: int = 1 << 20) -> None:
+    """Tar üyesini diske kopyala; okuma ve yazma hatalarını AYRI tut.
+
+    `shutil.copyfileobj` ikisini tek çağrıda yapıyor ve ikisi de `OSError`
+    olabiliyor (bozuk gzip de, dolu disk de); kimin düştüğü anlaşılmıyordu.
+    Okuma hatası olduğu gibi yükselir (çağıran "paket bozuk" der), yazma
+    hatası `YerelDiskHatasi` olur.
+    """
+    with yerel_disk("yazılamadı", yol):
+        fp = open(yol, "wb")  # pylint: disable=consider-using-with
+    try:
+        while True:
+            veri = kaynak.read(parca)
+            if not veri:
+                break
+            with yerel_disk("yazılamadı", yol):
+                fp.write(veri)
+    except BaseException:
+        _sessizce(fp.close)
+        raise
+    with yerel_disk("yazılamadı", yol):
+        fp.close()
+
+
 def guvenli_ac(tar_yolu: Path, hedef: Path, *, ust_desen: str,
                alt_klasor: Optional[str] = None, iptal: Any = None,
                azami_bayt: int = AZAMI_ACILMIS_BAYT) -> Dict[str, Any]:
@@ -311,9 +527,16 @@ def guvenli_ac(tar_yolu: Path, hedef: Path, *, ust_desen: str,
     Döner: ``{"dosya": açılan dosya sayısı, "commit": git arşivinin pax
     başlığındaki commit ya da None, "commit_zamani": ilk üyenin mtime'ı}``.
     git arşivlerinde her üyenin mtime'ı commit zamanıdır, ilki yeterli.
+
+    İki hata sınıfı ayrı tutuluyor: paketi OKURKEN çıkan hata (kesik gzip,
+    bozuk tar) "paket bozuk" → `ArsivHatasi`; diske YAZARKEN çıkan hata
+    (klasör kurulamadı, disk doldu) → `YerelDiskHatasi`. Eskiden ikisi de
+    "paket bozuk" diyordu; diski dolan kullanıcıya paketin bozuk olduğu
+    söyleniyor ve boşuna yedek kaynak indiriliyordu.
     """
     hedef = Path(hedef)
-    hedef.mkdir(parents=True, exist_ok=True)
+    with yerel_disk("oluşturulamadı", hedef):
+        hedef.mkdir(parents=True, exist_ok=True)
     dosya = 0
     toplam = 0
     commit_zamani: Optional[float] = None
@@ -332,20 +555,25 @@ def guvenli_ac(tar_yolu: Path, hedef: Path, *, ust_desen: str,
                     continue
                 yol = hedef.joinpath(*goreli)
                 if uye.isdir():
-                    yol.mkdir(parents=True, exist_ok=True)
+                    with yerel_disk("oluşturulamadı", yol):
+                        yol.mkdir(parents=True, exist_ok=True)
                     continue
                 toplam += max(0, int(uye.size))
                 if toplam > azami_bayt:
                     raise ArsivHatasi("açılan arşiv beklenenden çok büyük; paket reddedildi")
-                yol.parent.mkdir(parents=True, exist_ok=True)
+                with yerel_disk("oluşturulamadı", yol.parent):
+                    yol.parent.mkdir(parents=True, exist_ok=True)
                 kaynak = tar.extractfile(uye)
                 if kaynak is None:
                     raise ArsivHatasi(f"üye okunamadı: {uye.name!r}")
-                with kaynak, open(yol, "wb") as fp:
-                    shutil.copyfileobj(kaynak, fp, 1 << 20)
+                with kaynak:
+                    _uyeyi_yaz(kaynak, yol)
                 dosya += 1
         except (tarfile.TarError, EOFError, OSError) as hata:
-            # Kesik gzip (indirme yarıda kopmuş) EOFError/ReadError olarak gelir.
+            # Kesik gzip (indirme yarıda kopmuş) EOFError/ReadError olarak gelir;
+            # bozuk gzip başlığı `gzip.BadGzipFile` (bir OSError). Yazma tarafı
+            # buraya hiç düşmez: `yerel_disk` onu `YerelDiskHatasi`'na çevirdi
+            # ve o bir OSError değil.
             raise ArsivHatasi(f"paket bozuk: {hata}") from hata
         pax = dict(getattr(tar, "pax_headers", None) or {})
     commit = pax.get("comment")
@@ -354,17 +582,85 @@ def guvenli_ac(tar_yolu: Path, hedef: Path, *, ust_desen: str,
     return {"dosya": dosya, "commit": commit, "commit_zamani": commit_zamani}
 
 
-def yerine_koy(yeni: Path, hedef: Path) -> None:
+def eski_kopya_adi(hedef: Path) -> str:
+    """Takasta kenara alınan eski kopyanın ad öneki (`.gitignore`'da da bu kalıp)."""
+    return f".{Path(hedef).name}-eski-"
+
+
+def bag_hedefi(yol: Path) -> Path:
+    """``yol`` sembolik bağsa gösterdiği gerçek klasör, değilse kendisi.
+
+    Kullanıcı ~0,5 GB'lık arşivi başka bir diske koyup `cevrimdisi_arsiv`'i
+    oraya bağlamış olabilir. Takas bağın KENDİSİNE yapılırsa bağ gizli ada
+    taşınıyor, yeni arşiv bağın yerine GERÇEK klasör olarak veri kökünün
+    diskine iniyor ve eski veri öbür diskte kalıyordu (bağa `rmtree` hiçbir
+    şey yapmıyor). Bağ izlenince yeni arşiv kullanıcının seçtiği diske gider,
+    bağ olduğu gibi kalır.
+
+    Bağ olmayan bir yeri gösteriyorsa (disk takılı değil) `YerelDiskHatasi`:
+    o yolu kurmak veriyi takılı olmayan diskin bağlama noktasına, yani
+    sistem diskine yazardı. Yerel bir sorun olduğu için yedek kaynak denenmez.
+    """
+    yol = Path(yol)
+    if not yol.is_symlink():
+        return yol
+    gercek = Path(os.path.realpath(yol))
+    if not gercek.parent.is_dir():
+        raise YerelDiskHatasi(
+            f"{yol} sembolik bağı olmayan bir yeri gösteriyor ({gercek}); "
+            "bağın bulunduğu disk takılı mı?")
+    return gercek
+
+
+def agaci_sil(yol: Path) -> List[str]:
+    """Klasörü sil; SİLİNEMEYEN yolları döndür (boş liste = tamamı silindi).
+
+    `rmtree(ignore_errors=True)` hatayı yutuyor ve geriye yarım yüz megabayt
+    görünmez veri kalıyordu. Sembolik bağsa yalnızca bağ kaldırılır —
+    `rmtree` bağı reddeder, izlemek ise bağın gösterdiği (kullanıcının) veriyi
+    silerdi.
+    """
+    yol = Path(yol)
+    if yol.is_symlink():
+        try:
+            yol.unlink()
+        except OSError:
+            return [str(yol)]
+        return []
+    silinemeyen: List[str] = []
+
+    def _hata(_fn: Any, hatali: Any, _bilgi: Any) -> None:
+        silinemeyen.append(str(hatali))
+
+    # 3.12 `onerror`'ı `onexc` lehine kullanımdan kaldırdı; iki geri çağrı da
+    # (fonksiyon, yol, hata) alıyor, yalnızca argüman adı farklı.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(yol, onexc=_hata)   # pylint: disable=unexpected-keyword-arg
+    else:
+        shutil.rmtree(yol, onerror=_hata)
+    return silinemeyen
+
+
+def yerine_koy(yeni: Path, hedef: Path) -> List[str]:
     """``yeni`` klasörünü ``hedef``'in yerine koy; eskisi yalnızca başarıda silinir.
 
     Sıra: eski → kenara (aynı üst klasörde yeniden adlandırma), yeni → hedef.
     İkinci adım düşerse eski geri konur; kullanıcı arşivsiz kalmaz. İkisi de
     aynı dosya sisteminde yeniden adlandırma olduğu için yarım kopya görülmez.
+
+    ``hedef`` sembolik bağsa bağ izlenir (bkz. `bag_hedefi`): takas bağın
+    gösterdiği klasörde yapılır, bağ yerinde kalır. ``yeni`` o klasörle aynı
+    dosya sisteminde olmalı (`paketten_kur` geçiciyi zaten onun yanına kurar).
+
+    Döner: eski kopyadan silinemeyen yollar. Takas başarılı olduğu için bu
+    durumda istisna fırlatılmaz (yeni arşiv kullanılabilir durumda); kalan
+    `.<ad>-eski-*` klasörü `sources.animedepo.arsiv_durumu` bulup Ayarlar
+    sayfasında gösteriyor.
     """
-    yeni, hedef = Path(yeni), Path(hedef)
+    yeni, hedef = Path(yeni), bag_hedefi(Path(hedef))
     eski: Optional[Path] = None
     if hedef.exists() or hedef.is_symlink():
-        eski = hedef.with_name(f".{hedef.name}-eski-{uuid.uuid4().hex[:8]}")
+        eski = hedef.with_name(f"{eski_kopya_adi(hedef)}{uuid.uuid4().hex[:8]}")
         os.replace(hedef, eski)
     try:
         os.replace(yeni, hedef)
@@ -373,7 +669,8 @@ def yerine_koy(yeni: Path, hedef: Path) -> None:
             os.replace(eski, hedef)
         raise
     if eski is not None:
-        shutil.rmtree(eski, ignore_errors=True)
+        return agaci_sil(eski)
+    return []
 
 
 def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
@@ -393,10 +690,17 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
 
     ``asama(ad)`` her aşamanın BAŞINDA çağrılır: `ASAMA_INDIRME`,
     `ASAMA_ACMA`, `ASAMA_YERLESTIRME` (bkz. modül sabitleri).
+
+    ``hedef`` sembolik bağsa arşiv bağın gösterdiği klasöre kurulur ve bağ
+    korunur (bkz. `bag_hedefi`); geçici klasör de oraya, aynı diske açılır.
+    Diske yazılamayan her adım `YerelDiskHatasi` fırlatır (bkz. o sınıf).
     """
     hedef = Path(hedef)
-    hedef.parent.mkdir(parents=True, exist_ok=True)
-    gecici = Path(tempfile.mkdtemp(prefix=f".{hedef.name}-indirme-", dir=hedef.parent))
+    gercek = bag_hedefi(hedef)
+    with yerel_disk("oluşturulamadı", gercek.parent):
+        gercek.parent.mkdir(parents=True, exist_ok=True)
+        gecici = Path(tempfile.mkdtemp(prefix=f".{gercek.name}-indirme-",
+                                       dir=gercek.parent))
     try:
         paket = gecici / "paket.tar.gz"
         if asama:
@@ -407,31 +711,38 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
             asama(ASAMA_ACMA)
         bilgi = guvenli_ac(paket, acilan, ust_desen=ust_desen,
                            alt_klasor=alt_klasor, iptal=iptal)
-        paket.unlink()                   # takastan önce yer aç (~230 MB)
+        with yerel_disk("silinemedi", paket):
+            paket.unlink()               # takastan önce yer aç (~230 MB)
         arsivi_dogrula(acilan)
         if not (acilan / MANIFEST_DOSYASI).is_file():
             zaman = bilgi.get("commit_zamani")
-            manifest_yaz(acilan, manifest_uret(
-                acilan, kaynak=kaynak, dal=dal, commit=bilgi.get("commit"),
-                commit_tarihi=(datetime.fromtimestamp(zaman, tz=timezone.utc)
-                               .isoformat() if zaman else None),
-                dosya_sayisi=bilgi["dosya"] + 1,
-            ))
+            with yerel_disk("yazılamadı", acilan / MANIFEST_DOSYASI):
+                manifest_yaz(acilan, manifest_uret(
+                    acilan, kaynak=kaynak, dal=dal, commit=bilgi.get("commit"),
+                    commit_tarihi=(datetime.fromtimestamp(zaman, tz=timezone.utc)
+                                   .isoformat() if zaman else None),
+                    dosya_sayisi=bilgi["dosya"] + 1,
+                ))
         iptal_denetle(iptal)
         if asama:
             asama(ASAMA_YERLESTIRME)
-        yerine_koy(acilan, hedef)
+        # Takas düşerse (Windows'ta klasör açık: EACCES/EBUSY) eski arşiv
+        # zaten geri konmuş oluyor; kullanıcıya diski anlatan hata gider.
+        with yerel_disk("yerine konamadı", gercek):
+            yerine_koy(acilan, gercek)
         return hedef
     finally:
         shutil.rmtree(gecici, ignore_errors=True)
 
 
 __all__ = [
-    "ArsivHatasi", "GuvensizUye", "IptalEdildi",
+    "ArsivHatasi", "GuvensizUye", "IptalEdildi", "YerelDiskHatasi",
     "DIZIN_DOSYASI", "MANIFEST_DOSYASI", "MANIFEST_ANAHTARLARI",
     "ASAMA_BAGLANMA", "ASAMA_INDIRME", "ASAMA_ACMA", "ASAMA_YERLESTIRME",
+    "IPTAL_ARALIGI",
     "goreli_parcalar", "guvenli_birlestir", "atomik_bayt_yaz",
     "arsivi_dogrula", "arsiv_gecerli_mi", "anime_sayisi",
-    "manifest_uret", "manifest_yaz",
-    "iptal_denetle", "govdeyi_indir", "guvenli_ac", "yerine_koy", "paketten_kur",
+    "manifest_uret", "manifest_yaz", "disk_mesaji", "yerel_disk",
+    "iptal_denetle", "iptal_edilebilir", "govdeyi_indir", "guvenli_ac",
+    "eski_kopya_adi", "bag_hedefi", "agaci_sil", "yerine_koy", "paketten_kur",
 ]

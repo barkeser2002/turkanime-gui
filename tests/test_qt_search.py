@@ -179,6 +179,44 @@ def test_bos_sonuc_onceki_kartlari_temizliyor(page):
     assert "bulunamadı" in page.lblStatus.text()
 
 
+def test_aranamayan_kaynak_sebebiyle_soyleniyor(qtbot, page, monkeypatch):
+    """ESKİ HATA: TürkAnime arşivi okunamadığında (aynalar kapalı, önbellek
+    boş — paketli uygulamada ağ gidince olağan durum) arama "sonuç
+    bulunamadı" diyordu; oysa arama hiç yapılamamıştı. Gerçek motor, gerçek
+    TürkAnime adaptörü: ağ conftest'te kesik, yerel arşiv yok."""
+    import turkanime_api.common.adapters as adapters_mod
+    from turkanime_api.sources import animedepo
+
+    animedepo.sifirla()
+    asil = adapters_mod.SearchEngine
+
+    class YalnizArsiv(asil):
+        def __init__(self):
+            super().__init__()
+            self.adapters = {"TürkAnime": self.adapters["TürkAnime"]}
+
+    monkeypatch.setattr(adapters_mod, "SearchEngine", YalnizArsiv)
+
+    page.start_search("naruto")
+
+    qtbot.waitUntil(lambda: not page._busy, timeout=5000)
+    metin = page.lblStatus.text()
+    assert "bulunamadı" in metin and "TürkAnime (arşiv)" in metin
+    assert "okunamadı" in metin and "uzak aynalar yanıt vermedi" in metin
+
+
+def test_sonuc_varken_aranamayan_kaynak_adiyla_belirtiliyor(page):
+    from turkanime_api.common.adapters import AramaSonuclari
+
+    page._on_results(AramaSonuclari(
+        {"AniList": [kayit("1", "Naruto")], "TürkAnime": []},
+        hatalar={"TürkAnime": "TürkAnime arşivi okunamadı: ..."}))
+
+    assert len(page.cards()) == 1
+    metin = page.lblStatus.text()
+    assert "1 sonuç" in metin and "aranamayan: TürkAnime (arşiv)" in metin
+
+
 # ── (b) Bozuk kayıtlar ──────────────────────────────────────────────────────
 def test_slugsuz_kayit_cokme_yapmiyor_ve_atiliyor(page):
     """ESKİ HATA: slug'sız kayıt boş payload'lu ölü bir kart üretiyordu.

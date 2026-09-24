@@ -15,6 +15,7 @@ import itertools
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -141,7 +142,7 @@ def _arsiv_yalitim_koku(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku):
+def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku, tmp_path_factory):
     """AnimeDepo istemcisini gerçek arşivlerden ve ağdan yalıt.
 
     İstemci artık önce YEREL arşive bakıyor ve depodan çalışırken commit'lenmiş
@@ -156,6 +157,15 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku):
 
     Önbellek klasörü test başına ayrı ve yalnızca yazılırsa oluşuyor: bir testin
     önbelleğe aldığı dosya başka bir testin "çevrimdışı" yoluna sızmasın.
+
+    `ayarlar.json` da: istemci `animedepo_dizin` (seçilen klasör) ve
+    `animedepo_url` (özel ayna) ayarlarını VERİ KÖKÜNDEN okuyor ve pytest
+    depodan çalışınca veri kökü DEPO KÖKÜ. Geliştirici uygulamayı depodan
+    açıp "Klasör seç…"e bastıysa `<depo>/ayarlar.json`'a yazılan klasör ve
+    ayna bütün teste sızıyordu (ölçüldü: 31 test düştü). Kural: ayar dosyası
+    yalnızca pytest'in GEÇİCİ kökü altındaysa okunur. Ayarı sınayan testler
+    zaten `tmp_path`'teki `.git`'li bir klasöre `chdir` ediyor (`izole_ev`,
+    `veri_koku`), onlar etkilenmez.
     """
     if "network" in request.keywords:
         yield
@@ -163,6 +173,18 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku):
     from turkanime_api.sources import animedepo
 
     kok = _arsiv_yalitim_koku / f"t{next(_ARSIV_YALITIM_SAYACI)}"
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    asil_ayar_dosyasi = animedepo._ayar_dosyasi
+
+    def _yalniz_gecici_ayar_dosyasi():
+        yol = asil_ayar_dosyasi()
+        if yol is None:
+            return None
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+        except ValueError:
+            return None                  # geliştiricinin/kullanıcının gerçek ayarı
+        return yol
 
     def _ag_yok():
         raise AgEngellendi("testler AnimeDepo aynalarına çıkamaz; "
@@ -174,6 +196,7 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku):
     monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: kok / "indirilen_yok")
     monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: kok / "onbellek")
     monkeypatch.setattr(animedepo, "_session", _ag_yok)
+    monkeypatch.setattr(animedepo, "_ayar_dosyasi", _yalniz_gecici_ayar_dosyasi)
     animedepo.sifirla()
     yield
     animedepo.sifirla()

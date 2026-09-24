@@ -42,23 +42,45 @@ def _alakaya_gore_sirala(sorgu: str, kayitlar: list, baslik) -> list:
         return kayitlar          # skorlama asla aramayı düşürmesin
 
 
+class AramaSonuclari(dict):
+    """`search_all_sources*`'ın dönüşü: kaynak adı → kayıtlar, artı ``hatalar``.
+
+    ``hatalar``: arama sırasında HATA veren kaynaklar → hata metni. "0 sonuç"
+    ile "aranamadı" ayrı şeyler: eskiden hata veren kaynak da boş liste
+    döndürüyordu ve arşiv okunamadığında (aynalar kapalı, önbellek boş)
+    kullanıcı "sonuç bulunamadı" görüyordu. Arama sayfası bunu artık ayrıca
+    söylüyor.
+
+    Düz `dict` alt sınıfı: eski çağıranlar (detay sayfasının eşleştirmesi,
+    testler) sonucu sözlük olarak okumaya devam eder.
+    """
+
+    def __init__(self, *args: Any, hatalar: Optional[Dict[str, str]] = None, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.hatalar: Dict[str, str] = dict(hatalar or {})
+
+
+def _hata_metni(exc: BaseException) -> str:
+    return str(exc) or type(exc).__name__
+
+
 class KaynakAdaptoru:
     """Kayıttaki bir kaynağı `SearchEngine`'in adaptör sözleşmesine uydurur.
 
     Sözleşme: ``search_anime(query, limit) -> [(slug, title), ...]``; kaynak
     kapak görseli verebiliyorsa (AniList) ek olarak ``search_rich`` — bkz.
-    `ZenginKaynakAdaptoru`. Kaynak hatası boş liste olur: tek bir kaynağın
-    çökmesi paralel aramanın diğer sonuçlarını götürmemeli.
+    `ZenginKaynakAdaptoru`. Kaynak hatası burada YUTULMAZ: `SearchEngine`
+    onu kaynak başına yakalıyor (tek bir kaynağın çökmesi paralel aramanın
+    diğer sonuçlarını götürmez) ve `AramaSonuclari.hatalar`'a yazıyor.
+    Eskiden burada boş listeye çevriliyordu; hata kimsenin göremeyeceği yerde
+    kayboluyordu.
     """
 
     def __init__(self, kaynak: "kayit.Kaynak"):
         self.kaynak = kaynak
 
     def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        try:
-            return self.kaynak.ara(query, limit=limit)
-        except Exception:
-            return []
+        return self.kaynak.ara(query, limit=limit)
 
 
 class ZenginKaynakAdaptoru(KaynakAdaptoru):
@@ -70,11 +92,8 @@ class ZenginKaynakAdaptoru(KaynakAdaptoru):
     """
 
     def search_rich(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        try:
-            uclar = self.kaynak.uclar()
-            return list(uclar.zengin_ara(query, limit=limit) or [])[:limit]
-        except Exception:
-            return []
+        uclar = self.kaynak.uclar()
+        return list(uclar.zengin_ara(query, limit=limit) or [])[:limit]
 
 
 def kaynak_adaptoru(kaynak: "kayit.Kaynak") -> KaynakAdaptoru:
@@ -167,6 +186,8 @@ class SearchEngine:
         Returns:
             Dict mapping source names to list of (slug, title) tuples
         """
+        hatalar: Dict[str, str] = {}
+
         def _search_single(source_name: str):
             adapter = self.adapters[source_name]
             try:
@@ -175,9 +196,13 @@ class SearchEngine:
                                                          lambda c: c[1])
             except Exception as exc:
                 print(f"{source_name} arama hatası: {exc}")
+                hatalar[source_name] = _hata_metni(exc)
                 return source_name, []
 
-        return self._paralel_ara(_search_single)
+        sonuc = self._paralel_ara(_search_single)
+        # Kopya: süre dolduktan sonra biten geç bir iş sözlüğe yazmaya devam
+        # edebilir; döndürülen sonuç o anki hâliyle sabit kalmalı.
+        return AramaSonuclari(sonuc, hatalar=dict(hatalar))
 
     def search_all_sources_rich(
         self, query: str, limit_per_source: int = 10
@@ -187,7 +212,13 @@ class SearchEngine:
         Adapter `search_rich` sağlıyorsa o kullanılır; sağlamıyorsa
         `search_anime`'in (slug, title) çıktısı `image=None` ile sarılır.
         Böylece mevcut adapterlerin hiçbiri değişmek zorunda kalmaz.
+
+        Dönüş bir `AramaSonuclari` (dict): hata veren kaynağın listesi boş,
+        sebebi ``.hatalar[kaynak]``'ta — arama sayfası "bulunamadı" ile
+        "okunamadı"yı ayırt edebilsin.
         """
+        hatalar: Dict[str, str] = {}
+
         def _one(source_name: str):
             adapter = self.adapters[source_name]
             try:
@@ -201,6 +232,8 @@ class SearchEngine:
                     query, kayitlar, lambda k: k.get("title") or "")
             except Exception as exc:
                 print(f"{source_name} arama hatası: {exc}")
+                hatalar[source_name] = _hata_metni(exc)
                 return source_name, []
 
-        return self._paralel_ara(_one)
+        sonuc = self._paralel_ara(_one)
+        return AramaSonuclari(sonuc, hatalar=dict(hatalar))

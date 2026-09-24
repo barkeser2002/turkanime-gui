@@ -163,7 +163,9 @@ Alanlar:
 
 Adların hepsi (kanonik, etiket, CLI kodu, modül, takma adlar) büyük/küçük harf,
 aksan ve parantez içi eklerden bağımsız çözülür; iki kaynak aynı adı iddia
-ederse modül import anında `ValueError` verir.
+ederse `kayit.py` import anında `ValueError` verir (tablo modül yüklenirken
+`_indeks_kur` ile doğrulanıyor; çalışma anında `kaydet()` de aynı denetimden
+geçer). `tests/test_kaynak_kaydi.py` bunu çakışan bir satırla sınıyor.
 
 > Yükleyici neden fonksiyon içinde import ediyor? Kayıt modülü sunucu
 > tarayıcısı tarafından da okunuyor ve imajında yt-dlp yok; modül düzeyinde

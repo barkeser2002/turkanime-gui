@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -707,3 +708,144 @@ def test_klasor_secimi_ekran_yoksa_metin_istemine_dusuyor(cli, monkeypatch):
     monkeypatch.setitem(sys.modules, "easygui", sahte)
     monkeypatch.setattr(ana.qa, "path", lambda *a, **k: _Soru("/metinle"))
     assert ana.select_download_folder(None) == "/metinle"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7) Denetim düzeltmeleri: uzun bölüm slug'ları, okunamayan arşivin
+#    raporlanması, ad çakışmasının import anında yakalanması
+# ─────────────────────────────────────────────────────────────────────────────
+# Gerçek arşivdeki seri: 95 karakterlik slug; bölüm slug'ları ilk 80
+# karakterde ("…-youna-mo") birbirinin aynısı.
+UZUN_ANIME = ("tatoeba-last-dungeon-mae-no-mura-no-shounen-ga-joban-no-machi-"
+              "de-kurasu-youna-monogatari")
+
+
+def test_uzun_arsiv_bolum_sluglari_kesilmiyor_ayrik_kaliyor(tmp_path, monkeypatch):
+    """ESKİ HATA: bölüm slug'ı `_slugify` ile 80 karakterde kesiliyordu.
+    Arşivde 633 slug daha uzun, 394'ü aynı serinin başka bölümüyle ilk 80
+    karakteri paylaşıyor: slug geçmiş anahtarı ve indirme dosyasının adı
+    olduğu için bütün bölümler aynı dosyaya iniyor, biri izlenince hepsi
+    "izlendi" görünüyordu. Bu slug'lar dosya adı sınırını (120) da aşıyor."""
+    from turkanime_api.common.dosya_adi import UZUNLUK_SINIRI, guvenli_alt_yol
+    from turkanime_api.gui.qt.prefs import bolum_kimligi
+    from turkanime_api.sources.adapter import kayittan_bolumler
+
+    ek = "-ozel-bolum-" + "x" * 30
+    sluglar = [f"{UZUN_ANIME}{ek}-{i}-bolum" for i in (1, 2, 3)]
+    assert len(os.path.commonprefix(sluglar)) > UZUNLUK_SINIRI
+    arsiv = tmp_path / "arsiv"
+    klasor = arsiv / "animeler" / UZUN_ANIME
+    klasor.mkdir(parents=True)
+    (klasor / "bolumler.json").write_text(json.dumps(
+        [[s, f"{i}. Bölüm"] for i, s in enumerate(sluglar, 1)]), "utf-8")
+    (arsiv / "dizin.json").write_text(json.dumps(
+        {"index": {"T": {UZUN_ANIME: {"title": "Tatoeba"}}}}), "utf-8")
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", arsiv)
+    animedepo.sifirla()
+
+    bolumler = kayittan_bolumler(kayit.bul("TürkAnime"), UZUN_ANIME, "Tatoeba")
+
+    assert [b.slug for b in bolumler] == sluglar, \
+        "sitenin slug'ı aynen kalmalı (eski geçmiş bu anahtarla duruyor)"
+    assert len({bolum_kimligi(b) for b in bolumler}) == 3, "geçmiş anahtarları ayrık"
+    yollar = [guvenli_alt_yol(tmp_path / "indir", b.anime.slug, b.slug) for b in bolumler]
+    assert len(set(yollar)) == 3, "her bölüm ayrı dosyaya inmeli"
+    assert all(len(Path(y).name) <= UZUNLUK_SINIRI for y in yollar)
+
+
+def test_basliktan_uretilen_uzun_slug_ayrik_ve_kararli():
+    """Kaynak slug vermiyorsa başlıktan üretilen slug 80'de sınırlı kalıyor ama
+    düz kesilmiyor: uzun adlı bir serinin bölümleri de çakışıyordu."""
+    from turkanime_api.sources.adapter import SLUG_SINIRI, AdapterAnime, AdapterBolum
+
+    anime = AdapterAnime(slug="17", title=UZUN_ANIME.replace("-", " ").title())
+    birinci = AdapterBolum(url="u1", title="1. Bölüm", anime=anime)
+    ikinci = AdapterBolum(url="u2", title="2. Bölüm", anime=anime)
+    assert birinci.slug != ikinci.slug
+    assert max(len(birinci.slug), len(ikinci.slug), len(anime.slug)) <= SLUG_SINIRI
+    assert AdapterBolum(url="u1", title="1. Bölüm", anime=anime).slug == birinci.slug, \
+        "aynı bölüm her açılışta aynı slug'ı almalı (geçmiş anahtarı)"
+    kisa = AdapterBolum(url="u", title="1. Bölüm", anime=AdapterAnime(slug="x", title="Naruto"))
+    assert kisa.slug == "naruto-1-bolum", "kısa slug'lar değişmemeli"
+
+
+def _arsivsiz_turkanime(monkeypatch):
+    """Yerel arşiv yok, aynalar kapalı (conftest ağı kesiyor), önbellek boş."""
+    animedepo.sifirla()
+    assert animedepo.arsiv_konumu().kaynak == "uzak"
+
+
+def test_arsiv_okunamazsa_arama_motoru_sebebi_tasiyor(monkeypatch):
+    """ESKİ HATA: adaptör hatayı boş listeye çeviriyordu; aynalar kapalıyken
+    arama sayfası "sonuç bulunamadı" diyordu. Artık hata kaynağın adıyla
+    `AramaSonuclari.hatalar`'da; diğer kaynakların sonuçları yerinde."""
+    from turkanime_api.common.adapters import SearchEngine
+
+    _arsivsiz_turkanime(monkeypatch)
+
+    class Calisan:
+        def search_anime(self, query, limit=10):
+            return [("7", "Naruto (başka kaynak)")]
+
+    motor = SearchEngine()
+    motor.adapters = {"TürkAnime": motor.adapters["TürkAnime"], "Başka": Calisan()}
+    sonuc = motor.search_all_sources_rich("naruto")
+
+    assert sonuc["TürkAnime"] == []
+    assert "okunamadı" in sonuc.hatalar["TürkAnime"]
+    assert [k["slug"] for k in sonuc["Başka"]] == ["7"]
+    assert "Başka" not in sonuc.hatalar
+    assert motor.search_all_sources("naruto").hatalar.keys() == {"TürkAnime"}
+
+
+def test_cli_arsiv_okunamazsa_arama_hatasi_sebebiyle(cli, monkeypatch):
+    """ESKİ HATA: CLI'ın "Arama yapılırken bir hata oluştu" yolu TürkAnime için
+    hiç tetiklenmiyordu; okunamayan arşiv "Aradığınız anime bulunamadı" oluyordu."""
+    ana = cli
+    _arsivsiz_turkanime(monkeypatch)
+    cikti: List[str] = []
+    monkeypatch.setattr(ana, "rprint", lambda *a, **k: cikti.append(" ".join(map(str, a))))
+    monkeypatch.setattr(ana, "log_error", lambda e: None)
+    monkeypatch.setattr(ana.qa, "text", _sirali_cevaplar(["naruto"]))
+
+    assert ana._anime_sec(kayit.bul("TürkAnime")) is None
+
+    metin = "\n".join(cikti)
+    assert "Arama yapılırken bir hata oluştu" in metin
+    assert "uzak aynalar yanıt vermedi" in metin
+    assert "bulunamadı." not in metin
+
+
+def _kayit_kaynagini_yurut(monkeypatch, kaynak_metni: str):
+    """kayit.py'nin kaynağını ayrı bir modül olarak yürüt (gerçek modüle dokunmadan)."""
+    ad = "turkanime_api.sources._kayit_deneme"
+    modul = types.ModuleType(ad)
+    modul.__package__ = "turkanime_api.sources"
+    # dataclass alan türlerini çözerken modülü sys.modules'ta arıyor.
+    monkeypatch.setitem(sys.modules, ad, modul)
+    exec(compile(kaynak_metni, str(KOK / "turkanime_api/sources/kayit.py"), "exec"),
+         modul.__dict__)
+    return modul
+
+
+def test_cakisan_ad_import_aninda_yakalaniyor(monkeypatch):
+    """ESKİ HATA: belge "import anında ValueError" diyordu ama indeks ilk
+    `bul()`'da kuruluyordu; o ana kadar `cli_kaynaklari()` aynı CLI kodunu iki
+    kez listeliyordu."""
+    metin = (KOK / "turkanime_api/sources/kayit.py").read_text("utf-8")
+    satir = "KAYNAKLAR: Tuple[Kaynak, ...] = (\n"
+    assert satir in metin
+    cakisan = metin.replace(satir, satir + (
+        '    Kaynak("Yeni", "Yeni", "YN", "#000000", "YENI", _anilist, '
+        'cli_kodu="turkanime"),\n'), 1)
+
+    temiz = _kayit_kaynagini_yurut(monkeypatch, metin)
+    assert [k.ad for k in temiz.KAYNAKLAR] == TUM_KAYNAKLAR
+    with pytest.raises(ValueError, match="çakışıyor"):
+        _kayit_kaynagini_yurut(monkeypatch, cakisan)
+
+
+def test_rehber_import_aninda_hatayi_dogru_anlatiyor():
+    for yol in (KOK / "ANIME_PROVIDER_GUIDE.md", KOK / "docs" / "ANIME_PROVIDER_GUIDE.md"):
+        metin = " ".join(yol.read_text("utf-8").split())
+        assert "`kayit.py` import anında `ValueError` verir" in metin, yol

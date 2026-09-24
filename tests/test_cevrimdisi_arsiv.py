@@ -9,13 +9,16 @@ veriliyor (curl_cffi ağ mandalını atlattığı için sahteleme şart — bkz.
 """
 from __future__ import annotations
 
+import errno
 import io
 import json
 import os
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -1160,3 +1163,423 @@ def test_gercek_arsiv_dizini_ve_manifest_tutarli():
     assert manifest["anime_sayisi"] == paket.anime_sayisi(dizin)
     assert manifest["dizin_last_update"] == dizin["last_update"]
     assert manifest["anime_sayisi"] > 1000
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9) Denetim düzeltmeleri: GUI donması, disk hatası, iptal, sembolik bağ,
+#    sessiz okuma hatası, test yalıtımı, eşitleme hedefi
+# ─────────────────────────────────────────────────────────────────────────────
+def _bekle(kosul: Callable[[], bool], sure: float = 5.0) -> bool:
+    son = time.monotonic() + sure
+    while time.monotonic() < son:
+        if kosul():
+            return True
+        time.sleep(0.01)
+    return kosul()
+
+
+def _dizin_verisi(etiket: str) -> Dict[str, Any]:
+    return {"last_update": 1, "index": {"N": {"naruto": {"title": f"Naruto {etiket}"}}}}
+
+
+class BekleyenOturum:
+    """İlk `get` testin izin vermesini bekler (yavaş ya da takılmış ayna).
+
+    ``yanitlar[i]`` i. isteğin yanıtı (sonuncusu tekrar eder). Beklemenin
+    süresi değil KENDİSİ sınanıyor: gerçek zaman aşımı 10-75 sn.
+    """
+
+    def __init__(self, yanitlar: List[Any]):
+        self.yanitlar = yanitlar
+        self.cagri: List[str] = []
+        self.girdi = threading.Event()
+        self.birak = threading.Event()
+
+    def get(self, url, timeout=None, headers=None, stream=False):  # pylint: disable=unused-argument
+        self.cagri.append(url)
+        if len(self.cagri) == 1:
+            self.girdi.set()
+            self.birak.wait(10)
+        return self.yanitlar[min(len(self.cagri), len(self.yanitlar)) - 1]
+
+
+# 9a) `sifirla` G/Ç beklemez ────────────────────────────────────────────────────
+def test_sifirla_suren_uzak_okumayi_beklemiyor(monkeypatch):
+    """ESKİ HATA: `dizin()` tek kilidi uzak okumanın TAMAMI boyunca (3 ayna ×
+    10 sn) tutuyordu; `sifirla` aynı kilidi bekliyordu ve GUI thread'inden
+    çağrılıyor ("Varsayılana dön"). Arka planda bir arama yavaş aynalara
+    takılmışken pencere ~30 sn donuyordu."""
+    oturum = BekleyenOturum([SahteYanit(200, veri=_dizin_verisi("ESKI")),
+                             SahteYanit(200, veri=_dizin_verisi("YENI"))])
+    monkeypatch.setattr(animedepo, "_session", lambda: oturum)
+    arka = threading.Thread(target=animedepo.dizin, daemon=True)
+    arka.start()
+    assert oturum.girdi.wait(5), "arka plan okuması aynaya ulaşmadı"
+
+    bas = time.monotonic()
+    animedepo.sifirla()
+    sure = time.monotonic() - bas
+    oturum.birak.set()
+    arka.join(5)
+
+    assert sure < 0.5, f"sifirla sürmekte olan okumayı {sure:.2f} sn bekledi"
+    assert animedepo.dizin()["index"]["N"]["naruto"]["title"] == "Naruto YENI", \
+        "sıfırlamadan ÖNCE başlamış okumanın sonucu önbelleğe girmemeli"
+    assert len(oturum.cagri) == 2
+
+
+def test_sifirla_suren_konum_cozumunu_beklemiyor(tmp_path, monkeypatch):
+    """Konum çözümü aday klasörlerde megabaytlık dizin.json ayrıştırıyor;
+    eskiden bu da `sifirla`nın aldığı kilidin içindeydi."""
+    girdi, birak = threading.Event(), threading.Event()
+    asil = paket.arsiv_gecerli_mi
+    sayac = {"n": 0}
+
+    def yavas(kok):
+        sayac["n"] += 1
+        if sayac["n"] == 1:
+            girdi.set()
+            birak.wait(10)
+        return asil(kok)
+
+    monkeypatch.setattr(paket, "arsiv_gecerli_mi", yavas)
+    arka = threading.Thread(target=animedepo.arsiv_konumu, daemon=True)
+    arka.start()
+    assert girdi.wait(5)
+
+    bas = time.monotonic()
+    animedepo.sifirla()
+    sure = time.monotonic() - bas
+    # Sıfırlamanın sebebi: bu arada yeni bir arşiv klasörü gösterildi.
+    depo = arsiv_yaz(tmp_path / "depo")
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    birak.set()
+    arka.join(5)
+
+    assert sure < 0.5, f"sifirla konum çözümünü {sure:.2f} sn bekledi"
+    assert animedepo.arsiv_konumu() == animedepo.ArsivKonumu("depo", depo), \
+        "sıfırlamadan önce çözülen (eski) konum önbellekte kalmamalı"
+
+
+# 9b) Yerel disk hatası yedeğe geçirmez, "paket bozuk" denmez ────────────────────
+class _DoluDosya:
+    """Yazınca ENOSPC veren dosya (disk dolu)."""
+
+    def write(self, _veri):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    def close(self):
+        pass
+
+
+def test_takasta_disk_dolarsa_yedek_indirilmiyor(http, tmp_path, monkeypatch):
+    """ESKİ HATA: her hata "bu kaynak olmadı" sayılıyordu; GitLab'dan ~230 MB
+    indikten sonra disk dolunca GitHub'ın ~231 MB'lık paketi de indiriliyordu."""
+    hedef = arsiv_yaz(tmp_path / "cevrimdisi_arsiv", etiket=" ESKI")
+    govde = tar_gz(arsiv_uyeleri("animedepo-master"))
+    kayit = http({GITLAB_PAKET: SahteYanit(200, govde=govde),
+                  GITHUB_PAKET: SahteYanit(200, govde=govde)})
+
+    def dolu(_yeni, _hedef):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(paket, "yerine_koy", dolu)
+    with pytest.raises(paket.YerelDiskHatasi, match="diskte yer kalmadı"):
+        animedepo.tam_arsiv_indir(hedef=hedef)
+    assert [u for u, _ in kayit] == [GITLAB_PAKET], "disk hatasında yedek indirilmemeli"
+    assert "ESKI" in (hedef / "dizin.json").read_text("utf-8")
+    assert _artiklar(tmp_path) == []
+
+
+def test_indirirken_disk_dolarsa_disk_hatasi(http, tmp_path, monkeypatch):
+    govde = tar_gz(arsiv_uyeleri("animedepo-master"))
+    kayit = http({GITLAB_PAKET: SahteYanit(200, govde=govde),
+                  GITHUB_PAKET: SahteYanit(200, govde=govde)})
+    monkeypatch.setattr(paket, "open", lambda *a, **k: _DoluDosya(), raising=False)
+    with pytest.raises(paket.YerelDiskHatasi) as bilgi:
+        animedepo.tam_arsiv_indir(hedef=tmp_path / "cevrimdisi_arsiv")
+    assert "paket.tar.gz" in str(bilgi.value) and "diskte yer kalmadı" in str(bilgi.value)
+    assert [u for u, _ in kayit] == [GITLAB_PAKET]
+
+
+def test_acarken_disk_dolarsa_paket_bozuk_denmiyor(tmp_path, monkeypatch):
+    """ESKİ HATA: `guvenli_ac` her OSError'u "paket bozuk" diye sarıyordu."""
+    paket_yolu = tmp_path / "p.tar.gz"
+    paket_yolu.write_bytes(tar_gz(arsiv_uyeleri("animedepo-master")))
+    monkeypatch.setattr(paket, "open", lambda *a, **k: _DoluDosya(), raising=False)
+    with pytest.raises(paket.YerelDiskHatasi, match="diskte yer kalmadı") as bilgi:
+        paket.guvenli_ac(paket_yolu, tmp_path / "acilan", ust_desen="animedepo-master*")
+    assert "bozuk" not in str(bilgi.value)
+
+
+def test_kesik_gzip_hala_paket_bozuk(tmp_path):
+    """Okuma tarafı ayrı kalmalı: kesik paket disk hatası sayılmasın (yedeğe geçilsin)."""
+    govde = tar_gz(arsiv_uyeleri("animedepo-master"))
+    paket_yolu = tmp_path / "p.tar.gz"
+    paket_yolu.write_bytes(govde[: len(govde) // 2])
+    with pytest.raises(paket.ArsivHatasi, match="paket (bozuk|açılamadı)") as bilgi:
+        paket.guvenli_ac(paket_yolu, tmp_path / "acilan", ust_desen="animedepo-master*")
+    assert not isinstance(bilgi.value, paket.YerelDiskHatasi)
+
+
+# 9c) İptal bağlanırken ve ilk bayt beklenirken de işler ─────────────────────────
+def _arka_planda_indir(iptal, hedef) -> Tuple[threading.Thread, Dict[str, Any]]:
+    sonuc: Dict[str, Any] = {}
+
+    def calis():
+        try:
+            sonuc["yol"] = animedepo.tam_arsiv_indir(iptal=iptal, hedef=hedef)
+        except BaseException as hata:        # pylint: disable=broad-except
+            sonuc["hata"] = hata
+
+    arka = threading.Thread(target=calis, daemon=True)
+    arka.start()
+    return arka, sonuc
+
+
+def test_iptal_baglanirken_beklemeden_isliyor(tmp_path, monkeypatch):
+    """ESKİ HATA: iptal yalnızca parçalar arasında denetleniyordu; `get`
+    bağlanırken (15 sn'ye kadar) düğmeler "İptal ediliyor…"da kilitliydi."""
+    hedef = arsiv_yaz(tmp_path / "cevrimdisi_arsiv", etiket=" ESKI")
+    gec_yanit = SahteYanit(200, govde=tar_gz(arsiv_uyeleri("animedepo-master")))
+    oturum = BekleyenOturum([gec_yanit])
+    monkeypatch.setattr(animedepo, "_session", lambda: oturum)
+    iptal = threading.Event()
+    arka, sonuc = _arka_planda_indir(iptal, hedef)
+    assert oturum.girdi.wait(5)
+
+    bas = time.monotonic()
+    iptal.set()
+    arka.join(5)
+    sure = time.monotonic() - bas
+
+    assert not arka.is_alive() and sure < 1.0, f"iptal {sure:.2f} sn sonra işlendi"
+    assert isinstance(sonuc.get("hata"), paket.IptalEdildi), sonuc
+    assert oturum.cagri == [GITLAB_PAKET], "iptalden sonra yedek denenmemeli"
+    oturum.birak.set()
+    assert _bekle(lambda: gec_yanit.kapandi), "iptalden sonra gelen yanıt kapatılmalı"
+    assert "ESKI" in (hedef / "dizin.json").read_text("utf-8")
+
+
+class TakilanYanit(SahteYanit):
+    """Başlıklar geldi, gövdenin ilk baytı gelmiyor (GitLab paketi üretiyor)."""
+
+    def __init__(self):
+        super().__init__(200)
+        self.basladi = threading.Event()
+        self.birak = threading.Event()
+
+    def iter_content(self, chunk_size=None):
+        self.basladi.set()
+        self.birak.wait(10)
+        yield b""
+
+
+def test_iptal_ilk_bayt_beklenirken_isliyor(http, tmp_path):
+    hedef = arsiv_yaz(tmp_path / "cevrimdisi_arsiv", etiket=" ESKI")
+    yanit = TakilanYanit()
+    kayit = http({GITLAB_PAKET: yanit,
+                  GITHUB_PAKET: SahteYanit(200, govde=tar_gz(arsiv_uyeleri("animedepo-master")))})
+    iptal = threading.Event()
+    arka, sonuc = _arka_planda_indir(iptal, hedef)
+    assert yanit.basladi.wait(5)
+
+    bas = time.monotonic()
+    iptal.set()
+    arka.join(5)
+    sure = time.monotonic() - bas
+
+    assert not arka.is_alive() and sure < 1.0, f"iptal {sure:.2f} sn sonra işlendi"
+    assert isinstance(sonuc.get("hata"), paket.IptalEdildi), sonuc
+    assert [u for u, _ in kayit] == [GITLAB_PAKET]
+    assert "ESKI" in (hedef / "dizin.json").read_text("utf-8")
+    assert _artiklar(tmp_path) == [], "iptalde geçici klasör kalmamalı"
+    yanit.birak.set()
+    assert _bekle(lambda: yanit.kapandi), "takılan akış arka planda kapatılmalı"
+
+
+# 9d) Sembolik bağlı hedef ──────────────────────────────────────────────────────
+def _bag_kur(bag: Path, hedef: Path) -> None:
+    bag.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(hedef, bag, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("sembolik bağ oluşturulamıyor")
+
+
+def test_bagli_hedefte_takas_bagin_gosterdigi_diskte(tmp_path):
+    """ESKİ HATA: bağın KENDİSİ gizli ada taşınıyor, yeni arşiv veri kökünün
+    diskine gerçek klasör olarak iniyor, eski veri öbür diskte kalıyordu."""
+    asil = arsiv_yaz(tmp_path / "baska_disk" / "arsiv", etiket=" ESKI")
+    bag = tmp_path / "veri" / animedepo.CEVRIMDISI_KLASOR
+    _bag_kur(bag, asil)
+    yeni = arsiv_yaz(tmp_path / "baska_disk" / "yeni", etiket=" YENI")
+
+    assert paket.yerine_koy(yeni, bag) == []
+
+    assert bag.is_symlink(), "bağ korunmalı"
+    assert Path(os.path.realpath(bag)) == asil.resolve()
+    assert "YENI" in (asil / "dizin.json").read_text("utf-8")
+    assert _artiklar(tmp_path / "veri") == [] and _artiklar(tmp_path / "baska_disk") == []
+
+
+def test_bagli_hedefe_tam_arsiv_indirme_bagi_koruyor(http, tmp_path):
+    asil = arsiv_yaz(tmp_path / "baska_disk" / "arsiv", etiket=" ESKI")
+    bag = tmp_path / "veri" / animedepo.CEVRIMDISI_KLASOR
+    _bag_kur(bag, asil)
+    http({GITLAB_PAKET: SahteYanit(200, govde=tar_gz(arsiv_uyeleri("animedepo-master")))})
+
+    assert animedepo.tam_arsiv_indir(hedef=bag) == bag
+
+    assert bag.is_symlink()
+    assert "Naruto yeni" in (asil / "dizin.json").read_text("utf-8")
+    assert sorted(p.name for p in (tmp_path / "veri").iterdir()) == [animedepo.CEVRIMDISI_KLASOR]
+    assert _artiklar(tmp_path / "baska_disk") == []
+
+
+def test_kopuk_bag_hedefi_reddediliyor(http, tmp_path):
+    """Bağın diski takılı değilse yol kurulmamalı (veri sistem diskine inerdi)."""
+    bag = tmp_path / "veri" / animedepo.CEVRIMDISI_KLASOR
+    _bag_kur(bag, tmp_path / "takili_degil" / "arsiv")
+    with pytest.raises(paket.YerelDiskHatasi, match="disk takılı"):
+        paket.yerine_koy(arsiv_yaz(tmp_path / "yeni"), bag)
+    kayit = http({})
+    with pytest.raises(paket.YerelDiskHatasi, match="disk takılı"):
+        animedepo.tam_arsiv_indir(hedef=bag)
+    assert kayit == [], "kopuk bağda ağa hiç çıkılmamalı"
+    assert not (tmp_path / "takili_degil").exists()
+
+
+def test_eski_kopya_silinemezse_durumda_gorunuyor(tmp_path, monkeypatch):
+    """ESKİ HATA: `rmtree(ignore_errors=True)` silinemeyen ~0,5 GB'ı yutuyordu."""
+    kok = tmp_path / "veri"
+    hedef = arsiv_yaz(kok / animedepo.CEVRIMDISI_KLASOR, etiket=" ESKI")
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: hedef)
+    yeni = arsiv_yaz(kok / "yeni", etiket=" YENI")
+    asil_rmtree = shutil.rmtree
+
+    def kilitli_rmtree(yol, onerror=None, onexc=None, **_):
+        (onexc or onerror)(os.unlink, os.path.join(yol, "dizin.json"),
+                           PermissionError("kilitli"))
+
+    monkeypatch.setattr(paket.shutil, "rmtree", kilitli_rmtree)
+    kalan = paket.yerine_koy(yeni, hedef)
+    monkeypatch.setattr(paket.shutil, "rmtree", asil_rmtree)
+
+    assert len(kalan) == 1 and "-eski-" in kalan[0]
+    assert "YENI" in (hedef / "dizin.json").read_text("utf-8"), "takas yine de başarılı"
+    durum = animedepo.arsiv_durumu()
+    assert [p.name for p in durum.kalintilar] == [Path(kalan[0]).parent.name]
+
+
+# 9e) Arşiv okunamayınca arama bunu söylüyor ────────────────────────────────────
+def test_arsiv_okunamazsa_arama_sebebiyle_hata_veriyor(http):
+    """ESKİ HATA: aynalar kapalı + önbellek boş → `dizin()` sessizce {} →
+    arama [] → kullanıcı "Aradığınız anime bulunamadı" görüyordu."""
+    http({})
+    with pytest.raises(animedepo.ArsivOkunamadi, match="uzak aynalar yanıt vermedi"):
+        animedepo.search_animedepo("naruto")
+    assert animedepo.dizin() == {}, "dizin() eski sözleşmesini korumalı"
+
+
+def test_yerel_arsiv_okunamazsa_konumuyla_soyleniyor(tmp_path, monkeypatch, ag_yasak):
+    depo = arsiv_yaz(tmp_path / "depo")
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    animedepo.sifirla()
+    assert animedepo.arsiv_konumu().kaynak == "depo"
+    (depo / "dizin.json").write_text("{yarım kopya", "utf-8")   # sonradan bozuldu
+    with pytest.raises(animedepo.ArsivOkunamadi) as bilgi:
+        animedepo.search_animedepo("naruto")
+    assert "yerel arşiv" in str(bilgi.value) and str(depo) in str(bilgi.value)
+
+
+def test_bos_arsiv_hata_degil(tmp_path, monkeypatch, ag_yasak):
+    """Okundu ama içinde anime yok: bu "bulunamadı"dır, hata değil."""
+    depo = arsiv_yaz(tmp_path / "depo", animeler={})
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    animedepo.sifirla()
+    assert animedepo.search_animedepo("naruto") == []
+
+
+# 9f) Geliştiricinin ayarları test paketine sızmıyor ─────────────────────────────
+def test_gelistiricinin_ayarlari_testlere_sizmiyor(monkeypatch, tmp_path_factory):
+    """ESKİ HATA: `_arsiv_yalitimi` ayarlar.json'daki `animedepo_dizin` ve
+    `animedepo_url`'yi yalıtmıyordu. pytest depodan çalışınca veri kökü depo
+    kökü; geliştirici "Klasör seç…"e bastıysa kendi arşivi ve aynası bütün
+    teste sızıyordu (31 test düşüyordu). Bu test "depo kökü"nü pytest'in
+    geçici kökü DIŞINDA kurup oradan koşuyor."""
+    taban = tmp_path_factory.getbasetemp().resolve()
+    with tempfile.TemporaryDirectory(prefix="gelistirici-") as ham:
+        dev = Path(ham).resolve()
+        assert taban not in dev.parents, "sınama klasörü pytest'in geçici kökü dışında olmalı"
+        (dev / ".git").mkdir()
+        benim = arsiv_yaz(dev / "benim_arsivim")
+        ayar_yaz(dev, animedepo_dizin=str(benim),
+                 animedepo_url="https://benim-aynam.example/arsiv")
+        monkeypatch.chdir(dev)
+        animedepo.sifirla()
+        try:
+            assert animedepo.veri_koku() == dev
+            assert animedepo.arsiv_konumu().kaynak == "uzak", "seçilen klasör sızdı"
+            assert animedepo.uzak_aynalar()[0] == GITLAB, "özel ayna sızdı"
+            assert animedepo.arsiv_durumu().ayar_dizini == ""
+        finally:
+            monkeypatch.chdir(taban)         # geçici klasör silinmeden önce çık
+
+
+# 9g) Eşitleme aracı yanlış hedefi silmiyor ─────────────────────────────────────
+def _agac(kok: Path) -> List[str]:
+    return sorted(p.relative_to(kok).as_posix() for p in kok.rglob("*"))
+
+
+@pytest.fixture
+def sahte_depo(tmp_path, monkeypatch):
+    """Bu projenin kökü gibi bir klasör; çalışma dizini orası."""
+    depo = tmp_path / "depo"
+    _yaz(depo, "turkanime_api/onemli.py", "print()")
+    _yaz(depo, "pyproject.toml", "[project]")
+    _yaz(depo, "ayarlar.json", "{}")
+    (depo / ".git").mkdir()
+    monkeypatch.chdir(depo)
+    return depo
+
+
+@pytest.mark.parametrize("hedef", ["", ".", "./", "..", "<depo>"])
+def test_senkron_calisma_dizinini_silmiyor(sahte_depo, monkeypatch, capsys, hedef):
+    """ESKİ HATA: `--hedef ""` (argparse: Path("") == ".") ya da boş kalmış
+    `$HEDEF` çalışma dizininde `.git` dışındaki her şeyi siliyordu."""
+    once = _agac(sahte_depo)
+    klonlar: List[Any] = []
+    monkeypatch.setattr(senkron, "git_klonla",
+                        lambda *a: klonlar.append(a) or (None, None))
+    arg = str(sahte_depo) if hedef == "<depo>" else hedef
+
+    assert senkron.main(["--hedef", arg]) == 1
+
+    assert _agac(sahte_depo) == once
+    assert klonlar == [], "yanlış hedefte klonlamaya bile başlanmamalı"
+    assert "hata:" in capsys.readouterr().err
+
+
+def test_senkron_hedef_denetimi(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    proje = tmp_path / "baska_proje"
+    _yaz(proje, "pyproject.toml", "")
+    dolu = tmp_path / "dolu"
+    _yaz(dolu, "notlar.txt", "önemli")
+
+    with pytest.raises(paket.ArsivHatasi, match="proje kökü"):
+        senkron.hedef_denetle(proje)
+    with pytest.raises(paket.ArsivHatasi, match="geçerli bir arşiv de değil"):
+        senkron.hedef_denetle(dolu)
+    senkron.hedef_denetle(tmp_path / "yok")               # ilk eşitleme
+    (tmp_path / "bos").mkdir()
+    senkron.hedef_denetle(tmp_path / "bos")
+    senkron.hedef_denetle(arsiv_yaz(tmp_path / "ayna"))   # mevcut ayna
+
+    # --zorla: emin olunan durumda denetim atlanır.
+    kaynak = arsiv_yaz(tmp_path / "kaynak")
+    ozet = senkron.senkronla(
+        dolu, klonlayici=lambda _u, _d, klon: (shutil.copytree(kaynak, klon), (SHA, None))[1],
+        zorla=True)
+    assert ozet["silinen"] == 1 and not (dolu / "notlar.txt").exists()

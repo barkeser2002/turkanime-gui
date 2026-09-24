@@ -38,8 +38,14 @@ indirilenler bu yüzden `arsiv/` değil `cevrimdisi_arsiv/` adıyla duruyor —
 `arsiv/` commit'lenmiş aynadır, üstüne yazılmamalı.
 
 Ayarlar sayfasının ("Çevrimdışı arşiv (TürkAnime)") kullandığı uçlar:
-`arsiv_durumu` (ağsız özet), `tam_arsiv_indir(ilerleme, iptal, asama)` ve
-`indirilen_arsivi_sil` (yalnızca `cevrimdisi_arsiv/`).
+`arsiv_durumu` (ağsız özet; silinemeyen eski kopyalar dahil),
+`tam_arsiv_indir(ilerleme, iptal, asama)` ve `indirilen_arsivi_sil`
+(yalnızca `cevrimdisi_arsiv/`). `sifirla` GUI thread'inden çağrılabilir:
+hiçbir ağ/disk bekleyişini beklemez (bkz. kilitlerin açıklaması).
+
+Okunamama sessiz değil: `search_animedepo` dizin hiçbir yerden okunamazsa
+`ArsivOkunamadi` fırlatır (boş arşiv hata değildir); `dizin()` eski
+sözleşmesiyle `{}` döndürmeye devam eder.
 """
 from __future__ import annotations
 
@@ -48,6 +54,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import uuid
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -161,16 +168,39 @@ class ArsivDurumu:
     ortam_dizini: str = ""
     ayar_dizini: str = ""
     onbellekten: bool = False    # uzakta sayılar disk önbelleğindeki kopyadan
+    # Önceki bir güncellemenin silinemeyen eski kopyaları (`.cevrimdisi_arsiv-
+    # eski-*`). Gizli adlı ve her biri ~0,5 GB; kullanıcı görmezse bilemez.
+    kalintilar: Tuple[Path, ...] = ()
 
     @property
     def kaynak(self) -> str:
         return self.konum.kaynak
 
 
-# Kilit sırası her yerde _dizin_lock → _konum_lock: `dizin()` kilidi tutarken
-# `fetch_json` → `arsiv_konumu` çağrılıyor; `sifirla` ikisini aynı sırayla alır.
-_dizin_lock = Lock()
-_konum_lock = Lock()
+# Kilitler. KURAL: ağ ya da disk bekleyişi boyunca yalnızca YÜKLEYİCİ
+# kilitleri tutulur; `sifirla`nın aldığı `_durum_kilidi` hiçbir G/Ç boyunca
+# tutulmaz. Neden: `sifirla` GUI thread'inden çağrılıyor ("Varsayılana dön",
+# "Klasör seç"). Eskiden `dizin()` tek kilidi uzak okumanın TAMAMI boyunca
+# (3 ayna × 10 sn + önbellek) tutuyordu ve `sifirla` aynı kilidi bekliyordu:
+# arka planda bir arama yavaş aynalara takılmışken pencere ~30 sn donuyordu.
+#
+# - `_dizin_yukleme_kilidi`: dizin yükleyicilerini sıraya koyar (aynı anda on
+#   arama on kez indirmesin). Yalnızca `_dizin_getir` alır.
+# - `_konum_cozme_kilidi`: konum çözücülerini sıraya koyar (her aday
+#   klasörde megabaytlık dizin.json ayrıştırılıyor). Yalnızca `arsiv_konumu`.
+# - `_durum_kilidi`: önbellekleri ve `_nesil`'i okuyup yazmak için; içinde
+#   hiçbir G/Ç yok, en içteki kilit.
+#
+# Sıra (iç içe alındıklarında): yükleme → çözme → durum.
+#
+# `_nesil`: `sifirla` her çağrıda bir artırır. Kilitsiz yürüyen bir okuma
+# başlarken nesli not eder; sonucu ancak nesil HÂLÂ aynıysa önbelleğe yazar.
+# Böylece okuma sürerken yapılan sıfırlama (yeni klasör seçildi) eski
+# konumdan gelen sonucla ezilmez.
+_dizin_yukleme_kilidi = Lock()
+_konum_cozme_kilidi = Lock()
+_durum_kilidi = Lock()
+_nesil = 0
 _dizin_cache: Optional[Dict[str, Any]] = None
 _konum_cache: Optional[ArsivKonumu] = None
 _taban_cache: Optional[str] = None
@@ -254,12 +284,27 @@ def _konumu_coz() -> ArsivKonumu:
 
 
 def arsiv_konumu() -> ArsivKonumu:
-    """Arşivin okunacağı yer (süreç boyunca bir kez çözülür; bkz. `sifirla`)."""
+    """Arşivin okunacağı yer (süreç boyunca bir kez çözülür; bkz. `sifirla`).
+
+    Çözüm (dört aday klasöre kadar dizin.json ayrıştırma) `_durum_kilidi`
+    DIŞINDA yapılır; bkz. kilitlerin açıklaması.
+    """
     global _konum_cache
-    with _konum_lock:
-        if _konum_cache is None:
-            _konum_cache = _konumu_coz()
-        return _konum_cache
+    with _durum_kilidi:
+        if _konum_cache is not None:
+            return _konum_cache
+    with _konum_cozme_kilidi:
+        with _durum_kilidi:
+            if _konum_cache is not None:  # sırada beklerken başkası çözdü
+                return _konum_cache
+            nesil = _nesil
+        konum = _konumu_coz()
+        with _durum_kilidi:
+            if _nesil == nesil:
+                _konum_cache = konum
+        # Arada sıfırlandıysa önbelleğe girmedi; bu çağrı yine de çözüldüğü
+        # andaki konumu alır (sıfırlamadan ÖNCE başlamış bir okuma).
+        return konum
 
 
 def taban_url() -> str:
@@ -290,10 +335,14 @@ def uzak_aynalar() -> List[str]:
 def sifirla() -> None:
     """Çözülmüş konumu/adresi ve ona bağlı cache'leri unut.
 
-    Ayar değişince, tam arşiv indirilince ya da testlerde çağrılır.
+    Ayar değişince, tam arşiv indirilince ya da testlerde çağrılır. GUI
+    thread'inden çağrılabilir: hiçbir G/Ç'yi beklemez (yalnızca
+    `_durum_kilidi`), sürmekte olan okumaların sonucu `_nesil` sayesinde
+    önbelleğe giremez.
     """
-    global _taban_cache, _dizin_cache, _konum_cache, _arama_onbellek
-    with _dizin_lock, _konum_lock:
+    global _taban_cache, _dizin_cache, _konum_cache, _arama_onbellek, _nesil
+    with _durum_kilidi:
+        _nesil += 1
         _taban_cache = None
         _dizin_cache = None
         _konum_cache = None
@@ -452,6 +501,58 @@ def _kosullu_getir(path: str) -> Tuple[Any, bool]:
     return veri, False
 
 
+class ArsivOkunamadi(paket.ArsivHatasi):
+    """Arşivin dizini hiçbir yerden okunamadı (yerel okuma hatası, aynalar
+    yanıt vermedi ve disk önbelleği boş).
+
+    "Arşiv boş" ile karıştırılmasın diye ayrı: eskiden ikisi de sessizce 0
+    sonuç veriyordu ve kullanıcı "Aradığınız anime bulunamadı" görüyordu —
+    oysa arama hiç yapılamamıştı. Paketlenmiş uygulamada yerel arşiv yok,
+    yani ağ gidince bu yol olağan durum.
+    """
+
+
+def _okuma_hatasi_metni(hata: BaseException) -> str:
+    """Okunamama sebebini konumuyla birlikte anlat."""
+    sebep = str(hata) or type(hata).__name__
+    konum = arsiv_konumu()
+    if konum.dizin is not None:
+        return f"TürkAnime arşivi okunamadı: yerel arşiv ({konum.dizin}) okunamadı — {sebep}"
+    return ("TürkAnime arşivi okunamadı: yerel arşiv yok, uzak aynalar yanıt vermedi "
+            f"ve disk önbelleğinde kopya yok — {sebep}")
+
+
+def _dizin_getir(tazele: bool = False) -> Tuple[Dict[str, Any], Optional[BaseException]]:
+    """``(dizin, hata)``: dizin okunamadıysa ``hata`` okuma hatasıdır.
+
+    Okunamayınca eldeki önbellek (yoksa ``{}``) döner ve ``hata`` dolu olur;
+    böylece `dizin()` eski sözleşmesini korurken arama "okunamadı" ile "boş"
+    arasındaki farkı görebilir. Hata modül değişkeninde değil dönüşte
+    taşınıyor: başka bir thread'in hatası bu çağrıya karışmasın.
+    """
+    global _dizin_cache
+    # Uzak okuma 3 ayna × `HTTP_TIMEOUT` sürebilir; bu süre boyunca yalnızca
+    # yükleme kilidi tutuluyor (bkz. kilitlerin açıklaması).
+    with _dizin_yukleme_kilidi:
+        with _durum_kilidi:
+            onceki, nesil = _dizin_cache, _nesil
+        if onceki and not tazele:
+            return onceki, None
+        try:
+            if onceki and tazele:
+                data, degismedi = _kosullu_getir("dizin.json")
+                if degismedi:
+                    return onceki, None
+            else:
+                data = fetch_json("dizin.json")
+        except Exception as hata:
+            return (onceki or {}), hata  # cache'leme: sonraki çağrı tekrar dener
+        with _durum_kilidi:
+            if data and _nesil == nesil:
+                _dizin_cache = data
+        return (data or {}), None
+
+
 def dizin(tazele: bool = False) -> Dict[str, Any]:
     """AnimeDepo dizin.json dosyasını cache'li döndür.
 
@@ -461,23 +562,23 @@ def dizin(tazele: bool = False) -> Dict[str, Any]:
     NOT: Başarısızlık cache'lenmez. Aksi hâlde tek bir geçici ağ hatası
     AnimeDepo'yu süreç boyunca sessizce devre dışı bırakır (her arama 0 sonuç,
     hiçbir hata görünmez) ve tek çare uygulamayı yeniden başlatmak olur.
+    Okunamayınca ``{}`` döner (eski sözleşme); SEBEBİ isteyen
+    `dizin_ya_da_hata` kullanır.
     """
-    global _dizin_cache
-    with _dizin_lock:
-        if _dizin_cache and not tazele:
-            return _dizin_cache
-        try:
-            if _dizin_cache and tazele:
-                data, degismedi = _kosullu_getir("dizin.json")
-                if degismedi:
-                    return _dizin_cache
-            else:
-                data = fetch_json("dizin.json")
-        except Exception:
-            return _dizin_cache or {}    # cache'leme: sonraki çağrı tekrar dener
-        if data:
-            _dizin_cache = data
-        return data or {}
+    return _dizin_getir(tazele)[0]
+
+
+def dizin_ya_da_hata(tazele: bool = False) -> Dict[str, Any]:
+    """`dizin` gibi, ama dizin hiçbir yerden okunamadıysa `ArsivOkunamadi`.
+
+    Gerçekten boş bir arşiv (``{"index": {}}``) hata değildir, döner.
+    Arama ve CLI açılış hazırlığı bunu kullanıyor: kullanıcı "bulunamadı"
+    yerine "arşiv okunamadı" ve sebebini görmeli.
+    """
+    veri, hata = _dizin_getir(tazele)
+    if hata is not None and not isinstance((veri or {}).get("index"), dict):
+        raise ArsivOkunamadi(_okuma_hatasi_metni(hata)) from hata
+    return veri
 
 
 def get_anime_listesi() -> List[Tuple[str, str]]:
@@ -508,8 +609,20 @@ def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = No
     Eski arşiv yenisi doğrulanıp yerine konana kadar yerinde kalır; hata ya
     da iptalde geçici dosyalar silinir. Başarıda modül cache'leri sıfırlanır,
     sonraki okuma yeni arşivden yapılır.
+
+    Yedeğe YALNIZCA kaynağın suçu olabilecek hatalarda geçilir (ağ, HTTP,
+    bozuk/güvensiz paket, geçersiz dizin). Yerel disk hatası
+    (`paket.YerelDiskHatasi`: disk dolu, izin yok, takas yapılamadı) hemen
+    yükselir: yedek kaynak aynı diske aynı boyutta paket yazacak ve aynı
+    sebeple düşecekti — boşuna ikinci bir ~231 MB indirme.
+
+    İptal bağlanırken ve ilk bayt beklenirken de işler (bkz.
+    `paket.iptal_edilebilir`, `paket._parcalar`): istek yardımcı thread'de
+    sürer, bu thread en geç `paket.IPTAL_ARALIGI` saniyede bir iptale bakar.
     """
     hedef = Path(hedef) if hedef is not None else indirilen_arsiv_dizini()
+    # Kopuk bağ (diski takılı değil) ağa hiç çıkmadan söylensin.
+    paket.bag_hedefi(hedef)
     hatalar: List[str] = []
     for kaynak in TAM_ARSIV_KAYNAKLARI:
         paket.iptal_denetle(iptal)
@@ -517,27 +630,46 @@ def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = No
             asama(paket.ASAMA_BAGLANMA, kaynak.ad)
         yanit = None
         try:
-            yanit = _session().get(kaynak.url, stream=True, timeout=INDIRME_ZAMAN_ASIMI)
+            oturum = _session()
+            yanit = paket.iptal_edilebilir(
+                # Döngü değişkenleri çağrı anında bağlanıyor (varsayılan
+                # argüman): lambda yardımcı thread'de sonra da çalışabilir.
+                lambda _o=oturum, _u=kaynak.url: _o.get(
+                    _u, stream=True, timeout=INDIRME_ZAMAN_ASIMI),
+                iptal, birak=_yaniti_kapat)
             yanit.raise_for_status()
             sonuc = paket.paketten_kur(
                 yanit, hedef, ust_desen=kaynak.ust_desen, alt_klasor=kaynak.alt_klasor,
                 kaynak=kaynak.depo, dal=kaynak.dal, ilerleme=ilerleme, iptal=iptal,
                 asama=_asama_bagla(asama, kaynak.ad))
-        except paket.IptalEdildi:
+        except (paket.IptalEdildi, paket.YerelDiskHatasi):
             raise
         except Exception as hata:
             hatalar.append(f"{kaynak.ad}: {hata}")
             continue
         finally:
-            kapat = getattr(yanit, "close", None)
-            if callable(kapat):
-                try:
-                    kapat()
-                except Exception:
-                    pass
+            if yanit is not None:
+                if iptal is not None and iptal.is_set():
+                    # Takılmış bir akışı kapatmak da bekler (curl, sürmekte
+                    # olan aktarımın dönmesini bekliyor); iptal eden kullanıcı
+                    # beklemesin.
+                    threading.Thread(target=_yaniti_kapat, args=(yanit,),
+                                     name="arsiv-kapat", daemon=True).start()
+                else:
+                    _yaniti_kapat(yanit)
         sifirla()
         return sonuc
     raise paket.ArsivHatasi("tam arşiv indirilemedi — " + "; ".join(hatalar))
+
+
+def _yaniti_kapat(yanit: Any) -> None:
+    """Akış yanıtını kapat; kapatma hatası asıl sonucu gölgelemesin."""
+    kapat = getattr(yanit, "close", None)
+    if callable(kapat):
+        try:
+            kapat()
+        except Exception:
+            pass
 
 
 def _asama_bagla(asama: Optional[Callable[[str, str], Any]],
@@ -582,7 +714,7 @@ def indirilen_arsivi_sil() -> bool:
     if depo_mu:
         raise paket.ArsivHatasi(f"{hedef} depodaki arşiv aynası; silinmedi")
 
-    cop = hedef.with_name(f".{hedef.name}-eski-{uuid.uuid4().hex[:8]}")
+    cop = hedef.with_name(f"{paket.eski_kopya_adi(hedef)}{uuid.uuid4().hex[:8]}")
     try:
         os.replace(hedef, cop)
     except OSError as hata:
@@ -649,7 +781,40 @@ def arsiv_durumu() -> ArsivDurumu:
         ortam_dizini=(os.environ.get(DIZIN_ORTAM_ANAHTARI) or "").strip(),
         ayar_dizini=_ayar_oku(DIZIN_AYAR_ANAHTARI),
         onbellekten=onbellekten and sayi is not None,
+        kalintilar=tuple(arsiv_kalintilari()),
     )
+
+
+def arsiv_kalintilari() -> List[Path]:
+    """Silinemeyip kalmış eski arşiv kopyaları (`.cevrimdisi_arsiv-eski-*`).
+
+    `paket.yerine_koy` ve `indirilen_arsivi_sil` eski kopyayı önce gizli bir
+    ada taşıyıp sonra siliyor; silme yarıda kalırsa (kilitli dosya, izin)
+    klasör orada kalıyor. Eskiden `rmtree(ignore_errors=True)` bunu
+    yutuyordu. İndirilen arşiv başka bir diske sembolik bağlıysa takas o
+    diskte yapıldığı için bağın gösterdiği klasörün yanına da bakılır.
+
+    Yalnızca `-eski-` kalıntıları: `-indirme-` klasörü sürmekte olan bir
+    indirmeye de ait olabilir, onu "kalıntı" diye göstermek yanlış olurdu.
+    """
+    hedef = Path(indirilen_arsiv_dizini())
+    yerler = [hedef]
+    try:
+        if hedef.is_symlink():
+            yerler.append(Path(os.path.realpath(hedef)))
+    except OSError:
+        pass
+    bulunan: List[Path] = []
+    for yer in yerler:
+        onek = paket.eski_kopya_adi(yer)
+        try:
+            adaylar = list(yer.parent.iterdir())
+        except OSError:
+            continue                     # klasör yok/okunamıyor: kalıntı da yok
+        # Bağlar da sayılır: bu düzeltmeden önceki sürüm bağlı arşivi
+        # güncellerken BAĞIN kendisini bu ada taşıyıp bırakıyordu.
+        bulunan.extend(p for p in adaylar if p.name.startswith(onek))
+    return sorted(set(bulunan))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -687,9 +852,12 @@ def _arama_tablosu() -> List[Tuple[str, str, str, str]]:
     Her aramada 6098 başlığı yeniden normalize etmek (NFKD + regex) aramanın
     kendisinden pahalı olurdu; tablo önbellekli olunca gerçek arşivde bir arama
     ~15-30 ms (eski `SequenceMatcher` taraması 90-190 ms sürüyordu).
+
+    Dizin okunamadıysa `ArsivOkunamadi` yükselir (boş tablo değil): arama
+    "sonuç yok" ile "arşive ulaşılamadı"yı ayırt edebilsin.
     """
     global _arama_onbellek
-    veri = dizin()
+    veri = dizin_ya_da_hata()
     onbellek = _arama_onbellek
     if onbellek is not None and onbellek[0] is veri:
         return onbellek[1]
@@ -731,6 +899,10 @@ def search_animedepo(query: str, limit: int = 20) -> List[Tuple[str, str]]:
     "attack on titan" bulunmaz, "shingeki no kyojin" bulunur.
 
     Returns: [(slug, başlık), ...]
+
+    Raises: `ArsivOkunamadi` — dizin hiçbir yerden okunamadı. Eskiden boş
+    liste dönüyordu ve CLI/arayüz "bulunamadı" diyordu; arama motoru artık
+    bunu kaynağın hatası olarak gösteriyor, CLI "arama hatası" diyor.
     """
     sorgular = _sorgu_bicimleri(query)
     if not sorgular:
@@ -980,12 +1152,15 @@ __all__ = [
     "get_episode_streams",
     "get_anime_listesi",
     "dizin",
+    "dizin_ya_da_hata",
+    "ArsivOkunamadi",
     "fetch_json",
     "arsiv_konumu",
     "ArsivKonumu",
     "arsiv_durumu",
     "ArsivDurumu",
     "indirilen_arsivi_sil",
+    "arsiv_kalintilari",
     "uzak_aynalar",
     "tam_arsiv_indir",
     "TAM_ARSIV_KAYNAKLARI",

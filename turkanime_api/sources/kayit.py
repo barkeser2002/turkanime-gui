@@ -162,14 +162,14 @@ def _arsiv_hazirligi() -> Dict[str, Any]:
     """Arşiv dizinini yükle; hiçbir yerden okunamıyorsa hata.
 
     Yerel arşiv (depodaki `arsiv/`, indirilen `cevrimdisi_arsiv/`) varsa ağa
-    çıkılmaz; yoksa uzak aynalar, en son disk önbelleği denenir. `dizin()`
-    başarısızlığı yutup `{}` döndürdüğü için boş dizin burada hataya çevrilir.
+    çıkılmaz; yoksa uzak aynalar, en son disk önbelleği denenir. Okunamazsa
+    `animedepo.ArsivOkunamadi` sebebiyle yükselir; okunduğu hâlde boşsa da
+    hata (arşivde tek anime yoksa kaynak kullanılamaz).
     """
     from . import animedepo
-    veri = animedepo.dizin()
+    veri = animedepo.dizin_ya_da_hata()
     if not (veri or {}).get("index"):
-        raise ConnectionError("TürkAnime arşivi okunamadı: yerel arşiv yok, "
-                              "uzak aynalar yanıt vermedi, önbellek boş.")
+        raise ConnectionError("TürkAnime arşivi boş: dizin.json'da hiç anime yok.")
     return veri
 
 
@@ -362,6 +362,14 @@ def _guncel_indeks() -> Dict[str, Kaynak]:
         if _indeks[0] is not kaynaklar:
             _indeks = (kaynaklar, _indeks_kur(kaynaklar))
         return _indeks[1]
+
+
+# Tablo IMPORT ANINDA doğrulanır: iki kaynak aynı adı (kanonik, etiket, CLI
+# kodu, modül, takma ad) iddia ederse modül hiç yüklenmez (`ValueError`).
+# Eskiden indeks ilk tam-olmayan `bul()`'da kuruluyordu; çakışma o ana kadar
+# görünmüyor, bu arada `cli_kaynaklari()` aynı CLI kodunu iki kez listeliyordu.
+# Ucuz ve saf: yalnızca dizgi normalizasyonu, hiçbir kaynak yüklenmez.
+_indeks = (KAYNAKLAR, _indeks_kur(KAYNAKLAR))
 
 
 def kaynaklar(*, metadata: bool = True) -> List[Kaynak]:

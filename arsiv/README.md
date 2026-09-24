@@ -73,4 +73,11 @@ dosyalar kopyalanır, kaynakta artık olmayanlar silinir. Bu klasörün kendi
 çekildiği bilgisiyle yeniden yazılır. Eklenen/değişen/silinen sayıları
 ekrana basılır.
 
+Eşitleme hedefte kaynakta olmayan her dosyayı sildiği için hedef önce
+denetlenir: çalışma dizini (`--hedef ""`, `--hedef .`), onun üst klasörü,
+proje kökü gibi görünen klasör (`.git`, `pyproject.toml`…) ve içinde
+`dizin.json` olmayan dolu bir klasör reddedilir; hiçbir şey klonlanmaz ve
+silinmez. Yeni/boş klasör ve mevcut ayna kabul edilir. Emin olduğunuz bir
+durumda `--zorla` denetimi atlar.
+
 Arşivin kendi uyarı metni için: [DISCLAIMER.md](DISCLAIMER.md).
