@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ....common.episode_parser import merge_episodes
+from ....sources import kayit
 from .. import prefs
 from ..sources_bridge import UnsupportedSource, fetch_episodes
 from ..widgets import StatusLabel
@@ -38,36 +39,25 @@ IKON_INDIRILDI = "⬇"
 
 # Kaynak kimliği: rozet rengi + iki harfli kısaltma. Satırda kaynak adının
 # tamamı sığmıyor; renk + kısaltma ikilisi eski GUI'den birebir taşındı ki
-# kullanıcı alışkanlığı bozulmasın.
-SOURCE_COLORS = {
-    "TürkAnime": "#ffd93d",
-    "AnimeciX": "#ff6b6b",
-    "Anizle": "#9b59b6",
-    "TRAnimeİzle": "#e84393",
-    "OpenAnime": "#4ecdc4",
-    "Tranimaci": "#0984e3",
-    "AnimeDepo": "#e67e22",
-}
-SOURCE_SHORT = {
-    "TürkAnime": "TA",
-    "AnimeciX": "CX",
-    "Anizle": "AZ",
-    "TRAnimeİzle": "TR",
-    "OpenAnime": "OA",
-    "Tranimaci": "TC",
-    "AnimeDepo": "AD",
-}
+# kullanıcı alışkanlığı bozulmasın. Değerler `sources/kayit.py`'de: eskiden
+# burada elle tutuluyordu ve yeni kaynak eklendiğinde unutuluyordu (rozet gri
+# kalıyordu). "TürkAnime" artık arşiv; eski "AnimeDepo" adıyla gelen satır da
+# aynı rozeti alır (bkz. `source_short`).
+SOURCE_COLORS = {k.ad: k.renk for k in kayit.kaynaklar()}
+SOURCE_SHORT = {k.ad: k.kisaltma for k in kayit.kaynaklar()}
 DEFAULT_SOURCE_COLOR = "#7f8c8d"
 
 
 # ── Saf yardımcılar (Qt'siz; doğrudan test edilebilir) ──────────────────────
 def source_short(name: str) -> str:
     """Kaynağın iki harfli rozet metni (bilinmeyen kaynak → ilk iki harf)."""
-    return SOURCE_SHORT.get(name) or (name or "?")[:2].upper()
+    return (SOURCE_SHORT.get(name) or SOURCE_SHORT.get(kayit.kanonik_ad(name))
+            or (name or "?")[:2].upper())
 
 
 def source_color(name: str) -> str:
-    return SOURCE_COLORS.get(name, DEFAULT_SOURCE_COLOR)
+    return (SOURCE_COLORS.get(name) or SOURCE_COLORS.get(kayit.kanonik_ad(name))
+            or DEFAULT_SOURCE_COLOR)
 
 
 def as_sources_data(source: str, episodes: Any) -> Dict[str, List[Dict[str, Any]]]:

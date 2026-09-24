@@ -277,14 +277,20 @@ class AdapterBolum:
         anime: AdapterAnime,
         stream_provider: Optional[Callable[[str], List[Dict[str, str]]]] = None,
         player_name: str = "ANIMECIX",
+        slug: Optional[str] = None,
     ):
         self.url = url
         self._title = title
         self.anime = anime
         self._stream_provider = stream_provider
         self._player_name = player_name or "ANIMECIX"
-        # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı)
-        self.slug = _slugify(f"{anime.title}-{title}" if anime else title)
+        # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı).
+        # Kaynak kendi bölüm slug'ını veriyorsa (TürkAnime arşivi: sitenin
+        # "naruto-1-bolum"u) o kullanılır: izleme geçmişi ve eski indirmelerin
+        # dosya adları o slug'la duruyor. Yine `_slugify`'dan geçer — değer
+        # arşivden geliyor; indirme yolu ayrıca `guvenli_alt_yol` ile korunuyor.
+        verilen = _slugify(slug) if slug else ""
+        self.slug = verilen or _slugify(f"{anime.title}-{title}" if anime else title)
         # `fansubs` akışları getirmek zorunda (fansub adları akışların içinde).
         # CLI hemen ardından `best_video` çağırıyor; aynı listeyi ikinci kez
         # istememek için burada bekletilir ve İLK `best_video` onu tüketir.
@@ -413,3 +419,49 @@ class AdapterBolum:
         callback({"current": toplam, "total": toplam, "player": player_label,
                   "status": "hiçbiri çalışmıyor"})
         return None
+
+
+def kayittan_bolumler(kaynak: Any, slug: str, title: str) -> List[AdapterBolum]:
+    """Kayıttaki bir kaynağın (`sources.kayit.Kaynak`) bölümlerini nesneye çevir.
+
+    Qt köprüsü (`gui/qt/sources_bridge.py`) ve CLI aynı işi eskiden kaynak
+    başına ayrı ayrı yazıyordu — CLI'da her kaynak için iki kez (izle ve indir
+    dalları), toplam ~250 satır neredeyse aynı `AdapterBolum(...)` kurulumu.
+    Bu fonksiyon o kurulumun tek kopyası: bölüm kimliği kaynağın
+    `bolum_adresi` ile url'ye çevrilir, akışlar kimliği kapatan sağlayıcıyla
+    getirilir (bkz. `kayit.akis_saglayici`).
+
+    Burada, `kayit.py`'de değil: `AdapterBolum` bu modülde ve bu modül yt_dlp
+    çekiyor; kayıt ise sunucu tarayıcısının da okuduğu hafif modül.
+
+    Kimlik bu kaynakta açılamıyorsa (AnimeciX: sayısal değil) ``ValueError``
+    kaynağın kendi mesajıyla yükselir; kaynak bölüm vermiyorsa boş liste.
+    """
+    from .kayit import akis_saglayici
+
+    hata = kaynak.kimlik_denetle(slug)
+    if hata:
+        raise ValueError(hata)
+    uclar = kaynak.uclar()
+    if uclar.bolumler is None or uclar.akislar is None:
+        return []                       # yalnızca metadata (AniList)
+    ham = uclar.bolumler(slug) or []
+    anime = AdapterAnime(slug=slug, title=title)
+    bolumler: List[AdapterBolum] = []
+    gorulen = set()
+    for bolum_id, bolum_basligi in ham:
+        # Aynı kimlik iki kez: Anizle'nin veritabanı ve sayfası aynı bölümü
+        # tekrar verebiliyor (eskiden `AnizleAnime.episodes` bu yüzden
+        # ayıklıyordu). Aynı bölüm listede iki satır olmasın.
+        if bolum_id in gorulen:
+            continue
+        gorulen.add(bolum_id)
+        bolumler.append(AdapterBolum(
+            url=kaynak.bolum_adresi(bolum_id),
+            title=bolum_basligi,
+            anime=anime,
+            stream_provider=akis_saglayici(uclar.akislar, bolum_id),
+            player_name=kaynak.oynatici,
+            slug=kaynak.bolum_slugu(bolum_id) if kaynak.bolum_slugu else None,
+        ))
+    return bolumler

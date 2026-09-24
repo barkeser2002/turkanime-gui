@@ -21,9 +21,11 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 
 ## ✨ Öne Çıkan Özellikler
 
-- **8 kaynakta paralel arama:** TürkAnime, AnimeciX, Anizle, TRAnimeİzle,
-  OpenAnime, Tranimaci, AnimeDepo ve AniList aynı anda aranır. Bunlardan
-  **7'si video sunar**; AniList yalnızca meta veri ve kullanıcı listesi sağlar.
+- **7 kaynakta paralel arama:** TürkAnime (arşiv), AnimeciX, Anizle,
+  TRAnimeİzle, OpenAnime, Tranimaci ve AniList aynı anda aranır. Bunlardan
+  **6'sı video sunar**; AniList yalnızca meta veri ve kullanıcı listesi sağlar.
+  turkanime.tv kapandı: TürkAnime kaynağı artık sitenin statik arşivi ve
+  yerel kopyadan **ağsız** aranır.
 - **Alakaya göre sıralama:** Sonuçlar sorguya yakınlığa göre dizilir. "one piece"
   aramasında ilk sıra One Piece olur — "Koisuru One Piece" değil.
 - **Gömülü Cloudflare atlatma:** Uygulamanın içindeki Chromium (QtWebEngine)
@@ -166,13 +168,12 @@ python -m turkanime_api.gui.qt
 ### Video Kaynakları
 | Kaynak | Açıklama |
 |--------|----------|
-| **TürkAnime** | Klasik Türk anime kaynağı (şifreli embed çözümü) |
 | **AnimeciX** | Dinamik video ID, geniş fansub seçenekleri |
 | **Anizle** | Geniş arşiv (`anizm.pro`). Site video.js/HLS'e geçtiği için bölüm başına sınırlı kaynak dönebiliyor |
 | **TRAnimeİzle** | Cookie tabanlı oturum — Ayarlar'dan gömülü tarayıcıyla çerez alınmalı |
 | **OpenAnime** | SvelteKit SSR JSON çıkarımı + CF bypass. Arama ve bölüm listesi çalışıyor; **stream uçları şu an 404 dönüyor** (bkz. [Bilinen Kısıtlar](#-bilinen-kısıtlar)) |
 | **Tranimaci** | SHA-256 proof-of-work WAF + JS kapısı (QtWebEngine ile aşılır), multi-CDN mp4 |
-| **AnimeDepo** | Kapanan turkanime.tv'nin statik JSON arşivi. Önce yerel kopyadan okunur (indirilen tam arşiv ya da depodaki [`arsiv/`](../arsiv/README.md)), yoksa GitLab → GitHub aynalarından; gerçek arama ucu yok, dizin üzerinde yerel fuzzy arama yapılır |
+| **TürkAnime (arşiv)** | turkanime.tv kapandı; kaynak artık sitenin statik JSON arşivi (AnimeDepo). Önce yerel kopyadan okunur (indirilen tam arşiv ya da depodaki [`arsiv/`](../arsiv/README.md)), yoksa GitLab → GitHub aynalarından. Gerçek arama ucu yok; dizin üzerinde yerel arama yapılır (aksan/noktalamadan bağımsız, yazım hatasına toleranslı, "Şingeki" → Shingeki). Arşivde İngilizce adlar yok, romaji ile arayın. Eskiden ayrı listelenen "AnimeDepo" kaynağı bununla birleşti; eski ad hâlâ tanınır |
 
 ### Meta Veri ve Keşif
 | Servis | Rol |
@@ -194,8 +195,8 @@ python -m turkanime_api.gui.qt
 
 ### Video Sunucuları
 
-TürkAnime embed'lerinde desteklenen oynatıcılar (öncelik sırasıyla,
-`turkanime_api/objects.py::SUPPORTED`):
+TürkAnime arşivindeki bölüm kayıtlarının oynatıcıları (öncelik sırasıyla,
+`turkanime_api/common/oynatici_onceligi.py`):
 
 ```
 Yandisk  Alucard  GDrive  Mail  PixelDrain  Amaterasu  HDVID
@@ -203,8 +204,8 @@ Odnoklassniki  Dailymotion  Sibnet  VK  Vidmoly  YourUpload
 Sendvid  Myvi  Uqload
 ```
 > MP4upload listeden çıkarıldı: çözümlenmiş gibi görünüp oynatılamayan
-> bağlantılar üretiyordu. Diğer kaynaklar (Anizle, Tranimaci, AnimeDepo,
-> OpenAnime) doğrudan mp4/HLS bağlantısı döndürür, bu listeden geçmez.
+> bağlantılar üretiyordu. Diğer kaynaklar (Anizle, Tranimaci, OpenAnime)
+> doğrudan mp4/HLS bağlantısı döndürür, bu listeden geçmez.
 
 ## ⚠️ Bilinen Kısıtlar
 
@@ -265,18 +266,19 @@ python tests/adapters-test-all.py --skip-streams
 ```
 
 > Betik şu an **4 kaynağı** kapsıyor: `animecix`, `anizle`, `tranime`,
-> `animedepo`. OpenAnime, Tranimaci ve TürkAnime bu betikte yok.
+> `animedepo` (TürkAnime arşivi). OpenAnime ve Tranimaci bu betikte yok.
 
 ### Test Kapsamı
 | Alan | Testler |
 |------|---------|
 | **Arayüz (pytest-qt)** | Keşif/arama/detay/bölüm/indirme sayfaları, oynatma, izleme listesi, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
 | **Arama** | Alakaya göre sıralama, çok kaynaklı arama zaman aşımı, başlık eşleştirme |
+| **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
 | **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi |
 | **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası |
 | **Çekirdek** | Bölüm birleştirme ve ayrıştırma, indirme yolu güvenliği, atomik JSON yazımı, ağ izolasyonu |
 | **Yayın** | `release.yml` sürüm türetme, test kapısı, `version.json` şeması, PyPI sırrı |
-| **Adaptörler (ağ, ayrı betik)** | AnimeciX, Anizle, TRAnimeİzle, AnimeDepo — arama, bölüm listesi, stream |
+| **Adaptörler (ağ, ayrı betik)** | AnimeciX, Anizle, TRAnimeİzle, TürkAnime arşivi — arama, bölüm listesi, stream |
 
 > **Not:** TRAnimeİzle ağ testleri geçerli bir cookie gerektirir. Cookie süresi
 > dolmuşsa bu testler beklenen şekilde başarısız olur.

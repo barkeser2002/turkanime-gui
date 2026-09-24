@@ -9,8 +9,9 @@ Adımlar:
 2. Sınıf adını değiştirin: class MyProviderAdapter
 3. PROVIDER_CONFIG'i sağlayıcınıza göre düzenleyin
 4. Gerekli metodları implement edin
-5. sources/__init__.py'ye import ekleyin
-6. sources/__init__.py'deki PROVIDERS listesine ekleyin
+5. Kaynağı sources/kayit.py'deki KAYNAKLAR tablosuna tek satırla kaydedin
+   (arama, köprü, CLI menüsü, rozetler ve PROVIDERS oradan türetiliyor;
+   ayrıntı: ANIME_PROVIDER_GUIDE.md)
 """
 
 from typing import List, Dict, Optional, Any
@@ -166,20 +167,19 @@ class TemplateAnimeAdapter(ABC):
         # Anime objesi için gerekli slug oluştur
         slug = self._create_slug(anime_data.get('title', 'bilinmeyen-anime'))
 
-        anime = Anime(slug)
-
-        # Info sözlüğünü güncelle
-        anime.info["Özet"] = anime_data.get('description', '')
-        anime.info["Resim"] = anime_data.get('image', '')
-        anime.info["Anime Türü"] = anime_data.get('genres', [])
-        anime.info["Bölüm Sayısı"] = anime_data.get('episodes', 0)
-        anime.info["Puanı"] = anime_data.get('score', 0.0)
-
-        # Başlık ayarla
-        if anime.title is None:
-            anime.title = anime_data.get('title', 'Bilinmeyen Anime')
-
-        return anime
+        # `Anime(slug)` DEĞİL: o kurucu künyeyi kapanan turkanime.tv'den
+        # çekiyor. `cevrimdisi` siteye gitmez, künye verilenle dolar.
+        return Anime.cevrimdisi(
+            slug,
+            title=anime_data.get('title') or 'Bilinmeyen Anime',
+            info={
+                "Özet": anime_data.get('description', ''),
+                "Resim": anime_data.get('image', ''),
+                "Anime Türü": anime_data.get('genres', []),
+                "Bölüm Sayısı": anime_data.get('episodes', 0),
+                "Puanı": anime_data.get('score', 0.0),
+            },
+        )
 
     def create_episode_object(self, episode_data: Dict[str, Any], anime: Anime) -> Bolum:
         """Adapter verisinden Bolum objesi oluştur."""
@@ -188,13 +188,13 @@ class TemplateAnimeAdapter(ABC):
             episode_data.get('title', f"bolum-{episode_data.get('episode_number', 0)}")
         )
 
-        bolum = Bolum(
-            slug=slug,
+        # `Bolum.cevrimdisi`: düz `Bolum`'un `html`/`videos`'u kapanan
+        # turkanime.tv'ye gidiyor.
+        return Bolum.cevrimdisi(
+            slug,
             anime=anime,
             title=episode_data.get('title', f"Bölüm {episode_data.get('episode_number', 0)}")
         )
-
-        return bolum
 
     def _create_slug(self, title: str) -> str:
         """Başlıktan slug oluştur."""

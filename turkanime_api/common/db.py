@@ -11,6 +11,30 @@ import threading
 import uuid
 
 
+def _kanonik_kaynak(source: str) -> str:
+    """Kayıtlı kaynak adının kanonik hâli; bilinmeyen ad aynen (bkz. `sources.kayit`)."""
+    try:
+        from ..sources.kayit import kanonik_ad
+        return kanonik_ad(source)
+    except Exception:
+        return source            # ad çevirisi kaydı asla düşürmesin
+
+
+def _kaynak_adlarini_cevir(kayitlar: List[Dict]) -> List[Dict]:
+    """Sunucudan okunan eşleşmelerde eski kaynak adını (AnimeDepo) kanoniğe çevir.
+
+    Sunucudaki eski kayıtlar "AnimeDepo" adını taşıyor; o ad artık ayrı bir
+    kaynak değil ("TürkAnime" = arşiv). Çevrilmezse eşleşme hiçbir kaynağa
+    bağlanamaz ya da aynı arşiv iki kaynakmış gibi görünür.
+    """
+    out: List[Dict] = []
+    for kayit in kayitlar:
+        if isinstance(kayit, dict) and isinstance(kayit.get("source"), str):
+            kayit = {**kayit, "source": _kanonik_kaynak(kayit["source"])}
+        out.append(kayit)
+    return out
+
+
 class APIManager:
     """REST API yöneticisi."""
 
@@ -55,7 +79,14 @@ class APIManager:
         return True
 
     def save_anime_match(self, source: str, anime_id: str, anime_title: str) -> bool:
-        """Anime eşleştirmesini API'ye kaydeder."""
+        """Anime eşleştirmesini API'ye kaydeder.
+
+        Kaynak adı kanonik hâliyle yazılır ("AnimeDepo" → "TürkAnime"): aynı
+        arşiv bir süre iki ayrı adla listelendi; sunucuda aynı eşleşmenin iki
+        adla birikmemesi için eski ad burada çevriliyor.
+        """
+        source = _kanonik_kaynak(source)
+
         def worker():
             data = {
                 'source': source,
@@ -75,17 +106,17 @@ class APIManager:
         return True
 
     def get_anime_matches(self, limit: int = 100) -> List[Dict]:
-        """Anime eşleştirmelerini API'den getirir."""
+        """Anime eşleştirmelerini API'den getirir (kaynak adları kanonik)."""
         result = self._make_request('GET', f'/anime-matches?limit={limit}')
         if result and isinstance(result, list):
-            return result
+            return _kaynak_adlarini_cevir(result)
         return []
 
     def search_anime_matches(self, query: str) -> List[Dict]:
-        """Anime eşleştirmelerinde API üzerinden arama yapar."""
+        """Anime eşleştirmelerinde API üzerinden arama yapar (kaynak adları kanonik)."""
         result = self._make_request('GET', f'/anime-matches/search?q={query}')
         if result and isinstance(result, list):
-            return result
+            return _kaynak_adlarini_cevir(result)
         return []
 
     def save_user_episode_status(self, user_id: str, episode_id: str, watched: bool, downloaded: bool) -> bool:

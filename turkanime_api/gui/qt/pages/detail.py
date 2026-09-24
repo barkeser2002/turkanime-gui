@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ....common.episode_parser import merge_episodes
+from ....sources.kayit import gorunen_ad, kanonik_ad
 from ..sources_bridge import (
     METADATA_ONLY, UnsupportedSource, fetch_episodes, supported_sources,
 )
@@ -440,9 +441,15 @@ class DetailPage(QWidget):
         lbl.setObjectName("Muted")
         actions.addWidget(lbl)
 
+        # Kutuda insana dönük etiket ("TürkAnime (arşiv)"), öğe verisinde
+        # kanonik ad: bağlantılar, köprü ve eşleşme kaydı kanonik adla çalışıyor
+        # (bkz. `current_source`). Metin değişince değil İNDEKS değişince
+        # dinleniyor — metin artık etiket, kaynak adı değil.
         self.cmbSource = QComboBox()
-        self.cmbSource.addItems(supported_sources())
-        self.cmbSource.currentTextChanged.connect(self._on_source_changed)
+        for source in supported_sources():
+            self.cmbSource.addItem(gorunen_ad(source), source)
+        self.cmbSource.currentIndexChanged.connect(
+            lambda _index: self._on_source_changed(self.current_source()))
         actions.addWidget(self.cmbSource)
 
         # Varsayılan KAPALI: tek kaynak, tek istek. İşaretlenince bütün
@@ -548,7 +555,8 @@ class DetailPage(QWidget):
         # METADATA_ONLY kaynaklarda `_select_source` zaten uyarı yazdı; onu
         # "bölümleri getirebilirsiniz" ile değiştirmek yanlış yönlendirme olur.
         if source not in METADATA_ONLY:
-            self.lblStatus.info(f"{source} kaydı seçildi. Bölümleri getirebilirsiniz.")
+            self.lblStatus.info(
+                f"{gorunen_ad(source)} kaydı seçildi. Bölümleri getirebilirsiniz.")
         return rid
 
     def apply_match(self, source: str, slug: str, title: str) -> None:
@@ -567,7 +575,7 @@ class DetailPage(QWidget):
             # döndüğünde bu kaynağa dokunmasın (bkz. `_on_sources_resolved`).
             self._manual[source] = self._slug
         self._select_source(source)
-        self.lblStatus.ok(f"{source} → {title} eşleştirildi.")
+        self.lblStatus.ok(f"{gorunen_ad(source)} → {title} eşleştirildi.")
         save_match(source, self._slug, self._match_title)
 
     # ── Render ──────────────────────────────────────────────────────────────
@@ -661,10 +669,10 @@ class DetailPage(QWidget):
         """
         if not source:
             return
-        index = self.cmbSource.findText(source)
+        index = self.cmbSource.findData(source)
         if index < 0:
-            self.cmbSource.addItem(source)
-            index = self.cmbSource.findText(source)
+            self.cmbSource.addItem(gorunen_ad(source), source)
+            index = self.cmbSource.findData(source)
         self.cmbSource.setCurrentIndex(index)
 
     def _on_source_changed(self, source: str) -> None:
@@ -673,7 +681,9 @@ class DetailPage(QWidget):
                 f"{source} yalnızca metadata kaynağı; bölüm için başka kaynak seçin.")
 
     def current_source(self) -> str:
-        return self.cmbSource.currentText()
+        """Seçili kaynağın kanonik adı (kutudaki etiket değil)."""
+        veri = self.cmbSource.currentData()
+        return veri if isinstance(veri, str) and veri else self.cmbSource.currentText()
 
     # ── Bölüm yükleme ───────────────────────────────────────────────────────
     def load_episodes(self) -> None:
@@ -732,7 +742,7 @@ class DetailPage(QWidget):
             self.lblStatus.info(
                 f"{len(targets)} kaynaktan bölümler getiriliyor…")
         else:
-            self.lblStatus.info(f"{primary} bölümleri getiriliyor…")
+            self.lblStatus.info(f"{gorunen_ad(primary)} bölümleri getiriliyor…")
         # Kaynak başına AYRI iş: biri kilitlenirse ya da patlarsa diğerleri
         # kendi hızında gelmeye devam eder.
         for source, slug in targets.items():
@@ -752,8 +762,14 @@ class DetailPage(QWidget):
 
         bindings = dict(known)
         supported = set(supported_sources())
+        # Kanonik adla da bak: eski "AnimeDepo" bağlantısı varken aramadan
+        # gelen "TürkAnime" aynı arşiv — ikinci kez bağlanırsa aynı bölümler
+        # "Tüm kaynaklar" listesine iki kaynakmış gibi girer.
+        bagli = {kanonik_ad(b) for b in bindings}
         for source, items in (results or {}).items():
             if source in bindings or source in METADATA_ONLY:
+                continue
+            if kanonik_ad(source) in bagli:
                 continue
             if source not in supported:
                 continue                      # aramada var ama oynatması yok
@@ -846,7 +862,7 @@ class DetailPage(QWidget):
 
         total = episode_total(episodes)
         if not total:
-            self.lblStatus.error(f"{source} kaynağında bölüm bulunamadı.")
+            self.lblStatus.error(f"{gorunen_ad(source)} kaynağında bölüm bulunamadı.")
             return
 
         if isinstance(episodes, dict) and len(episodes) > 1:

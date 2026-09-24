@@ -630,30 +630,35 @@ class OpenAniAdapter:
             return 'unknown'
 
     def create_anime_object(self, anime_data: Dict[str, Any]) -> Anime:
-        """Adapter verisinden Anime objesi oluştur."""
+        """Adapter verisinden Anime objesi oluştur.
+
+        `Anime.cevrimdisi`: eskiden `Anime(slug)` kuruluyordu; o kurucu
+        künyeyi turkanime.tv'den çekiyor (`fetch_info`). Site kapandı —
+        OpenAnime verisinden nesne kurmak kapanmış bir siteye bağlı kalıp
+        `IndexError` ile düşüyordu. Künye zaten elimizde, siteye gerek yok.
+        """
         from ..objects import Anime  # tembel: modül düzeyinde yt_dlp çekiyor
         slug = anime_data.get('provider_data', {}).get('slug', 'bilinmeyen-anime')
-        anime = Anime(slug)
-
-        anime.info["Özet"] = anime_data.get('description', '')
-        anime.info["Resim"] = anime_data.get('image', '')
-        anime.info["Anime Türü"] = anime_data.get('genres', [])
-        anime.info["Bölüm Sayısı"] = anime_data.get('episodes', 0)
-        anime.info["Puanı"] = anime_data.get('score', 0.0)
-
-        if anime.title is None:
-            anime.title = anime_data.get('title', 'Bilinmeyen Anime')
-
-        return anime
+        return Anime.cevrimdisi(
+            slug,
+            title=anime_data.get('title') or 'Bilinmeyen Anime',
+            info={
+                "Özet": anime_data.get('description', ''),
+                "Resim": anime_data.get('image', ''),
+                "Anime Türü": anime_data.get('genres', []),
+                "Bölüm Sayısı": anime_data.get('episodes', 0),
+                "Puanı": anime_data.get('score', 0.0),
+            },
+        )
 
     def create_episode_object(self, episode_data: Dict[str, Any], anime: Anime) -> Bolum:
         """Adapter verisinden Bolum objesi oluştur."""
         from ..objects import Bolum  # tembel: modül düzeyinde yt_dlp çekiyor
         slug = episode_data.get('provider_data', {}).get('episode_id', 'bolum-0')
         title = episode_data.get('title', f"Bölüm {episode_data.get('episode_number', 0)}")
-        
-        bolum = Bolum(slug=slug, anime=anime, title=title)
-        return bolum
+        # `cevrimdisi`: düz `Bolum`'un `html`/`videos`'u ilk erişimde kapanan
+        # turkanime.tv'ye gidiyor; bu bölüm OpenAnime'nin, orada sayfası yok.
+        return Bolum.cevrimdisi(slug, anime=anime, title=title)
 
 # Geriye dönük uyumluluk için eski metotları sarmalayan fonksiyonlar 
 # (Zorunlu değilse Adapter classı direkt kullanılabilir, ancak turkanime_api yapısı dışarıya fonksiyonlar ihraç eder)

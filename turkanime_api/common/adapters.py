@@ -1,6 +1,13 @@
 """
 Anime source adapters for the UI components.
 Provides unified interface for searching anime across different sources.
+
+Kaynak listesi burada TUTULMUYOR: `SearchEngine.adapters` her örneklemede
+`sources/kayit.py`'deki kayıttan kurulur (bkz. `KaynakAdaptoru`). Eskiden
+burada kaynak başına bir adaptör sınıfı vardı ve liste köprü/CLI'daki
+kopyalarından ayrışıyordu; "TürkAnime" adaptörü de kapanan turkanime.tv'nin
+arama ucuna (`objects.Anime.arama_yap`) gidiyordu. TürkAnime artık sitenin
+statik arşivinde, ağsız aranıyor (`sources/animedepo.py`).
 """
 
 from typing import Callable, List, Tuple, Optional, Dict, Any
@@ -11,14 +18,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 # ilk çağrıda yavaş olabildiği için 12 sn yetmiyordu. Bu süre GERÇEK bir üst
 # sınır: dolduğunda arama elindeki sonuçlarla döner (bkz. `_paralel_ara`).
 OVERALL_SEARCH_TIMEOUT = 25
-from ..anilist_client import anilist_client
-from ..objects import Anime
-from ..sources.animecix import search_animecix
-from ..sources.anizle import search_anizle
-from ..sources.tranime import search_tranime
-from ..sources.animedepo import search_animedepo
-from ..sources.openani import search_openani
-from ..sources.tranimaci import search_tranimaci
+from ..sources import kayit
 from .title_match import siralama_skoru
 
 
@@ -42,195 +42,69 @@ def _alakaya_gore_sirala(sorgu: str, kayitlar: list, baslik) -> list:
         return kayitlar          # skorlama asla aramayı düşürmesin
 
 
-class AniListAdapter:
-    """Adapter for AniList anime search."""
+class KaynakAdaptoru:
+    """Kayıttaki bir kaynağı `SearchEngine`'in adaptör sözleşmesine uydurur.
 
-    def __init__(self):
-        self.client = anilist_client
+    Sözleşme: ``search_anime(query, limit) -> [(slug, title), ...]``; kaynak
+    kapak görseli verebiliyorsa (AniList) ek olarak ``search_rich`` — bkz.
+    `ZenginKaynakAdaptoru`. Kaynak hatası boş liste olur: tek bir kaynağın
+    çökmesi paralel aramanın diğer sonuçlarını götürmemeli.
+    """
+
+    def __init__(self, kaynak: "kayit.Kaynak"):
+        self.kaynak = kaynak
 
     def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        """Search anime on AniList.
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-
-        Returns:
-            List of (slug, title) tuples
-        """
         try:
-            results = self.client.search_anime(query, per_page=limit)
-            return [(str(result.get('id', '')), result.get('title', {}).get('romaji', '')) for result in results]
+            return self.kaynak.ara(query, limit=limit)
         except Exception:
             return []
+
+
+class ZenginKaynakAdaptoru(KaynakAdaptoru):
+    """Kapak görseli verebilen kaynak (`KaynakUclari.zengin_ara`).
+
+    Ayrı sınıf çünkü `search_all_sources_rich` `hasattr(adapter,
+    "search_rich")` ile karar veriyor; görsel veremeyen kaynakta bu metodun
+    VAR olması, sonuçları gereksiz yere başka bir yoldan geçirirdi.
+    """
 
     def search_rich(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Kapak görseliyle birlikte arama (opsiyonel zengin sözleşme).
-
-        `search_anime` (slug, title) döndürdüğü için görsel taşıyamıyor; bu
-        metot yalnızca destekleyen adapterlerde bulunur ve `SearchEngine`
-        tarafından varsa tercih edilir.
-        """
         try:
-            results = self.client.search_anime(query, per_page=limit) or []
-        except Exception:
-            return []
-        out: List[Dict[str, Any]] = []
-        for r in results[:limit]:
-            titles = r.get("title") or {}
-            cover = r.get("coverImage") or {}
-            out.append({
-                "slug": str(r.get("id", "")),
-                "title": titles.get("romaji") or titles.get("english") or "",
-                "image": cover.get("medium") or cover.get("large"),
-            })
-        return out
-
-
-class TurkAnimeAdapter:
-    """Adapter for TurkAnime local database search."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        """Search anime on TurkAnime.
-
-        Sitenin "tüm anime listesi" ucu kaldırıldığı için `get_anime_listesi()`
-        artık boş/eksik dönüyor (FutureWarning) ve arama hiç sonuç vermiyordu.
-        Bu yüzden önce gerçek arama ucunu (`arama_yap`) kullanıyor, yalnızca o
-        başarısız olursa eski liste-filtreleme yöntemine düşüyoruz.
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-
-        Returns:
-            List of (slug, title) tuples
-        """
-        try:
-            results = Anime.arama_yap(query) or []
-            if results:
-                return results[:limit]
-        except Exception:
-            pass
-
-        # Yedek: eski (deprecated) tüm-liste + alt-dize filtresi
-        try:
-            all_list = Anime.get_anime_listesi()
-            results = []
-            query_lower = query.lower()
-
-            for slug, name in all_list:
-                if query_lower in (name or "").lower():
-                    results.append((slug, name))
-                    if len(results) >= limit:
-                        break
-
-            return results
+            uclar = self.kaynak.uclar()
+            return list(uclar.zengin_ara(query, limit=limit) or [])[:limit]
         except Exception:
             return []
 
 
-class AnimeciXAdapter:
-    """Adapter for AnimeciX website search."""
+def kaynak_adaptoru(kaynak: "kayit.Kaynak") -> KaynakAdaptoru:
+    """Kaynağa uygun adaptör: görsel verebiliyorsa zengin, değilse sade.
 
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        """Search anime on AnimeciX.
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-
-        Returns:
-            List of (slug, title) tuples
-        """
-        try:
-            results = search_animecix(query)
-            return results[:limit]
-        except Exception:
-            return []
-
-
-class AnizleAdapter:
-    """Adapter for Anizle website search."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        try:
-            results = search_anizle(query, limit=limit)
-            return results[:limit]
-        except Exception:
-            return []
-
-
-class TRAnimeAdapter:
-    """Adapter for TRAnimeİzle.io website search."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        """Search anime on TRAnimeİzle.io.
-        
-        Args:
-            query: Search query  
-            limit: Maximum number of results
-            
-        Returns:
-            List of (slug, title) tuples
-        """
-        try:
-            results = search_tranime(query, limit=limit)
-            return results[:limit]
-        except Exception:
-            return []
-
-
-class AnimeDepoAdapter:
-    """Adapter for AnimeDepo (GitLab-hosted static archive, local fuzzy search)."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        try:
-            results = search_animedepo(query, limit=limit)
-            return results[:limit]
-        except Exception:
-            return []
-
-
-class OpenAnimeAdapter:
-    """Adapter for OpenAnime (openani.me) search."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        try:
-            return (search_openani(query, limit=limit) or [])[:limit]
-        except Exception:
-            return []
-
-
-class TranimaciAdapter:
-    """Adapter for Tranimaci.com search."""
-
-    def search_anime(self, query: str, limit: int = 10) -> List[Tuple[str, str]]:
-        try:
-            return (search_tranimaci(query, limit=limit) or [])[:limit]
-        except Exception:
-            return []
+    `zengin_ara` var mı diye bakmak uçları yüklemeyi (tembel import) gerektirir;
+    yükleme patlarsa kaynak sade adaptörle kalır ve araması zaten `[]` döner.
+    """
+    try:
+        zengin = kaynak.uclar().zengin_ara is not None
+    except Exception:
+        zengin = False
+    return ZenginKaynakAdaptoru(kaynak) if zengin else KaynakAdaptoru(kaynak)
 
 
 class SearchEngine:
     """Unified search engine for all anime sources.
 
-    NOT: Buradaki anahtarlar `gui/qt/sources_bridge.py`'deki kaynak adlarıyla
-    aynı olmalı; aksi hâlde bir kaynak aramada çıkar ama bölümleri açılamaz
-    (ya da tersi — OpenAnime/Tranimaci uzun süre aramada hiç görünmüyordu).
+    `adapters` kayıttaki (`sources/kayit.py`) her kaynak için bir adaptör;
+    anahtarlar kaynakların kanonik adı, yani `gui/qt/sources_bridge.py` ile
+    aynı adlar — ikisi aynı kayıttan türediği için artık ayrışamazlar
+    (OpenAnime/Tranimaci uzun süre aramada hiç görünmüyordu). Eski
+    "AnimeDepo" ayrı bir kaynak değil: aynı arşiv "TürkAnime" adıyla aranıyor,
+    iki kez listelenmiyor. Testler `adapters`'ı sahte adaptörlerle
+    değiştirebilir; sözleşme yalnızca `search_anime`/`search_rich`.
     """
 
     def __init__(self):
-        self.adapters = {
-            "AniList": AniListAdapter(),
-            "TürkAnime": TurkAnimeAdapter(),
-            "AnimeciX": AnimeciXAdapter(),
-            "Anizle": AnizleAdapter(),
-            "TRAnimeİzle": TRAnimeAdapter(),
-            "AnimeDepo": AnimeDepoAdapter(),
-            "OpenAnime": OpenAnimeAdapter(),
-            "Tranimaci": TranimaciAdapter(),
-        }
-    
+        self.adapters = {k.ad: kaynak_adaptoru(k) for k in kayit.kaynaklar()}
+
     def _paralel_ara(self, gorev: Callable[[str], Any],
                      timeout: Optional[float] = None) -> Dict[str, Any]:
         """`gorev`'i her kaynak için paralel çalıştır, süre dolunca ELİNDEKİYLE dön.

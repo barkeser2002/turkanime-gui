@@ -2,7 +2,9 @@
 AnimeDepo sağlayıcı (KebabLord upstream V10 driver'ından uyarlandı).
 
 turkanime.tv kapandı; sitenin anime/bölüm/video kayıtlarının yaşayan tek kopyası
-AnimeDepo adlı statik JSON arşivi. Gerçek bir arama endpoint'i yoktur
+AnimeDepo adlı statik JSON arşivi. Uygulamada bu modül "TürkAnime" kaynağıdır
+(`sources/kayit.py`; eski "AnimeDepo" adı takma ad olarak okunur). Gerçek bir
+arama endpoint'i yoktur
 (gözat-tabanlı). Bu modül fork'un fonksiyon-stili kaynak sözleşmesine
 (search / episodes / streams) uyar ve `dizin.json` üzerinde **yerel fuzzy
 arama** yapar.
@@ -56,6 +58,12 @@ except ImportError:  # pragma: no cover - kütüphane yoksa düz requests'e dü�
 
 from ..common import arsiv_paketi as paket
 from ..common.oynatici_onceligi import oncelik_anahtari
+from ..common.title_match import baslik_normalize, siralama_skoru
+
+try:  # arama kalitesi/hızı için; yoksa difflib'e düşülür (title_match ile aynı)
+    from rapidfuzz import fuzz as _rf_fuzz  # type: ignore
+except ImportError:  # pragma: no cover
+    _rf_fuzz = None
 
 
 BASE_URL = "https://gitlab.com/AnimeDepo/animedepo/-/raw/master"
@@ -138,6 +146,11 @@ _etag_defteri: Dict[str, Tuple[str, str]] = {}
 # path → (mtime_ns, boyut). Yerel arşivde `dizin(tazele=True)` megabaytlık
 # dosyayı ancak değiştiyse yeniden ayrıştırsın diye (ETag'in yerel karşılığı).
 _yerel_imzalar: Dict[str, Tuple[int, int]] = {}
+# Arama tablosu: (dizin nesnesi, [(slug, başlık, normalize başlık, normalize
+# slug), ...]). Dizin nesnesinin KENDİSİ tutuluyor (id değil): tutulan nesne
+# çöpe gitmez, dolayısıyla aynı kimliği yeni bir sözlük alamaz. `dizin()`
+# değişince (tazele, sifirla, tam arşiv indirme) tablo yeniden kurulur.
+_arama_onbellek: Optional[Tuple[Any, List[Tuple[str, str, str, str]]]] = None
 
 _YOK = object()
 
@@ -244,11 +257,12 @@ def sifirla() -> None:
 
     Ayar değişince, tam arşiv indirilince ya da testlerde çağrılır.
     """
-    global _taban_cache, _dizin_cache, _konum_cache
+    global _taban_cache, _dizin_cache, _konum_cache, _arama_onbellek
     with _dizin_lock, _konum_lock:
         _taban_cache = None
         _dizin_cache = None
         _konum_cache = None
+        _arama_onbellek = None
         _etag_defteri.clear()
         _yerel_imzalar.clear()
 
@@ -433,14 +447,7 @@ def dizin(tazele: bool = False) -> Dict[str, Any]:
 
 def get_anime_listesi() -> List[Tuple[str, str]]:
     """AnimeDepo anime listesini [(slug, title), ...] biçiminde döndür."""
-    liste: List[Tuple[str, str]] = []
-    for grup in dizin().get("index", {}).values():
-        if not isinstance(grup, dict):
-            continue
-        for slug, anime in grup.items():
-            title = (anime or {}).get("title") if isinstance(anime, dict) else None
-            liste.append((slug, title or slug.replace("-", " ").title()))
-    return liste
+    return _anime_ciftleri(dizin())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,31 +498,143 @@ def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = No
 # ─────────────────────────────────────────────────────────────────────────────
 # Arama (yerel fuzzy — AnimeDepo'da gerçek arama endpoint'i yok)
 # ─────────────────────────────────────────────────────────────────────────────
+# Bulanık eşleşme eşikleri (0..100, rapidfuzz ölçeği). Gerçek arşivde
+# (6098 başlık) ölçülerek seçildi: eski `SequenceMatcher >= 0.55` eşiği "dr
+# stone" aramasına "Cat Shit One", "Rain Town"; "narto"ya "Arte", "Arion"
+# getiriyordu. 80'de yazım hatası ("narto"/"naurto" → Naruto, 83-91)
+# yakalanıyor; arşivde olmayan bir seri arandığında gelen yarı-benzer adlar
+# ("oshi no ko" → "Shion no Ou", 76) düşüyor.
+BULANIK_ESIK = 80
+# Uzun başlığın bir PARÇASINA yakın sorgu ("kimetsu no yaba" → "Kimetsu no
+# Yaiba: Mugen Ressha-hen", 93). Kısa sorguda parça eşleşmesi her yerde tutar,
+# o yüzden yalnızca yeterince uzun sorgularda ve yüksek eşikle ("oshi no ko"
+# → "Bubuki Buranki: Hoshi no Kyojin" 90'da kalıyor).
+PARCA_ESIK = 92
+PARCA_MIN_UZUNLUK = 6
+
+
+def _anime_ciftleri(veri: Dict[str, Any]) -> List[Tuple[str, str]]:
+    liste: List[Tuple[str, str]] = []
+    for grup in (veri or {}).get("index", {}).values():
+        if not isinstance(grup, dict):
+            continue
+        for slug, anime in grup.items():
+            title = (anime or {}).get("title") if isinstance(anime, dict) else None
+            liste.append((slug, title or slug.replace("-", " ").title()))
+    return liste
+
+
+def _arama_tablosu() -> List[Tuple[str, str, str, str]]:
+    """Normalize edilmiş başlık tablosu; dizin başına bir kez kurulur.
+
+    Her aramada 6098 başlığı yeniden normalize etmek (NFKD + regex) aramanın
+    kendisinden pahalı olurdu; tablo önbellekli olunca gerçek arşivde bir arama
+    ~15-30 ms (eski `SequenceMatcher` taraması 90-190 ms sürüyordu).
+    """
+    global _arama_onbellek
+    veri = dizin()
+    onbellek = _arama_onbellek
+    if onbellek is not None and onbellek[0] is veri:
+        return onbellek[1]
+    tablo = [(slug, title, baslik_normalize(title),
+              baslik_normalize(str(slug).replace("-", " ")))
+             for slug, title in _anime_ciftleri(veri)]
+    _arama_onbellek = (veri, tablo)
+    return tablo
+
+
+def _bulanik(sorgu: str, aday: str) -> float:
+    """0..100 benzerlik; eşiği geçemeyen aday için 0."""
+    if _rf_fuzz is not None:
+        tam = max(_rf_fuzz.ratio(sorgu, aday), _rf_fuzz.token_sort_ratio(sorgu, aday))
+        if tam >= BULANIK_ESIK:
+            return tam
+        if len(sorgu) >= PARCA_MIN_UZUNLUK and len(aday) > len(sorgu):
+            parca = _rf_fuzz.partial_ratio(sorgu, aday)
+            if parca >= PARCA_ESIK:
+                return parca
+        return 0.0
+    tam = SequenceMatcher(None, sorgu, aday).ratio() * 100   # rapidfuzz yoksa
+    return tam if tam >= BULANIK_ESIK else 0.0
+
+
 def search_animedepo(query: str, limit: int = 20) -> List[Tuple[str, str]]:
-    """AnimeDepo dizininde yerel fuzzy arama yap.
+    """Arşiv dizininde yerel arama — ağsız (yerel arşivde) ve hızlı.
+
+    Kademeler (üstteki her zaman önce): birebir → başlangıç → kelime sınırında
+    geçiyor → bütün kelimeler, sırasız ("shingeki kyojin") → herhangi bir
+    yerde geçiyor → bulanık (yazım hatası); bkz. `_kademe`. Aynı
+    kademede `title_match.siralama_skoru` sıralar: fazladan kelimeyi
+    cezalandırır, seri adıyla başlayanı öne alır ("One Piece" >
+    "One Piece Film: Z" > "Koisuru One Piece"). Eşitlikte kısa başlık, sonra
+    arşivdeki sıra. Karşılaştırma aksan/noktalamadan bağımsız ("Dr. Stone" =
+    "dr stone") ve slug da aranıyor ("shingeki-no-kyojin").
+
+    Arşivde İngilizce adlar yok (turkanime.tv romaji kullanıyordu):
+    "attack on titan" bulunmaz, "shingeki no kyojin" bulunur.
 
     Returns: [(slug, başlık), ...]
     """
-    if not query or not query.strip():
+    sorgular = _sorgu_bicimleri(query)
+    if not sorgular:
         return []
-    q = query.strip().lower()
-    scored: List[Tuple[float, Tuple[str, str]]] = []
-    for slug, title in get_anime_listesi():
-        hay = (title or "").lower()
-        ratio = SequenceMatcher(None, q, hay).ratio()
-        if hay == q or slug.lower() == q:
-            score = 3.0 + ratio            # tam eşleşme en üstte
-        elif hay.startswith(q) or slug.lower().startswith(q):
-            score = 2.0 + ratio            # başlangıç eşleşmesi
-        elif q in hay or q in slug.lower():
-            score = 1.0 + ratio            # alt-dize eşleşmesi (kısa başlık öne)
-        elif ratio >= 0.55:
-            score = ratio                  # yalnızca fuzzy
-        else:
-            continue
-        scored.append((score, (slug, title)))
-    scored.sort(key=lambda x: -x[0])
-    return [item for _, item in scored[:limit]]
+    enler: Dict[str, Tuple[float, int, int, str, str]] = {}
+    tablo = _arama_tablosu()
+    for q in sorgular:
+        kelimeler = q.split()
+        q_bitisik = q.replace(" ", "")
+        for sira, (slug, title, nb, ns) in enumerate(tablo):
+            kademe = _kademe(q, kelimeler, q_bitisik, nb, ns)
+            if kademe is None:
+                continue
+            aday = (-(kademe + siralama_skoru(q, nb)), len(title), sira, slug, title)
+            if slug not in enler or aday < enler[slug]:
+                enler[slug] = aday
+    sirali = sorted(enler.values())
+    return [(slug, title) for _, _, _, slug, title in sirali[:max(0, int(limit))]]
+
+
+# Türkçe klavyeyle romaji yazımı: "Şingeki" → "shingeki", "Çainsaw" → "chainsaw".
+# Normalizasyon "ş"yi "s"ye indiriyor ("singeki"), arşivdeki romaji ise "sh".
+# İki biçim de aranır, aday başına en iyi skor kalır.
+_TURKCE_ROMAJI = str.maketrans({"ş": "sh", "Ş": "Sh", "ç": "ch", "Ç": "Ch"})
+
+
+def _sorgu_bicimleri(sorgu: str) -> List[str]:
+    """Sorgunun normalize biçimleri (tekrarsız, boşlar atılır)."""
+    out: List[str] = []
+    for aday in (sorgu or "", (sorgu or "").translate(_TURKCE_ROMAJI)):
+        q = baslik_normalize(aday)
+        if q and q not in out:
+            out.append(q)
+    return out
+
+
+def _kademe(q: str, kelimeler: List[str], q_bitisik: str,
+            nb: str, ns: str) -> Optional[float]:
+    """Eşleşme kademesi (yüksek = daha iyi); eşleşme yoksa None.
+
+    4 birebir · 3 başlangıç · 2 kelime sınırında geçiyor · 1.5 bütün
+    kelimeler (sırasız, kelime başı) · 1 herhangi bir yerde (boşluksuz da:
+    "rezero" → "Re:Zero") · 0 bulanık.
+    """
+    if q in (nb, ns):
+        return 4.0
+    if nb.startswith(q) or ns.startswith(q):
+        return 3.0
+    if f" {q}" in f" {nb}" or f" {q}" in f" {ns}":
+        return 2.0
+    if len(kelimeler) > 1:
+        baslik_kelimeleri = nb.split()
+        if all(any(b.startswith(k) for b in baslik_kelimeleri) for k in kelimeler):
+            return 1.5
+    if q in nb or q in ns:
+        return 1.0
+    if len(q_bitisik) >= 4 and q_bitisik in nb.replace(" ", ""):
+        return 1.0
+    if len(q) >= 3 and _bulanik(q, nb):
+        return 0.0
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

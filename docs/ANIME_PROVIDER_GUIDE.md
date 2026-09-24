@@ -2,13 +2,14 @@
 
 Bu rehber, TürkAnime GUI'ye yeni bir anime kaynağı eklemeyi anlatır.
 
-> **Bu rehber 10.0.0 ile yeniden yazıldı.** Önceki sürümü `sources/__init__.py`
-> içindeki `PROVIDERS` sözlüğüne ve `register_provider()` fonksiyonuna
-> yönlendiriyordu. **O yol artık kullanılmıyor:** `register_provider` /
-> `get_enabled_providers` üretim kodunda hiç çağrılmıyor ve `PROVIDERS`'ın
-> girdilerinin çoğu zaten `"adapter": None` diyor. Rehberi harfiyen uygulayan
-> biri, kaynağını çalışır sanıp arayüzde `UnsupportedSource` hatası alıyordu.
-> Aşağıdaki adımlar **gerçek** kayıt noktalarını kullanır.
+> **Bu rehber kaynak kaydıyla (`turkanime_api/sources/kayit.py`) yeniden
+> yazıldı.** Kaynak listesi eskiden altı yerde elle tutuluyordu —
+> `SearchEngine.adapters`, `sources_bridge.py`'deki `FUNCTION_SOURCES` /
+> `BUILDERS`, CLI'daki `SOURCE_TITLES`, bölüm sayfasının rozet renkleri,
+> `sources/__init__.py`'deki `PROVIDERS` ve sunucu tarayıcısının tablosu. Birini
+> unutan kaynak yarım kalıyordu: aramada görünüp bölümleri açılmıyor ya da CLI
+> menüsünde hiç çıkmıyordu. **Artık hepsi kayıttan türetiliyor;** yukarıdaki
+> listelerin hiçbirine elle dokunma.
 
 ## Gereksinimler
 
@@ -17,31 +18,40 @@ Bu rehber, TürkAnime GUI'ye yeni bir anime kaynağı eklemeyi anlatır.
 
 ## Mimariye kısa bakış
 
-Bir kaynağın uygulamaya bağlanması **iki ayrı yerde** olur:
+Bir kaynak iki parçadan oluşur:
 
 | Ne | Nerede | Ne yapar |
 |----|--------|----------|
-| **Arama** | `turkanime_api/common/adapters.py` → `SearchEngine.adapters` | Kaynağı paralel aramaya dâhil eder |
-| **Bölüm + stream** | `turkanime_api/gui/qt/sources_bridge.py` | Arayüzün bölüm listesi ve oynatma/indirme yolu |
+| **Kaynak modülü** | `turkanime_api/sources/<modul>.py` | Siteyle konuşan üç uç: arama, bölümler, akışlar |
+| **Kayıt satırı** | `turkanime_api/sources/kayit.py` → `KAYNAKLAR` | Kaynağın adı, etiketi, rozeti, CLI kodu, bayrakları ve uçlarının tembel yükleyicisi |
 
-İkisini de yapmazsan kaynak yarım kalır: aramada görünür ama bölümlerine
-tıklayınca `UnsupportedSource` alırsın.
+Kayıttan türetilenler (hiçbirine elle ekleme yapılmaz):
 
-### İki entegrasyon biçimi
+| Türetilen | Dosya |
+|-----------|-------|
+| Paralel arama (`SearchEngine.adapters`) | `turkanime_api/common/adapters.py` |
+| Bölüm + oynatma/indirme (`FUNCTION_SOURCES`, `BUILDERS`, `METADATA_ONLY`) | `turkanime_api/gui/qt/sources_bridge.py` |
+| Bölüm satırı rozeti (`SOURCE_COLORS`, `SOURCE_SHORT`) | `turkanime_api/gui/qt/pages/episodes.py` |
+| CLI "Kaynak seç" menüsü, `SOURCE_TITLES` | `turkanime_api/cli/__main__.py` |
+| `PROVIDERS` | `turkanime_api/sources/__init__.py` |
+| Sunucu tarayıcısının tablosu (`taranabilir=True` olanlar) | `turkanime_server/crawler/kaynaklar.py` |
 
-`sources_bridge.py` iki stil tanıyor:
+Bölüm nesneleri (`AdapterBolum`) her kaynak için aynı yoldan kurulur:
+`sources/adapter.py::kayittan_bolumler`. Oynatma/indirme boru hattı (yt-dlp +
+mpv) kaynaktan bağımsızdır.
 
-- **Fonksiyon stili** (`FUNCTION_SOURCES`) — modül üç fonksiyon dışa verir:
-  arama, bölümler, stream'ler. **Yeni kaynaklar için önerilen budur.**
-  Örnekler: `sources/openani.py`, `sources/tranimaci.py`, `sources/animedepo.py`
-- **Builder stili** (`BUILDERS`) — kaynağa özgü bir kurucu fonksiyon, nesne
-  döndürür. Eski kaynaklar böyle: TürkAnime, TRAnimeİzle, AnimeciX, Anizle.
+> **TürkAnime = arşiv.** turkanime.tv kapandı. "TürkAnime" kaynağı artık
+> sitenin statik JSON arşivi (`sources/animedepo.py`, depoda `arsiv/`) ve
+> ağsız çalışır. Aynı arşiv bir süre "AnimeDepo" adıyla ayrıca listelendi; iki
+> kez görünmesin diye tek kayıtta birleşti, "AnimeDepo" artık **takma ad**
+> (eski eşleşmeler ve ayarlar okunmaya devam ediyor). `objects.Anime` /
+> `bypass.fetch` kapanan siteye gider — yeni kodda kullanma; adaptörün
+> `Anime`/`Bolum` nesnesi üretmesi gerekiyorsa `Anime.cevrimdisi(...)` /
+> `Bolum.cevrimdisi(...)`.
 
-Ayrıca `METADATA_ONLY = {"AniList"}` var: aramada yer alır ama video sunmaz.
-
-> `sources/adapter_template.py` dosyasına **dokunmayın.** 527 satır ve hiçbir
-> yerden import edilmiyor; içindeki çıplak `except:` bloğu kopyalayan her yeni
-> kaynağa taşınır. Örnek olarak gerçekten kullanılan bir kaynağı okuyun.
+> `sources/adapter_template.py` dosyasını kopyalama. Sınıf tabanlı eski bir
+> şablon; içindeki çıplak `except:` bloğu kopyalayan her yeni kaynağa taşınır.
+> Örnek olarak gerçekten kullanılan bir kaynağı okuyun.
 
 ---
 
@@ -49,7 +59,7 @@ Ayrıca `METADATA_ONLY = {"AniList"}` var: aramada yer alır ama video sunmaz.
 
 ### 1. Kaynak modülünü yaz
 
-`turkanime_api/sources/my_provider.py` oluştur. Fonksiyon stili için üç uç yeter:
+`turkanime_api/sources/my_provider.py` oluştur. Üç uç yeter:
 
 ```python
 """My Provider kaynağı."""
@@ -85,11 +95,15 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
         "label": "1080p",
         "type": "direct",          # ya da "hls"
         "referer": BASE_URL + "/", # CDN referer istiyorsa ŞART
+        "fansub": "Grup Adı",      # varsa: kullanıcı fansub seçebilir
     }]
 ```
 
 **Dikkat edilecekler:**
 
+- **Arama `limit` anahtar argümanını kabul etmeli** (`ara(sorgu, limit=...)`
+  diye çağrılır). Sitenin ucu limit almıyorsa kayıttaki yükleyicide sarmala
+  (bkz. `kayit.py::_animecix`).
 - **`get_cf_session()` kullan.** Kendi `requests.Session`'ını kurma; CF zinciri
   (curl_cffi → cloudscraper → FlareSolverr → QtWebEngine → requests) bu oturumun
   içinde.
@@ -100,80 +114,73 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
   `ENGEL_DURUMLARI` ve `CHALLENGE_MARKERS` sabitlerini kullan — kendi listeni
   tutma, iki liste ayrıştığında hata sinsi oluyor.
 - **`referer` alanını doldur.** Birçok CDN kendi sitesi dışından gelen isteğe
-  403 döner. Alan boşsa istemci `turkanime.co`'yu varsayar ve stream kırılır.
+  403 döner.
+- **Akışları iyiden kötüye sırala.** `best_video` yalnızca ilk birkaç adayı
+  yokluyor.
 
-### 2. Aramaya kaydet
+### 2. Kayda tek satır ekle
 
-`turkanime_api/common/adapters.py` içinde bir adaptör sınıfı yaz ve
-`SearchEngine.adapters` sözlüğüne ekle:
+`turkanime_api/sources/kayit.py` içinde tembel bir yükleyici yaz ve
+`KAYNAKLAR` demetine bir `Kaynak(...)` ekle:
 
 ```python
-class MyProviderAdapter:
-    """My Provider arama adaptörü."""
-
-    def search_anime(self, query: str, limit: int = 10):
-        from ..sources.my_provider import search_my_provider
-        return search_my_provider(query, limit=limit)
+def _my_provider() -> KaynakUclari:
+    from .my_provider import (
+        get_anime_episodes, get_episode_streams, search_my_provider,
+    )
+    return KaynakUclari(search_my_provider, get_anime_episodes, get_episode_streams)
 ```
 
 ```python
-self.adapters = {
-    "AniList": AniListAdapter(),
-    "TürkAnime": TurkAnimeAdapter(),
-    "AnimeciX": AnimeciXAdapter(),
-    "Anizle": AnizleAdapter(),
-    "TRAnimeİzle": TRAnimeAdapter(),
-    "AnimeDepo": AnimeDepoAdapter(),
-    "OpenAnime": OpenAnimeAdapter(),
-    "Tranimaci": TranimaciAdapter(),
-    "My Provider": MyProviderAdapter(),      # ← yeni
-}
+KAYNAKLAR: Tuple[Kaynak, ...] = (
+    ...
+    Kaynak("My Provider", "My Provider", "MP", "#16a085", "MYPROVIDER",
+           _my_provider, modul="my_provider", cli_kodu="myprovider",
+           bolum_adresi=lambda ep: f"https://myprovider.com/izle/{ep}"),
+)
 ```
 
-Sözlükteki **anahtar** arayüzde görünen addır; sonraki adımda da aynı anahtarı
-kullanacaksın. İkisi tutmazsa kaynak aramada çıkar, bölümleri gelmez.
+Alanlar:
+
+| Alan | Anlamı |
+|------|--------|
+| `ad` | Kanonik anahtar: arama sonucu sözlüğü, köprü ve API'ye kaydedilen eşleşme bu adı kullanır. Sonradan **değiştirme**; değiştirmen gerekirse eskisini `takma_adlar`'a yaz. |
+| `etiket` | İnsana gösterilen ad (arama kartı, detay sayfasının kaynak kutusu, CLI menüsü) |
+| `kisaltma`, `renk` | Bölüm satırındaki iki harfli rozet ve rengi |
+| `oynatici` | `AdapterBolum` ilerleme etiketi ve tarayıcının arşive yazdığı `player` |
+| `yukleyici` | Uçları döndüren tembel fonksiyon |
+| `modul` | `sources` altındaki modül adı; `PROVIDERS` ve sunucu tarayıcısı bu adla anahtarlar |
+| `cli_kodu` | `ayarlar.json` → `"kaynak"` değeri; `None` ise CLI menüsünde yok |
+| `takma_adlar` | Eski adlar; okunurken bu kayda düşer, hiçbir listede görünmez |
+| `bolum_adresi` | Bölüm kimliği → `AdapterBolum.url` (varsayılan: kimliğin kendisi) |
+| `bolum_slugu` | Bölüm kimliği → geçmiş/dosya adı slug'ı (varsayılan: başlıktan üretilir) |
+| `kimlik_hatasi` | Kaynak kimliği bu kaynakta açılamıyorsa kullanıcıya gösterilecek mesaj (AnimeciX: sayısal olmalı) |
+| `yalnizca_metadata` | Aramaya katılır, video sunmaz (AniList) |
+| `cerez_gerekir` | Oturum çerezi olmadan sonuç vermiyor (TRAnimeİzle) |
+| `taranabilir` | Sunucu tarayıcısı gezsin mi |
+| `hazirlik` | CLI açılışında bir kez çağrılır (TürkAnime: arşiv dizinini yükler); kaynak kullanılamıyorsa hata fırlatır, CLI uyarır ama menüyü yine açar |
+| `deneysel` | CLI menüsünde "(deneysel)" notu |
+
+Adların hepsi (kanonik, etiket, CLI kodu, modül, takma adlar) büyük/küçük harf,
+aksan ve parantez içi eklerden bağımsız çözülür; iki kaynak aynı adı iddia
+ederse modül import anında `ValueError` verir.
+
+> Yükleyici neden fonksiyon içinde import ediyor? Kayıt modülü sunucu
+> tarayıcısı tarafından da okunuyor ve imajında yt-dlp yok; modül düzeyinde
+> import, arayüz açılışında da bütün kaynakları (ve bağımlılıklarını)
+> yüklerdi. Aynı sebeple `kayit.py`'den `sources.adapter` import **edilmez**.
 
 > Sonuçlar `common/title_match.siralama_skoru` ile alakaya göre sıralanır;
 > kaynağın kendi sırası eşit skorda korunur. Ek bir şey yapman gerekmiyor.
 
-### 3. Bölüm ve stream'e kaydet
+### 3. Sunucu tarafı (isteğe bağlı)
 
-`turkanime_api/gui/qt/sources_bridge.py` içinde tembel bir yükleyici ekle ve
-`FUNCTION_SOURCES`'a kaydet:
+Kaynağın arşiv tarayıcısında da gezilmesini istiyorsan kayıtta
+`taranabilir=True` yeter; `turkanime_server/crawler/kaynaklar.py` tablosunu
+kayıttan türetiyor. Tarayıcı bu depodaki adaptörleri yeniden kullanır; ikinci
+bir kazıyıcı yazılmaz.
 
-```python
-def _my_provider():
-    from ...sources.my_provider import (
-        get_anime_episodes as episodes, get_episode_streams as streams,
-    )
-    return episodes, streams
-```
-
-```python
-FUNCTION_SOURCES = {
-    "OpenAnime": {...},
-    "Tranimaci": {...},
-    "My Provider": {                          # ← Adım 2'deki anahtarın AYNISI
-        "loader": _my_provider,
-        "player": "MYPROVIDER",
-        "ep_url": lambda ep: f"https://myprovider.com/izle/{ep}",
-    },
-}
-```
-
-> Yükleyici neden fonksiyon içinde import ediyor? Modül düzeyinde import,
-> arayüz açılışında bütün kaynakları (ve bağımlılıklarını) yüklerdi. Tembel
-> yükleme, kaynak gerçekten kullanılana kadar bedeli ödemiyor.
-
-### 4. Sunucu tarafı (isteğe bağlı)
-
-Arşiv sunucusu ayrı ve **private** bir depoda:
-[turkanime-server](https://github.com/barkeser2002/turkanime-server). Kaynağın
-arşiv tarayıcısında da gezilmesini istiyorsan oradaki `crawler/kaynaklar.py`
-tablosuna eklenmesi gerekir. Tarayıcı bu depodaki adaptörleri yeniden kullanır;
-ikinci bir kazıyıcı yazılmaz.
-
-### 5. Test et
+### 4. Test et
 
 Önce hızlı bir elle deneme:
 
@@ -186,6 +193,10 @@ Sonra otomatik testler (ağa çıkmaz):
 ```bash
 python -m pytest tests/
 ```
+
+`tests/test_kaynak_kaydi.py` kayıttaki **her** kaynağın aramada göründüğünü,
+köprüde bölümlerinin açıldığını ve CLI menüsünde seçilebildiğini sahte uçlarla
+denetler — yeni kaynak için ayrıca bir şey yazmana gerek yok.
 
 Ağa çıkan adaptör betiğine de eklemen önerilir:
 
@@ -221,7 +232,8 @@ python tests/adapters-test-all.py --source my_provider
 
 | Dosya | Neden iyi örnek |
 |-------|-----------------|
-| `turkanime_api/sources/animedepo.py` | En sade fonksiyon stili; statik arşiv okuma |
+| `turkanime_api/sources/kayit.py` | Kaynak kaydı; her kaynağın yükleyicisi ve bayrakları |
+| `turkanime_api/sources/animedepo.py` | TürkAnime arşivi: yerel-önce statik arşiv okuma, ağsız arama |
 | `turkanime_api/sources/openani.py` | HTML'den JSON çıkarımı, uç doğrulama, teşhis mesajı |
 | `turkanime_api/sources/tranimaci.py` | Proof-of-work WAF ve JS kapısını aşma |
 | `turkanime_api/sources/anizle.py` | Çok kademeli CF bypass kullanımı |

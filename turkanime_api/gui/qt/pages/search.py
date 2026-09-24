@@ -1,8 +1,8 @@
 """Arama sayfası — tüm kaynaklarda paralel arama ve sonuç ızgarası.
 
 Eski GUI'deki `SearchWorker` + `display_search_results` akışının Qt karşılığı.
-Arama işi `common.adapters.SearchEngine` üzerinden yürür (kaynak listesi orada
-tanımlı; AnimeDepo dahil), bu yüzden kaynak eklemek bu sayfada değişiklik
+Arama işi `common.adapters.SearchEngine` üzerinden yürür (kaynak listesi
+`sources/kayit.py`'de), bu yüzden kaynak eklemek bu sayfada değişiklik
 gerektirmez.
 """
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from ....sources.kayit import gorunen_ad
 from ..widgets import AnimeCard, StatusLabel
 from ..workers import WorkerSignals, run_bg
 from ._grid import CardGrid
@@ -154,8 +155,11 @@ class SearchPage(QWidget):
                     continue
                 title = item.get("title") or slug
                 image = item.get("image")
-                card = AnimeCard(title, source, payload=(source, slug, title),
-                                 image_url=image)
+                # Kartta insana dönük etiket ("TürkAnime (arşiv)": kullanıcı
+                # sonucun kapanan siteden değil arşivden geldiğini görsün);
+                # yükte kanonik ad — köprü ve eşleşme kaydı onu bekliyor.
+                card = AnimeCard(title, gorunen_ad(source),
+                                 payload=(source, slug, title), image_url=image)
                 card.clicked.connect(self._on_card_clicked)
                 cards.append(card)
                 eklenen += 1
@@ -164,7 +168,7 @@ class SearchPage(QWidget):
             # Sayaç atılan kayıtları değil GÖSTERİLENLERİ saymalı; aksi hâlde
             # kaynak dökümünün toplamı üstteki toplamı tutmuyordu.
             if eklenen:
-                per_source.append(f"{source}: {eklenen}")
+                per_source.append(f"{gorunen_ad(source)}: {eklenen}")
 
         if not cards:
             # Önceki aramanın kartları ekranda kalmamalı: "sonuç bulunamadı"
