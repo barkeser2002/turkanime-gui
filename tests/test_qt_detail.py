@@ -201,6 +201,35 @@ def test_unsupported_source_becomes_clear_message(qtbot, page, fake_fetch):
     assert page.btnEpisodes.isEnabled(), "hata sonrası buton kilitli kalmamalı"
 
 
+def test_unreadable_archive_reports_reason_not_empty(qtbot, page, tmp_path,
+                                                     monkeypatch):
+    """ESKİ HATA: TürkAnime arşivine ulaşılamayınca (paketli uygulama
+    çevrimdışı, aynalar düştü, bölüm dosyası önbellekte yok) bölüm okuyucusu
+    hatayı boş listeye çeviriyordu; sayfa "kaynağında bölüm bulunamadı"
+    diyordu. Gerçek köprü + gerçek arşiv istemcisi: ağ conftest'te kapalı,
+    disk önbelleğinde yalnızca dizin var (arama çalışıyor)."""
+    import json
+    from turkanime_api.sources import animedepo
+
+    onbellek = tmp_path / "onbellek"
+    onbellek.mkdir()
+    (onbellek / "dizin.json").write_text(json.dumps(
+        {"index": {"N": {"naruto": {"title": "Naruto"}}}}), "utf-8")
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: onbellek)
+    animedepo.sifirla()
+    assert animedepo.search_animedepo("naruto") == [("naruto", "Naruto")]
+
+    page.show_anime(make_anime("Naruto"), source="TürkAnime", slug="naruto")
+    emitted: list = []
+    page.episodes_ready.connect(lambda *a: emitted.append(a))
+    page.load_episodes()
+
+    qtbot.waitUntil(lambda: "okunamadı" in page.lblStatus.text(), timeout=5000)
+    assert "bulunamadı" not in page.lblStatus.text()
+    assert emitted == []
+    assert page.btnEpisodes.isEnabled(), "hata sonrası buton kilitli kalmamalı"
+
+
 def test_metadata_only_source_is_selectable_and_warns(page):
     """`supported_sources()` AniList'i vermez; gelen kaynak yine de gösterilmeli."""
     page.show_anime(make_anime(), source="AniList", slug="1")

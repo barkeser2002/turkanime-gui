@@ -51,7 +51,7 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
-- **Testler:** 1.238 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Testler:** 1.266 otomatik test (pytest + pytest-qt), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 
@@ -333,8 +333,8 @@ python tests/adapters-test-all.py --skip-streams
 |------|---------|
 | **Arayüz (pytest-qt)** | Keşif/arama/detay/bölüm/indirme sayfaları, oynatma, izleme listesi, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
 | **Arama** | Alakaya göre sıralama, çok kaynaklı arama zaman aşımı, başlık eşleştirme |
-| **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, bağlanırken de işleyen iptal, eskiyi koruyan takas, disk hatasında yedeğe geçmeme, sembolik bağlı hedef), sıfırlamanın GUI'yi dondurmaması, okunamayan arşivin aramada söylenmesi, eşitleme aracının yanlış hedefi reddetmesi, Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme, silinemeyen eski kopya uyarısı) |
-| **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; ad çakışması import anında hata; uzun bölüm slug'ları kesilmeden ayrık (geçmiş anahtarı, dosya adı); üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
+| **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, bağlanırken de işleyen iptal, eskiyi koruyan takas, disk hatasında yedeğe geçmeme, sembolik bağlı hedef), sıfırlamanın GUI'yi dondurmaması, okunamayan arşivin aramada, bölüm listesinde ve oynatmada söylenmesi ("yok" ile "ulaşılamadı" ayrı), Windows uzun yolları (MAX_PATH taklidiyle), eşitleme aracının yanlış hedefi reddetmesi, Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme, silinemeyen eski kopya uyarısı) |
+| **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; ad çakışması import anında hata; uzun bölüm slug'ları kesilmeden ayrık (geçmiş anahtarı, dosya adı); CLI yeniden denemede oynatılamayan videoyu atlıyor; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
 | **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi |
 | **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası |
 | **Çekirdek** | Bölüm birleştirme ve ayrıştırma, indirme yolu güvenliği, atomik JSON yazımı, ağ izolasyonu |

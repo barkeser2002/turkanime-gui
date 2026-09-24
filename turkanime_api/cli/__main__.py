@@ -194,6 +194,10 @@ def _bolumleri_getir(kaynak, slug: str, isim: str) -> Optional[List[Any]]:
     except Exception as e:
         log_error(e)
         rprint("[red][strong]Bölümler alınamadı.[/strong][/red]")
+        # Arşive ulaşılamadıysa (çevrimdışı, aynalar düştü, dosya önbellekte
+        # yok) sebep söylenir; eskiden arşiv okuyucusu hatayı boş listeye
+        # çeviriyordu ve kullanıcı yalnızca "Bölüm bulunamadı." görüyordu.
+        _hata_sebebi(e)
         sleep(1.5)
         return None
 
@@ -220,14 +224,29 @@ def _bolum_izle(bolumler: List[Any], dosya: Dosyalar) -> bool:
             if not sub:
                 return False
     success = False
+    # Oynatılamayan videoların adresleri. `best_video` her çağrıda videoları
+    # akışlardan YENİDEN kuruyor; `is_working = False` bir sonraki çağrıya
+    # taşınmıyor ve üç denemenin üçü de aynı (ilk sıradaki) bozuk videoyu
+    # açıyordu. Adres `atla` ile verilince sıradaki aday denenir.
+    denenen: set = set()
     for _ in range(3):
         vid_cli = VidSearchCLI()
-        with vid_cli.progress:
-            best_video = bolum.best_video(
-                by_res=dosya.ayarlar["max resolution"],
-                by_fansub=sub,
-                callback=vid_cli.callback
-            )
+        try:
+            with vid_cli.progress:
+                best_video = bolum.best_video(
+                    by_res=dosya.ayarlar["max resolution"],
+                    by_fansub=sub,
+                    callback=vid_cli.callback,
+                    atla=denenen,
+                )
+        except Exception as e:
+            # Arşiv okunamadı (TürkAnime çevrimdışı) ya da kaynak hatası:
+            # "çalışan video yok" değil, sebebiyle söylenir; CLI kapanmaz.
+            log_error(e)
+            rprint("[red][strong]Video aranırken bir hata oluştu.[/strong][/red]")
+            _hata_sebebi(e)
+            sleep(1.5)
+            break
         if not best_video:
             print("  (!) Hiçbir çalışan video bulunamadı.")
             break
@@ -236,11 +255,13 @@ def _bolum_izle(bolumler: List[Any], dosya: Dosyalar) -> bool:
         if proc is None:
             print("  Video oynatıcı başlatılamadı!")
             best_video.is_working = False
+            denenen.add(best_video.url)
             continue
         if proc.returncode == 0:
             success = True
             break
         best_video.is_working = False
+        denenen.add(best_video.url)
         print("  Video çalışmadı, başka bir video denenecek..")
     if success and getattr(bolum, 'anime', None):
         dosya.set_gecmis(bolum.anime.slug, bolum.slug, "izlendi")

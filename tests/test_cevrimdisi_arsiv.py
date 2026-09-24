@@ -12,9 +12,11 @@ from __future__ import annotations
 import errno
 import io
 import json
+import ntpath
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -804,7 +806,8 @@ def test_indirileni_sil_yarim_kalirsa_hata_ama_konum_dusuyor(tmp_path, monkeypat
         (onexc or onerror)(os.unlink, os.path.join(yol, "dizin.json"),
                            PermissionError("kilitli"))
 
-    monkeypatch.setattr(animedepo.shutil, "rmtree", kilitli_rmtree)
+    # Silme `paket.agaci_sil`'de (uzun yol güvenli); `shutil` aynı modül.
+    monkeypatch.setattr(paket.shutil, "rmtree", kilitli_rmtree)
     with pytest.raises(paket.ArsivHatasi, match="1 dosya silinemedi"):
         animedepo.indirilen_arsivi_sil()
 
@@ -1583,3 +1586,342 @@ def test_senkron_hedef_denetimi(tmp_path, monkeypatch):
         dolu, klonlayici=lambda _u, _d, klon: (shutil.copytree(kaynak, klon), (SHA, None))[1],
         zorla=True)
     assert ozet["silinen"] == 1 and not (dolu / "notlar.txt").exists()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10) Denetim turu 2
+# ─────────────────────────────────────────────────────────────────────────────
+# 10a) Bölüm/akış okuyucuları "arşivde yok" ile "okunamadı"yı ayırıyor ───────
+def _cevrimdisi_paketli_uygulama(monkeypatch, tmp_path) -> Path:
+    """Paketlenmiş uygulama çevrimdışı: yerel arşiv yok (conftest), disk
+    önbelleğinde önceki oturumdan yalnızca dizin.json var, ağ yok."""
+    onbellek = tmp_path / "onbellek"
+    onbellek.mkdir()
+    (onbellek / "dizin.json").write_text(json.dumps(
+        {"index": {"N": {"naruto": {"title": "Naruto"}}}}), "utf-8")
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: onbellek)
+
+    class AgYok:
+        def get(self, *_a, **_k):
+            raise ConnectionError("ağ yok")
+
+    monkeypatch.setattr(animedepo, "_session", AgYok)
+    animedepo.sifirla()
+    return onbellek
+
+
+def test_cevrimdisi_bolum_listesi_bos_degil_sebebiyle_hata(tmp_path, monkeypatch):
+    """ESKİ HATA: arama önbellekteki dizinle çalışıyor, ama tıklanan her sonuç
+    "bölüm bulunamadı" diyordu: bölüm/akış okuyucuları her hatayı boş listeye
+    çeviriyordu ve asıl sebep (aynalar düştü, dosya önbellekte yok) hiç
+    görünmüyordu."""
+    _cevrimdisi_paketli_uygulama(monkeypatch, tmp_path)
+    assert animedepo.arsiv_konumu().kaynak == "uzak"
+    assert animedepo.search_animedepo("naruto") == [("naruto", "Naruto")]
+
+    with pytest.raises(animedepo.ArsivOkunamadi, match="uzak aynalar yanıt vermedi") as bilgi:
+        animedepo.get_anime_episodes("naruto")
+    assert "ağ yok" in str(bilgi.value), "asıl sebep mesajda olmalı"
+    with pytest.raises(animedepo.ArsivOkunamadi, match="ağ yok"):
+        animedepo.get_episode_streams("naruto/naruto-1-bolum")
+
+
+def test_cevrimdisi_kopru_bolum_hatasini_yukseltiyor(tmp_path, monkeypatch):
+    """Qt köprüsü hatayı yükseltmeli: detay sayfası `_do_load` metnini gösteriyor
+    (boş liste gelince "kaynağında bölüm bulunamadı" diyordu)."""
+    from turkanime_api.gui.qt import sources_bridge
+    _cevrimdisi_paketli_uygulama(monkeypatch, tmp_path)
+    with pytest.raises(animedepo.ArsivOkunamadi, match="ağ yok"):
+        sources_bridge.fetch_episodes("TürkAnime", "naruto", "Naruto")
+
+
+@pytest.mark.parametrize("gitlab,iz", [
+    (ConnectionError("gitlab düştü"), "gitlab düştü"),
+    (SahteYanit(429), "HTTP 429"),                       # hız sınırı
+    (SahteYanit(503), "HTTP 503"),
+    (SahteYanit(200, veri=ValueError("HTML hata sayfası")), "HTML hata sayfası"),
+])
+def test_bir_ayna_404_oteki_ulasilamazsa_okunamadi(http, gitlab, iz):
+    """GitHub aynası bugün her dosyaya 404 dönüyor. GitLab'a ulaşılamazken bu
+    404 "anime yok" sayılırsa ağ hatası yine "bölüm bulunamadı" olur."""
+    http({f"{GITLAB}/animeler/a/bolumler.json": gitlab,
+          f"{GITLAB}/animeler/a/a-1.json": gitlab})              # GitHub: 404
+    with pytest.raises(animedepo.ArsivOkunamadi, match=iz):
+        animedepo.get_anime_episodes("a")
+    with pytest.raises(animedepo.ArsivOkunamadi, match=iz):
+        animedepo.get_episode_streams("a/a-1")
+
+
+def test_butun_aynalar_404_derse_arsivde_yok_bos_liste(http):
+    """Arşive ulaşıldı, kayıt yok: bu hata değil (dizinde olup klasörü olmayan
+    animeler gerçek arşivde de var)."""
+    kayit = http({})
+    with pytest.raises(animedepo.ArsivdeYok):
+        animedepo.fetch_json("animeler/hic-yok/bolumler.json")
+    assert animedepo.get_anime_episodes("hic-yok") == []
+    assert animedepo.get_episode_streams("hic-yok/b-1") == []
+    assert len(kayit) == 6, "üç okumada da iki ayna sorulmalı"
+
+
+def test_guvensiz_kimlik_bos_liste_ag_yok(http):
+    kayit = http({})
+    assert animedepo.get_anime_episodes("../../disari") == []
+    assert animedepo.get_episode_streams("../x/y") == []
+    assert kayit == [], "güvensiz kimlik için istek atıldı"
+
+
+def test_yerel_bozuk_bolum_dosyasi_okunamadi(tmp_path, monkeypatch, ag_yasak):
+    """Bozuk JSON da bir `ValueError`; güvensiz yolun ValueError'ıyla
+    karışıp "yok" sayılmamalı."""
+    depo = arsiv_yaz(tmp_path / "depo")
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    animedepo.sifirla()
+    (depo / "animeler" / "naruto" / "bolumler.json").write_text("[yarım", "utf-8")
+    with pytest.raises(animedepo.ArsivOkunamadi) as bilgi:
+        animedepo.get_anime_episodes("naruto")
+    assert "yerel arşiv" in str(bilgi.value) and str(depo) in str(bilgi.value)
+
+
+def test_yerel_arsiv_sonradan_kaybolursa_okunamadi(tmp_path, monkeypatch, ag_yasak):
+    """Konum süreç başında çözülüyor. Arşiv sonradan silinir ya da diski
+    çıkarılırsa her dosya "yok" olur; her anime "bölümü yok" görünmemeli."""
+    depo = arsiv_yaz(tmp_path / "depo")
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    animedepo.sifirla()
+    assert animedepo.arsiv_konumu().kaynak == "depo"
+    shutil.rmtree(depo)
+    with pytest.raises(animedepo.ArsivOkunamadi, match="artık yok"):
+        animedepo.get_anime_episodes("naruto")
+
+
+def test_akis_saglayici_arsiv_hatasini_gecirir_digerlerini_yutar():
+    from turkanime_api.sources import kayit
+
+    def arsiv(_b):
+        raise animedepo.ArsivOkunamadi("TürkAnime arşivi okunamadı: ağ yok")
+
+    def bozuk_site(_b):
+        raise RuntimeError("site değişti")
+
+    with pytest.raises(animedepo.ArsivOkunamadi):
+        kayit.akis_saglayici(arsiv, "a/a-1")("adres")
+    assert kayit.akis_saglayici(bozuk_site, "a/a-1")("adres") == []
+
+
+def test_cevrimdisi_oynatma_sebebi_soyluyor(tmp_path, monkeypatch, denenen):
+    """ESKİ HATA: akış okuyucusu VE `akis_saglayici` hatayı yutuyordu; oynatma
+    "çalışan video bulunamadı" diyordu. Arayüz `_play_blocking` ve indirme
+    işçisi `best_video`'nun hatasını metniyle gösteriyor."""
+    from turkanime_api.sources import kayit
+    from turkanime_api.sources.adapter import kayittan_bolumler
+
+    onbellek = _cevrimdisi_paketli_uygulama(monkeypatch, tmp_path)
+    # Bölüm listesi önceki oturumdan önbellekte; bölüm dosyası değil.
+    (onbellek / "animeler" / "naruto").mkdir(parents=True)
+    (onbellek / "animeler" / "naruto" / "bolumler.json").write_text(
+        '[["naruto-1-bolum", "1. Bölüm"]]', "utf-8")
+    bolum = kayittan_bolumler(kayit.bul("TürkAnime"), "naruto", "Naruto")[0]
+
+    assert bolum.fansubs == [], "fansub listesi oynatmayı çökertmemeli"
+    durumlar: List[dict] = []
+    with pytest.raises(animedepo.ArsivOkunamadi, match="ağ yok"):
+        bolum.best_video(callback=durumlar.append)
+    assert durumlar[-1]["status"] == "kaynak okunamadı"
+    assert denenen == []
+
+
+# 10b) Yeniden denemede başarısız adres atlanıyor ────────────────────────────
+def test_best_video_atla_denenen_adresi_geciyor(monkeypatch):
+    """ESKİ HATA: `best_video` her çağrıda videoları akışlardan yeniden kuruyor;
+    çağıranın koyduğu `is_working = False` kayboluyor, aynı adres yine
+    seçiliyordu. `atla` ile verilen adresler denenmez."""
+    from turkanime_api.sources import adapter as adapter_mod
+    denenen_: List[str] = []
+    monkeypatch.setattr(adapter_mod, "extract_video_info",
+                        lambda url, _o: denenen_.append(url) or {"url": url})
+    bolum = _bolum(lambda _u: _fansublu_akislar())
+
+    ilk = bolum.best_video(by_res=False)
+    ikinci = bolum.best_video(by_res=False, atla={ilk.url})
+    assert ikinci is not None and ikinci.url != ilk.url
+
+    hepsi = {a["url"] for a in _fansublu_akislar()}
+    durumlar: List[dict] = []
+    once = len(denenen_)
+    assert bolum.best_video(by_res=False, atla=hepsi, callback=durumlar.append) is None
+    assert durumlar[-1]["status"] == "hiçbiri çalışmıyor"
+    assert len(denenen_) == once, "hepsi atlanınca hiçbir adres yoklanmamalı"
+
+
+def test_best_video_atla_secili_fansub_bitince_digerlerine_dusuyor(denenen):
+    bolum = _bolum(lambda _u: _fansublu_akislar())
+    b_adresleri = {a["url"] for a in _fansublu_akislar() if a["fansub"] == "B"}
+    bolum.best_video(by_res=False, by_fansub="B", atla=b_adresleri)
+    assert denenen == [a["url"] for a in _fansublu_akislar() if a["fansub"] != "B"]
+
+
+# 10c) Windows uzun yolları ────────────────────────────────────────────────────
+@pytest.mark.parametrize("girdi,beklenen", [
+    ("C:\\Users\\K\\Turkanime\\cevrimdisi_arsiv\\dizin.json",
+     "\\\\?\\C:\\Users\\K\\Turkanime\\cevrimdisi_arsiv\\dizin.json"),
+    # Önek Win32 normalleştirmesini kapatıyor: / ve .. önceden çözülmeli.
+    ("C:/Users/K/Turkanime/x/../arsiv_onbellek/a.json",
+     "\\\\?\\C:\\Users\\K\\Turkanime\\arsiv_onbellek\\a.json"),
+    ("\\\\sunucu\\paylasim\\arsiv\\dizin.json",
+     "\\\\?\\UNC\\sunucu\\paylasim\\arsiv\\dizin.json"),
+    ("\\\\?\\C:\\zaten\\onekli", "\\\\?\\C:\\zaten\\onekli"),
+])
+def test_windows_uzun_yol_bicimi(girdi, beklenen):
+    assert paket.windows_uzun_yol(girdi) == beklenen
+    assert paket.windows_uzun_yol(beklenen) == beklenen, "iki kez önek eklenmemeli"
+    assert paket.gorunen_yol(beklenen) == ntpath.normpath(
+        paket.gorunen_yol(girdi) if girdi.startswith("\\\\?") else girdi)
+
+
+def test_windows_uzun_yol_260_ustu():
+    """Arşivdeki en uzun göreli yol 311 karakter; 71 karakterlik indirme
+    önekiyle 382. Önekli biçim uzunluğu korumalı, kesmemeli."""
+    uzun = "C:\\Users\\Kullanici\\Turkanime\\cevrimdisi_arsiv\\" + "a" * 311
+    assert len(uzun) > 260
+    sonuc = paket.windows_uzun_yol(uzun)
+    assert sonuc == "\\\\?\\" + uzun
+
+
+def test_disk_yolu_windows_disinda_aynen(tmp_path):
+    assert os.name != "nt"
+    assert paket.disk_yolu(tmp_path / "a" / "b.json") == str(tmp_path / "a" / "b.json")
+
+
+# Windows taklidi (Linux'ta): MAX_PATH sınırını bir denetim kancası koyuyor.
+# `sys.addaudithook` geri alınamıyor; kanca süreçte bir kez kurulur ve yalnızca
+# `_WINDOWS_TAKLIDI["onek"]` doluyken (fixture süresince) iş yapar.
+_MAX_PATH = 259                  # 260, sondaki NUL dahil
+_WINDOWS_TAKLIDI: Dict[str, Any] = {"onek": None}
+_KANCA_KURULDU: List[bool] = []
+# Yol taşıyan denetim olayları → yol argümanlarının sırası.
+_YOL_OLAYLARI = {
+    "open": (0,), "os.mkdir": (0,), "os.rename": (0, 1), "os.remove": (0,),
+    "os.rmdir": (0,), "os.scandir": (0,), "os.listdir": (0,),
+    "shutil.rmtree": (0,), "tempfile.mkdtemp": (0,),
+}
+
+
+def _max_path_kancasi(olay: str, argumanlar: tuple) -> None:
+    onek = _WINDOWS_TAKLIDI["onek"]
+    if onek is None or olay not in _YOL_OLAYLARI:
+        return
+    for sira in _YOL_OLAYLARI[olay]:
+        if sira >= len(argumanlar) or isinstance(argumanlar[sira], int):
+            continue
+        try:
+            yol = os.fsdecode(os.fspath(argumanlar[sira]))
+        except TypeError:
+            continue
+        # Göreli adlar (dir_fd ile) kısa; Windows'ta öneksiz uzun mutlak yol
+        # ENOENT verir — CPython'un orada gördüğü hata bu.
+        if os.path.isabs(yol) and len(yol) > _MAX_PATH and not yol.startswith(onek):
+            raise FileNotFoundError(errno.ENOENT, "Windows MAX_PATH (taklit)", yol)
+
+
+@pytest.fixture
+def windows_taklidi(tmp_path_factory, monkeypatch):
+    """Linux'ta Windows'un yol sınırı ve `\\\\?\\` öneki.
+
+    - Öneksiz, 259 karakterden uzun mutlak yolla yapılan dosya işlemi (open,
+      mkdir, rename, remove, rmtree, mkdtemp…) ENOENT ile düşer.
+    - `\\\\?\\`'in karşılığı "/"'e giden bir sembolik bağ: önekli yol aynı
+      dosyaya çıkar ve kanca onu serbest bırakır. Bağ `tmp_path` dışında,
+      kendi klasöründe (testin kendi ağacı onu hiç görmesin).
+    - `paket._uzun_yol_gerekli` True; `paket.windows_uzun_yol` bu öneki
+      ekler (gerçeği `ntpath` ile önek ekliyor, yukarıda saf sınanıyor).
+    - `rmtree` Windows'taki gibi tam yollarla yürür: Linux'un dosya
+      tanıtıcılı (dir_fd) yolu uzun yolu hiç görmediği için taklidi atlatırdı.
+    """
+    bag = tmp_path_factory.mktemp("uzun_onek") / "kok"
+    bag.symlink_to("/")
+    onek = str(bag)
+
+    def uzun_yol(yol: str) -> str:
+        return yol if yol.startswith(onek) else onek + os.path.abspath(yol)
+
+    monkeypatch.setattr(paket, "_uzun_yol_gerekli", lambda: True)
+    monkeypatch.setattr(paket, "windows_uzun_yol", uzun_yol)
+    monkeypatch.setattr(shutil, "_use_fd_functions", False, raising=False)
+    if hasattr(shutil, "_rmtree_impl"):                 # 3.13+
+        monkeypatch.setattr(shutil, "_rmtree_impl", shutil._rmtree_unsafe)
+    if not _KANCA_KURULDU:
+        sys.addaudithook(_max_path_kancasi)
+        _KANCA_KURULDU.append(True)
+    _WINDOWS_TAKLIDI["onek"] = onek
+    try:
+        yield uzun_yol
+    finally:
+        _WINDOWS_TAKLIDI["onek"] = None
+
+
+def _uzun_goreli() -> str:
+    """Gerçek arşivdeki uzun bölüm adları gibi: ~225 karakter göreli yol."""
+    return f"animeler/{'uzun-seri-' * 6}/{'cok-uzun-bolum-adi-' * 8}1-bolum.json"
+
+
+def test_windows_taklidi_gercekten_sinirliyor(tmp_path, windows_taklidi):
+    """Taklidin kendisi: öneksiz uzun yol düşer, önekli aynı yol çalışır."""
+    klasor = tmp_path / ("k" * 120) / ("d" * 150)
+    assert len(str(klasor)) > _MAX_PATH
+    with pytest.raises(FileNotFoundError):
+        os.makedirs(klasor)
+    os.makedirs(windows_taklidi(str(klasor)))
+    dosya = klasor / "x.json"
+    with pytest.raises(FileNotFoundError):
+        open(dosya, "w", encoding="utf-8").close()   # pylint: disable=consider-using-with
+    with open(windows_taklidi(str(dosya)), "w", encoding="utf-8") as fp:
+        fp.write("tamam")
+    assert os.path.isfile(dosya), "önekli yazılan dosya gerçekten orada"
+
+
+def test_uzun_yollu_tam_arsiv_windows_sinirinda_kuruluyor(tmp_path, windows_taklidi):
+    """ESKİ HATA: Windows'ta (LongPathsEnabled kapalı, varsayılan) tam arşiv
+    açılırken ilk uzun üyede `open()` ENOENT veriyordu → "yerel disk hatası"
+    → "Tüm arşivi indir" hiç bitmiyordu (gerçek arşivde 280 dosya)."""
+    goreli = _uzun_goreli()
+    kayitlar = [{"player": "SIBNET", "url": "https://video.sibnet.ru/1"}]
+    uyeler = arsiv_uyeleri("animedepo-master") + [
+        _dosya(f"animedepo-master/{goreli}", json.dumps(kayitlar).encode())]
+    hedef = tmp_path / "Users" / "Kullanici" / "Turkanime" / "cevrimdisi_arsiv"
+    assert len(str(hedef / goreli)) > _MAX_PATH
+
+    sonuc = paket.paketten_kur(SahteYanit(200, govde=tar_gz(uyeler)), hedef,
+                               ust_desen="animedepo-master*")
+
+    assert sonuc == hedef
+    with open(paket.disk_yolu(hedef / goreli), encoding="utf-8") as fp:
+        assert json.load(fp) == kayitlar
+    assert _artiklar(hedef.parent) == [], "geçici klasör uzun yollarıyla silinmeli"
+
+    # Güncelleme: eski kopya (uzun dosyalarıyla) kenara alınıp silinmeli.
+    paket.paketten_kur(SahteYanit(200, govde=tar_gz(uyeler)), hedef,
+                       ust_desen="animedepo-master*")
+    assert _artiklar(hedef.parent) == [], "eski kopya uzun yollarıyla silinmeli"
+
+
+def test_uzun_yollu_yerel_arsiv_ve_onbellek_windows_sinirinda_okunuyor(
+        tmp_path, monkeypatch, windows_taklidi, ag_yasak):
+    """Okuma tarafı: yerel arşivin ve disk önbelleğinin uzun adlı dosyaları
+    "yok" görünmemeli (eskiden sessizce boş liste oluyordu)."""
+    goreli = _uzun_goreli()
+    depo = arsiv_yaz(tmp_path / "Users" / "Kullanici" / "Turkanime" / "arsiv")
+    kayitlar = [{"player": "SIBNET", "fansub": "TAÇE",
+                 "url": "https://video.sibnet.ru/shell.php?videoid=7"}]
+    paket.atomik_bayt_yaz(depo / goreli, json.dumps(kayitlar).encode())
+    assert len(str(depo / goreli)) > _MAX_PATH
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    animedepo.sifirla()
+
+    bolum_id = goreli[len("animeler/"):-len(".json")]
+    akislar = animedepo.get_episode_streams(bolum_id)
+    assert [a["url"] for a in akislar] == [kayitlar[0]["url"]]
+
+    onbellek = tmp_path / "Users" / "Kullanici" / "Turkanime" / "arsiv_onbellek"
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: onbellek)
+    animedepo._onbellege_yaz(goreli, kayitlar)
+    assert animedepo._onbellekten_oku(goreli) == kayitlar

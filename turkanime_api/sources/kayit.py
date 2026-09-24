@@ -456,11 +456,24 @@ def akis_saglayici(akislar: Akislar, bolum_id: str) -> Callable[[str], List[Dict
     kimlik burada kapatılıp url yok sayılıyor. Bozuk bir kaynak bölüm
     listesini ya da oynatma akışını çökertmesin diye hata yutuluyor —
     `best_video` boş listeyi "hiçbiri çalışmıyor" olarak raporluyor.
+
+    İSTİSNA: arşiv hataları (`common.arsiv_paketi.ArsivHatasi` ailesi,
+    TürkAnime'nin `ArsivOkunamadi`'sı) yutulmaz. Onlar "bu bölümün videosu
+    yok" değil "arşive ulaşılamadı" demek ve mesajları kullanıcıya yazılmış
+    Türkçe cümleler; yutulunca çevrimdışı kullanıcı her bölümde "çalışan
+    video bulunamadı" görüyordu. Arayüz (`_play_blocking`, indirme işçisi)
+    ve CLI bu hatayı yakalayıp metnini gösteriyor. Import fonksiyon içinde:
+    `arsiv_paketi` yalnızca standart kütüphane kullanıyor, ama bu modül
+    bilerek hafif (sunucu imajı; bkz. modül başlığı) ve import anında
+    hiçbir şey çekmiyor.
     """
     def saglayici(_url: str) -> List[Dict[str, Any]]:
         try:
             return akislar(bolum_id) or []
-        except Exception:
+        except Exception as hata:
+            from ..common.arsiv_paketi import ArsivHatasi
+            if isinstance(hata, ArsivHatasi):
+                raise
             return []
     return saglayici
 

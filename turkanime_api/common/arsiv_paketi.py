@@ -21,6 +21,7 @@ from __future__ import annotations
 import errno
 import fnmatch
 import json
+import ntpath
 import os
 import queue
 import re
@@ -169,11 +170,88 @@ def guvenli_birlestir(kok: Path, yol: str) -> Path:
 
     Windows'ta `:` içeren bileşen ayrıca reddedilir: NTFS onu "alternatif veri
     akışı" sayar, dosya yazılmaz, adı bölünmüş başka bir dosyaya gider.
+
+    Dönen yol GÖSTERİM içindir (mesajlarda, karşılaştırmada); diske verirken
+    `disk_yolu`'ndan geçirilmeli — bkz. aşağıdaki uzun yol açıklaması.
     """
     parcalar = goreli_parcalar(yol)
     if os.name == "nt" and any(":" in p for p in parcalar):
         raise ValueError(f"Windows'ta yazılamayan arşiv yolu: {yol!r}")
     return Path(kok).joinpath(*parcalar)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Windows uzun yolları
+# ─────────────────────────────────────────────────────────────────────────────
+# Windows'un klasik yol sınırı MAX_PATH = 260 karakter (sondaki NUL dahil,
+# yani en çok 259). Arşivde göreli yolu 311 karaktere varan dosyalar var
+# (69'u 240'ın üstünde; uzun bölüm adları). Tipik bir profilde tam arşiv
+# `C:\Users\<ad>\Turkanime\.cevrimdisi_arsiv-indirme-XXXXXXXX\acilan\`
+# altına açılıyor (71 karakter önek): 280 dosya sınırı aşıyor, son yer olan
+# `cevrimdisi_arsiv\` altında bile 132'si. Sınırı yalnızca kayıt defterindeki
+# LongPathsEnabled kaldırıyor ve Windows 10/11'de varsayılanı KAPALI.
+# Sonuç: ilk uzun üyede `open()` ENOENT veriyordu, `yerel_disk` onu "yerel
+# disk hatası" yapıyordu ve "Tüm arşivi indir" her seferinde yarıda
+# kalıyordu (yedek kaynak da aynı yere düşerdi). Okuma tarafında da o
+# dosyalar "yok" görünüyordu.
+#
+# Çare Win32'nin "genişletilmiş uzunluk" öneki: `\\?\C:\...` biçimindeki yol
+# ~32 bin karaktere kadar kabul ediliyor, ayar gerekmiyor. Önek Win32'nin yol
+# normalleştirmesini de kapatıyor (`/` → `\`, `..` çözümü yapılmıyor); yol bu
+# yüzden önce `ntpath.abspath` ile mutlak ve normal hâle getiriliyor.
+#
+# Kural: diske dokunan her çağrı (open, mkdir, replace, rmtree, stat…) yolu
+# `disk_yolu`'ndan geçirerek verir; mesajlarda ve `Path` hesaplarında öneksiz
+# hâl kalır (kullanıcı `\\?\` görmesin). Windows dışında `disk_yolu` yolu
+# olduğu gibi döndürür — davranış değişmez.
+_UZUN_ONEK = "\\\\?\\"               # \\?\
+_UNC_UZUN_ONEK = "\\\\?\\UNC\\"      # \\?\UNC\
+
+
+def windows_uzun_yol(yol: str) -> str:
+    """Windows yolunu genişletilmiş uzunluk (`\\\\?\\`) biçimine çevir.
+
+    Saf dizgi işlemi (`ntpath`): her platformda aynı sonucu verir, bu yüzden
+    Linux'ta da sınanabiliyor. Zaten önekli (`\\\\?\\`) ya da aygıt (`\\\\.\\`)
+    yolu olduğu gibi döner. Ağ paylaşımı (`\\\\sunucu\\paylaşım\\…`) için önek
+    `\\\\?\\UNC\\`.
+    """
+    if yol.startswith((_UZUN_ONEK, "\\\\.\\")):
+        return yol
+    mutlak = ntpath.abspath(yol)
+    if mutlak.startswith("\\\\"):
+        return _UNC_UZUN_ONEK + mutlak[2:]
+    return _UZUN_ONEK + mutlak
+
+
+def _uzun_yol_gerekli() -> bool:
+    """Önek gerekiyor mu? Ayrı fonksiyon: testler Windows'u taklit edebilsin
+    (`os.name`'i "nt" yapmak `pathlib`'i bozuyor — WindowsPath kurmaya
+    kalkıyor)."""
+    return os.name == "nt"
+
+
+def disk_yolu(yol: Any) -> str:
+    """Diske verilecek yol: Windows'ta `\\\\?\\` önekli, başka yerde aynen."""
+    metin = os.fspath(yol)
+    if not _uzun_yol_gerekli():
+        return metin
+    return windows_uzun_yol(metin)
+
+
+def gorunen_yol(yol: Any) -> str:
+    """`disk_yolu`'nun tersi: mesajda gösterilecek öneksiz yol."""
+    metin = os.fspath(yol)
+    if metin.startswith(_UNC_UZUN_ONEK):
+        return "\\\\" + metin[len(_UNC_UZUN_ONEK):]
+    if metin.startswith(_UZUN_ONEK):
+        return metin[len(_UZUN_ONEK):]
+    return metin
+
+
+def klasor_kur(yol: Any) -> None:
+    """`Path.mkdir(parents=True, exist_ok=True)`'un uzun yol güvenli hâli."""
+    os.makedirs(disk_yolu(yol), exist_ok=True)
 
 
 def atomik_bayt_yaz(hedef: Path, veri: bytes) -> None:
@@ -188,15 +266,15 @@ def atomik_bayt_yaz(hedef: Path, veri: bytes) -> None:
     indir" demek. Binlerce küçük dosyada fsync disk bekleyişi pahalı.
     """
     hedef = Path(hedef)
-    hedef.parent.mkdir(parents=True, exist_ok=True)
+    klasor_kur(hedef.parent)
     gecici = hedef.with_name(f".{hedef.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     try:
-        with open(gecici, "wb") as fp:
+        with open(disk_yolu(gecici), "wb") as fp:
             fp.write(veri)
-        os.replace(gecici, hedef)
+        os.replace(disk_yolu(gecici), disk_yolu(hedef))
     except BaseException:
         try:
-            os.remove(gecici)
+            os.remove(disk_yolu(gecici))
         except OSError:
             pass
         raise
@@ -214,7 +292,7 @@ def arsivi_dogrula(kok: Path) -> Dict[str, Any]:
     """
     yol = Path(kok) / DIZIN_DOSYASI
     try:
-        with open(yol, encoding="utf-8") as fp:
+        with open(disk_yolu(yol), encoding="utf-8") as fp:
             veri = json.load(fp)
     except (OSError, ValueError) as hata:
         raise ArsivHatasi(f"{yol} okunamadı: {hata}") from hata
@@ -252,8 +330,11 @@ def manifest_uret(kok: Path, *, kaynak: str, dal: str, commit: Optional[str],
     kok = Path(kok)
     dizin = arsivi_dogrula(kok)
     if dosya_sayisi is None:
-        dosya_sayisi = sum(1 for p in kok.rglob("*")
-                           if p.is_file() and p != kok / MANIFEST_DOSYASI) + 1
+        # Önekli kökten sayılıyor: uzun adlı dosyalarda `is_file()` öneksiz
+        # yolda Windows'ta False dönerdi ve sayı eksik çıkardı.
+        taban = Path(disk_yolu(kok))
+        dosya_sayisi = sum(1 for p in taban.rglob("*")
+                           if p.is_file() and p != taban / MANIFEST_DOSYASI) + 1
     return {
         "kaynak": kaynak,
         "dal": dal,
@@ -426,7 +507,7 @@ def govdeyi_indir(yanit: Any, hedef_dosya: Path, ilerleme: Optional[IlerlemeFn] 
     if ilerleme:
         ilerleme(0, toplam)
     with yerel_disk("açılamadı", hedef_dosya):
-        fp = open(hedef_dosya, "wb")  # pylint: disable=consider-using-with
+        fp = open(disk_yolu(hedef_dosya), "wb")  # pylint: disable=consider-using-with
     akis = _parcalar(yanit, parca, iptal)
     try:
         for veri in akis:
@@ -500,7 +581,7 @@ def _uyeyi_yaz(kaynak: Any, yol: Path, parca: int = 1 << 20) -> None:
     hatası `YerelDiskHatasi` olur.
     """
     with yerel_disk("yazılamadı", yol):
-        fp = open(yol, "wb")  # pylint: disable=consider-using-with
+        fp = open(disk_yolu(yol), "wb")  # pylint: disable=consider-using-with
     try:
         while True:
             veri = kaynak.read(parca)
@@ -536,12 +617,12 @@ def guvenli_ac(tar_yolu: Path, hedef: Path, *, ust_desen: str,
     """
     hedef = Path(hedef)
     with yerel_disk("oluşturulamadı", hedef):
-        hedef.mkdir(parents=True, exist_ok=True)
+        klasor_kur(hedef)
     dosya = 0
     toplam = 0
     commit_zamani: Optional[float] = None
     try:
-        tar = tarfile.open(tar_yolu, mode="r|*")
+        tar = tarfile.open(disk_yolu(tar_yolu), mode="r|*")
     except (tarfile.TarError, OSError) as hata:
         raise ArsivHatasi(f"paket açılamadı: {hata}") from hata
     with tar:
@@ -553,16 +634,17 @@ def guvenli_ac(tar_yolu: Path, hedef: Path, *, ust_desen: str,
                     commit_zamani = float(uye.mtime)
                 if goreli is None:
                     continue
+                # `yol` öneksiz (mesajlar için); diske `disk_yolu` ile gider.
                 yol = hedef.joinpath(*goreli)
                 if uye.isdir():
                     with yerel_disk("oluşturulamadı", yol):
-                        yol.mkdir(parents=True, exist_ok=True)
+                        klasor_kur(yol)
                     continue
                 toplam += max(0, int(uye.size))
                 if toplam > azami_bayt:
                     raise ArsivHatasi("açılan arşiv beklenenden çok büyük; paket reddedildi")
                 with yerel_disk("oluşturulamadı", yol.parent):
-                    yol.parent.mkdir(parents=True, exist_ok=True)
+                    klasor_kur(yol.parent)
                 kaynak = tar.extractfile(uye)
                 if kaynak is None:
                     raise ArsivHatasi(f"üye okunamadı: {uye.name!r}")
@@ -621,23 +703,25 @@ def agaci_sil(yol: Path) -> List[str]:
     silerdi.
     """
     yol = Path(yol)
-    if yol.is_symlink():
+    if os.path.islink(disk_yolu(yol)):
         try:
-            yol.unlink()
+            os.unlink(disk_yolu(yol))
         except OSError:
             return [str(yol)]
         return []
     silinemeyen: List[str] = []
 
     def _hata(_fn: Any, hatali: Any, _bilgi: Any) -> None:
-        silinemeyen.append(str(hatali))
+        silinemeyen.append(gorunen_yol(hatali))
 
+    # Önekli kökten silinir: `rmtree` alt yolları kökü birleştirerek kuruyor,
+    # öneksiz kökte uzun adlı dosyalar Windows'ta silinemeyip kalırdı.
     # 3.12 `onerror`'ı `onexc` lehine kullanımdan kaldırdı; iki geri çağrı da
     # (fonksiyon, yol, hata) alıyor, yalnızca argüman adı farklı.
     if sys.version_info >= (3, 12):
-        shutil.rmtree(yol, onexc=_hata)   # pylint: disable=unexpected-keyword-arg
+        shutil.rmtree(disk_yolu(yol), onexc=_hata)   # pylint: disable=unexpected-keyword-arg
     else:
-        shutil.rmtree(yol, onerror=_hata)
+        shutil.rmtree(disk_yolu(yol), onerror=_hata)
     return silinemeyen
 
 
@@ -659,14 +743,14 @@ def yerine_koy(yeni: Path, hedef: Path) -> List[str]:
     """
     yeni, hedef = Path(yeni), bag_hedefi(Path(hedef))
     eski: Optional[Path] = None
-    if hedef.exists() or hedef.is_symlink():
+    if os.path.lexists(disk_yolu(hedef)):
         eski = hedef.with_name(f"{eski_kopya_adi(hedef)}{uuid.uuid4().hex[:8]}")
-        os.replace(hedef, eski)
+        os.replace(disk_yolu(hedef), disk_yolu(eski))
     try:
-        os.replace(yeni, hedef)
+        os.replace(disk_yolu(yeni), disk_yolu(hedef))
     except BaseException:
         if eski is not None:
-            os.replace(eski, hedef)
+            os.replace(disk_yolu(eski), disk_yolu(hedef))
         raise
     if eski is not None:
         return agaci_sil(eski)
@@ -698,9 +782,11 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
     hedef = Path(hedef)
     gercek = bag_hedefi(hedef)
     with yerel_disk("oluşturulamadı", gercek.parent):
-        gercek.parent.mkdir(parents=True, exist_ok=True)
-        gecici = Path(tempfile.mkdtemp(prefix=f".{gercek.name}-indirme-",
-                                       dir=gercek.parent))
+        klasor_kur(gercek.parent)
+        # `mkdtemp` önekli yol döndürüyor; yalnızca ADI alınıyor ki `gecici`
+        # (ve ondan türeyen her yol) mesajlarda öneksiz görünsün.
+        gecici = gercek.parent / Path(tempfile.mkdtemp(
+            prefix=f".{gercek.name}-indirme-", dir=disk_yolu(gercek.parent))).name
     try:
         paket = gecici / "paket.tar.gz"
         if asama:
@@ -712,9 +798,9 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
         bilgi = guvenli_ac(paket, acilan, ust_desen=ust_desen,
                            alt_klasor=alt_klasor, iptal=iptal)
         with yerel_disk("silinemedi", paket):
-            paket.unlink()               # takastan önce yer aç (~230 MB)
+            os.remove(disk_yolu(paket))  # takastan önce yer aç (~230 MB)
         arsivi_dogrula(acilan)
-        if not (acilan / MANIFEST_DOSYASI).is_file():
+        if not os.path.isfile(disk_yolu(acilan / MANIFEST_DOSYASI)):
             zaman = bilgi.get("commit_zamani")
             with yerel_disk("yazılamadı", acilan / MANIFEST_DOSYASI):
                 manifest_yaz(acilan, manifest_uret(
@@ -732,7 +818,7 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
             yerine_koy(acilan, gercek)
         return hedef
     finally:
-        shutil.rmtree(gecici, ignore_errors=True)
+        shutil.rmtree(disk_yolu(gecici), ignore_errors=True)
 
 
 __all__ = [
@@ -741,6 +827,7 @@ __all__ = [
     "ASAMA_BAGLANMA", "ASAMA_INDIRME", "ASAMA_ACMA", "ASAMA_YERLESTIRME",
     "IPTAL_ARALIGI",
     "goreli_parcalar", "guvenli_birlestir", "atomik_bayt_yaz",
+    "windows_uzun_yol", "disk_yolu", "gorunen_yol", "klasor_kur",
     "arsivi_dogrula", "arsiv_gecerli_mi", "anime_sayisi",
     "manifest_uret", "manifest_yaz", "disk_mesaji", "yerel_disk",
     "iptal_denetle", "iptal_edilebilir", "govdeyi_indir", "guvenli_ac",

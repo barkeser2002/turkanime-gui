@@ -45,15 +45,18 @@ hiçbir ağ/disk bekleyişini beklemez (bkz. kilitlerin açıklaması).
 
 Okunamama sessiz değil: `search_animedepo` dizin hiçbir yerden okunamazsa
 `ArsivOkunamadi` fırlatır (boş arşiv hata değildir); `dizin()` eski
-sözleşmesiyle `{}` döndürmeye devam eder.
+sözleşmesiyle `{}` döndürmeye devam eder. Bölüm listesi ve akışlar da aynı
+kural: kayıt arşivde YOKSA boş liste (yerelde dosya yok / bütün aynalar
+404), arşive ULAŞILAMADIYSA `ArsivOkunamadi` (bkz. `_kaydi_oku`).
+
+Windows: arşivde göreli yolu 311 karaktere varan dosyalar var; diske giden
+her yol `arsiv_paketi.disk_yolu`'ndan (`\\\\?\\` öneki) geçiyor.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import shutil
-import sys
 import threading
 import uuid
 from dataclasses import dataclass
@@ -381,11 +384,28 @@ def _goreli(path: str) -> str:
 
 
 def _yerelden_oku(kok: Path, goreli: str) -> Any:
+    """Yerel arşivden oku. Dosya yoksa `FileNotFoundError` ("arşivde yok").
+
+    Yol diske `paket.disk_yolu` ile gidiyor: Windows'ta arşivin uzun adlı
+    dosyaları (göreli yolu 311 karaktere varan) MAX_PATH'i aşıyor ve önek
+    olmadan "yok" görünüyordu (bkz. `arsiv_paketi`'ndeki uzun yol notu).
+
+    Dosya yoksa ÖNCE arşivin kendisi hâlâ yerinde mi diye bakılır: konum
+    süreç başında çözülüyor; sonradan silinen/çıkarılan (USB disk) bir
+    arşivde her dosya "yok" olur ve her anime "bölümü yok" görünürdü. Kök
+    kaybolduysa bu bir OKUMA hatasıdır (`ArsivHatasi`), "yok" değil.
+    """
     yol = paket.guvenli_birlestir(kok, goreli)
-    with open(yol, encoding="utf-8") as fp:
-        veri = json.load(fp)
     try:
-        st = yol.stat()
+        with open(paket.disk_yolu(yol), encoding="utf-8") as fp:
+            veri = json.load(fp)
+    except FileNotFoundError as hata:
+        if not os.path.isfile(paket.disk_yolu(Path(kok) / paket.DIZIN_DOSYASI)):
+            raise paket.ArsivHatasi(
+                f"yerel arşiv klasörü artık yok ya da boşaldı ({kok})") from hata
+        raise
+    try:
+        st = os.stat(paket.disk_yolu(yol))
         _yerel_imzalar[goreli] = (st.st_mtime_ns, st.st_size)
     except OSError:
         pass
@@ -409,7 +429,7 @@ def _onbellege_yaz(goreli: str, veri: Any) -> None:
 def _onbellekten_oku(goreli: str) -> Any:
     try:
         yol = paket.guvenli_birlestir(onbellek_dizini(), goreli)
-        with open(yol, encoding="utf-8") as fp:
+        with open(paket.disk_yolu(yol), encoding="utf-8") as fp:
             return json.load(fp)
     except (OSError, ValueError):
         return _YOK
@@ -422,9 +442,34 @@ def _basarili_yanit(goreli: str, taban: str, yanit: Any, veri: Any) -> None:
     _onbellege_yaz(goreli, veri)
 
 
+class ArsivdeYok(paket.ArsivHatasi):
+    """İstenen dosya arşivde YOK: yanıt veren her ayna 404/410 dedi.
+
+    "Okunamadı"nın tersi: arşive ulaşıldı, kayıt yok. Dizinde olup klasörü
+    olmayan animeler gerçek arşivde de var; onların bölüm listesi boş liste
+    olmalı, hata değil. Yerel arşivde aynı durumun karşılığı
+    `FileNotFoundError` (bkz. `_arsivde_yok_mu`).
+    """
+
+
+# Aynanın "bu dosya bende yok" dediği HTTP kodları. Diğer her kod (429 hız
+# sınırı, 5xx, 403) aynaya ULAŞILAMADI demek: dosyanın var olup olmadığı
+# bilinmiyor.
+_YOK_KODLARI = (404, 410)
+
+
 def _uzaktan_getir(goreli: str, atla: Optional[str] = None) -> Any:
-    """Aynaları sırayla dene; hepsi düşerse disk önbelleğinden oku."""
-    son_hata: Optional[BaseException] = None
+    """Aynaları sırayla dene; hepsi düşerse disk önbelleğinden oku.
+
+    Hiçbiri veremezse hangi istisnanın yükseldiği önemli (bkz.
+    `get_anime_episodes`): BÜTÜN aynalar 404 dediyse `ArsivdeYok`; en az
+    birine ulaşılamadıysa (bağlantı, zaman aşımı, 429/5xx, bozuk yanıt) o
+    aynanın hatası. Tek bir 404 yetmez: GitLab'a ulaşılamazken GitHub
+    aynası 404 derse (o ayna bugün her dosyaya 404 dönüyor) dosyanın
+    gerçekten olmadığı bilinmiyor — asıl haber GitLab'ın hatası.
+    """
+    son_hata: Optional[BaseException] = None   # 404 DIŞINDAKİ son hata
+    yok_diyen = 0
     oturum = None
     for taban in uzak_aynalar():
         if taban == atla:
@@ -433,9 +478,12 @@ def _uzaktan_getir(goreli: str, atla: Optional[str] = None) -> Any:
             if oturum is None:
                 oturum = _session()
             yanit = oturum.get(f"{taban}/{goreli}", timeout=HTTP_TIMEOUT)
+            if getattr(yanit, "status_code", None) in _YOK_KODLARI:
+                yok_diyen += 1
+                continue
             yanit.raise_for_status()
             veri = yanit.json()
-        except Exception as hata:          # 404, zaman aşımı, HTML hata sayfası…
+        except Exception as hata:          # zaman aşımı, 5xx, HTML hata sayfası…
             son_hata = hata
             continue
         _basarili_yanit(goreli, taban, yanit, veri)
@@ -445,6 +493,8 @@ def _uzaktan_getir(goreli: str, atla: Optional[str] = None) -> Any:
         return onbellekte
     if son_hata is not None:
         raise son_hata
+    if yok_diyen:
+        raise ArsivdeYok(f"{goreli} arşivde yok ({yok_diyen} ayna 404 döndü)")
     raise paket.ArsivHatasi(f"{goreli} hiçbir aynadan alınamadı")
 
 
@@ -453,7 +503,9 @@ def fetch_json(path: str) -> Any:
 
     Yerel arşiv varsa doğrudan dosya okunur, ağa çıkılmaz. Uzakta sırayla
     özel adres → GitLab → GitHub denenir; hepsi düşerse disk önbelleği.
-    Dosya hiçbir yerde yoksa son hata fırlatılır (çağıranlar yakalıyor).
+    Dosya alınamazsa istisna: arşivde YOKSA yerelde `FileNotFoundError`,
+    uzakta `ArsivdeYok`; ULAŞILAMADIYSA sebebin kendisi (bağlantı hatası,
+    HTTP 5xx/429, bozuk JSON…). Ayrımı `_kaydi_oku` kullanıyor.
     """
     goreli = _goreli(path)
     konum = arsiv_konumu()
@@ -476,7 +528,7 @@ def _kosullu_getir(path: str) -> Tuple[Any, bool]:
         imza = _yerel_imzalar.get(goreli)
         if imza is not None:
             try:
-                st = paket.guvenli_birlestir(konum.dizin, goreli).stat()
+                st = os.stat(paket.disk_yolu(paket.guvenli_birlestir(konum.dizin, goreli)))
                 if (st.st_mtime_ns, st.st_size) == imza:
                     return None, True
             except OSError:
@@ -520,6 +572,44 @@ def _okuma_hatasi_metni(hata: BaseException) -> str:
         return f"TürkAnime arşivi okunamadı: yerel arşiv ({konum.dizin}) okunamadı — {sebep}"
     return ("TürkAnime arşivi okunamadı: yerel arşiv yok, uzak aynalar yanıt vermedi "
             f"ve disk önbelleğinde kopya yok — {sebep}")
+
+
+def _arsivde_yok_mu(hata: BaseException) -> bool:
+    """Hata "dosya arşivde yok" mu (``True``), "arşive ulaşılamadı" mı?
+
+    Yerelde `FileNotFoundError` (kök yerindeyken; bkz. `_yerelden_oku`),
+    uzakta `ArsivdeYok` (bütün aynalar 404). Geri kalan her şey — bağlantı,
+    zaman aşımı, 429/5xx, bozuk JSON, okunamayan yerel dosya — okunamamadır.
+    """
+    return isinstance(hata, (ArsivdeYok, FileNotFoundError))
+
+
+def _kaydi_oku(path: str) -> Any:
+    """Bir anime/bölüm kaydını oku: arşivde YOKSA ``None``, okunamadıysa hata.
+
+    Eskiden bölüm ve akış okuyucuları HER hatayı boş listeye çeviriyordu:
+    ulaşılamayan bir arşiv "bölümü olmayan anime" gibi görünüyordu.
+    Paketlenmiş uygulamada (yerel arşiv yok) çevrimdışıyken arama disk
+    önbelleğindeki dizinle çalışıyor, ama tıklanan her sonuç "bölüm
+    bulunamadı" diyordu — asıl sebep (aynalar düştü, dosya önbellekte yok)
+    hiç görünmüyordu. Artık yalnızca "yok" boş sonuçtur; okunamama
+    `ArsivOkunamadi` olarak, sebebi ve konumuyla yükselir.
+
+    Güvensiz kimlik (``../x``) arşivde olamayacak bir kayıttır: ``None``
+    (diske/ağa hiç gidilmez). Yol burada AYRICA hesaplanıyor çünkü bozuk bir
+    yerel dosyanın `JSONDecodeError`'ı da bir `ValueError` — ikisi
+    karışmamalı: biri "yok", öbürü "okunamadı".
+    """
+    try:
+        goreli = _goreli(path)
+    except ValueError:
+        return None
+    try:
+        return fetch_json(goreli)
+    except Exception as hata:
+        if _arsivde_yok_mu(hata):
+            return None
+        raise ArsivOkunamadi(_okuma_hatasi_metni(hata)) from hata
 
 
 def _dizin_getir(tazele: bool = False) -> Tuple[Dict[str, Any], Optional[BaseException]]:
@@ -716,21 +806,13 @@ def indirilen_arsivi_sil() -> bool:
 
     cop = hedef.with_name(f"{paket.eski_kopya_adi(hedef)}{uuid.uuid4().hex[:8]}")
     try:
-        os.replace(hedef, cop)
+        os.replace(paket.disk_yolu(hedef), paket.disk_yolu(cop))
     except OSError as hata:
         raise paket.ArsivHatasi(f"{hedef} kaldırılamadı: {hata}") from hata
     sifirla()                            # konum artık sıradaki yere düşmeli
-    silinemeyen: List[str] = []
-
-    def _hata(_fn, yol, _bilgi):
-        silinemeyen.append(str(yol))
-
-    # 3.12 `onerror`'ı `onexc` lehine kullanımdan kaldırdı; iki geri çağrı da
-    # (fonksiyon, yol, hata) alıyor, yalnızca argüman adı farklı.
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(cop, onexc=_hata)   # pylint: disable=unexpected-keyword-arg
-    else:
-        shutil.rmtree(cop, onerror=_hata)
+    # `agaci_sil` uzun yolları da siliyor (Windows `\\?\` öneki) ve
+    # silinemeyenleri döndürüyor; burada ayrı bir `rmtree` kopyası vardı.
+    silinemeyen = paket.agaci_sil(cop)
     if silinemeyen:
         raise paket.ArsivHatasi(
             f"arşiv devre dışı bırakıldı ama {len(silinemeyen)} dosya silinemedi "
@@ -972,12 +1054,13 @@ def _kademe(q: str, kelimeler: List[str], q_bitisik: str,
 def get_anime_episodes(anime_slug: str) -> List[Tuple[str, str]]:
     """Anime'nin bölüm listesini döndür.
 
-    Returns: [(episode_id, başlık), ...]; episode_id = "anime_slug/bolum_slug"
+    Returns: [(episode_id, başlık), ...]; episode_id = "anime_slug/bolum_slug".
+        Anime arşivde yoksa boş liste.
+
+    Raises: `ArsivOkunamadi` — arşive ulaşılamadı ve dosyanın kopyası yok
+        (bkz. `_kaydi_oku`). Arayüz/CLI sebebi "bölüm bulunamadı" yerine gösterir.
     """
-    try:
-        data = fetch_json(f"animeler/{anime_slug}/bolumler.json")
-    except Exception:
-        return []
+    data = _kaydi_oku(f"animeler/{anime_slug}/bolumler.json")
     episodes: List[Tuple[str, str]] = []
     for entry in data or []:
         # entry ya [slug, title] ya da {"slug":..,"title":..}
@@ -1117,14 +1200,16 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
         Sıra `common.oynatici_onceligi`: çalıştığı bilinen oynatıcılar önce,
         bilinmeyenler ortada, bilinen false-positive'ler en sonda. Sıra önemli:
         `AdapterBolum.best_video` yalnızca ilk birkaç adayı yokluyor.
+        Bölüm arşivde yoksa boş liste.
+
+    Raises: `ArsivOkunamadi` — arşive ulaşılamadı (bkz. `_kaydi_oku`).
+        `kayit.akis_saglayici` bunu yutmaz; oynatma "çalışan video yok"
+        yerine sebebi gösterir.
     """
     if "/" not in episode_id:
         return []
     anime_slug, ep_slug = episode_id.split("/", 1)
-    try:
-        data = fetch_json(f"animeler/{anime_slug}/{ep_slug}.json")
-    except Exception:
-        return []
+    data = _kaydi_oku(f"animeler/{anime_slug}/{ep_slug}.json")
     if not isinstance(data, list):
         return []
 
@@ -1154,6 +1239,7 @@ __all__ = [
     "dizin",
     "dizin_ya_da_hata",
     "ArsivOkunamadi",
+    "ArsivdeYok",
     "fetch_json",
     "arsiv_konumu",
     "ArsivKonumu",

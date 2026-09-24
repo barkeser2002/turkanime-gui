@@ -816,6 +816,114 @@ def test_cli_arsiv_okunamazsa_arama_hatasi_sebebiyle(cli, monkeypatch):
     assert "bulunamadı." not in metin
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 9) Denetim turu 2: CLI okunamayan arşivi ve bozuk videoyu doğru anlatıyor
+# ─────────────────────────────────────────────────────────────────────────────
+def _cikti_topla(ana, monkeypatch) -> List[str]:
+    cikti: List[str] = []
+    monkeypatch.setattr(ana, "rprint", lambda *a, **k: cikti.append(" ".join(map(str, a))))
+    monkeypatch.setattr(ana, "log_error", lambda e: None)
+    return cikti
+
+
+def test_cli_bolumler_okunamazsa_sebebi_gosteriliyor(cli, monkeypatch):
+    """ESKİ HATA: arşiv okuyucusu hatayı boş listeye çeviriyordu; CLI
+    "Bölüm bulunamadı." diyordu, sebep (aynalar yanıt vermedi) görünmüyordu."""
+    ana = cli
+    _arsivsiz_turkanime(monkeypatch)
+    cikti = _cikti_topla(ana, monkeypatch)
+
+    assert ana._bolumleri_getir(kayit.bul("TürkAnime"), "naruto", "Naruto") is None
+
+    metin = "\n".join(cikti)
+    assert "Bölümler alınamadı" in metin
+    assert "uzak aynalar yanıt vermedi" in metin
+
+
+class _Surec:
+    def __init__(self, kod: int):
+        self.returncode = kod
+
+
+def _iki_videolu_bolum(adapter_mod, monkeypatch, oynatilan: List[str]):
+    """İki akışlı bölüm: yt-dlp ikisini de "çalışıyor" görür, mpv A'da düşer."""
+    monkeypatch.setattr(adapter_mod, "extract_video_info", lambda url, _o: {"url": url})
+
+    def oynat(video, dakika_hatirla=False):
+        oynatilan.append(video.url)
+        return _Surec(1 if video.url.endswith("/A") else 0)
+
+    monkeypatch.setattr(adapter_mod.AdapterVideo, "oynat", oynat)
+    akislar = [
+        {"url": "https://ok.ru/videoembed/A", "label": "Ok X",
+         "player": "ODNOKLASSNIKI", "fansub": "X"},
+        {"url": "https://video.sibnet.ru/B", "label": "Sibnet Y",
+         "player": "SIBNET", "fansub": "Y"},
+    ]
+    return adapter_mod.AdapterBolum(
+        "naruto/naruto-1-bolum", "1. Bölüm", adapter_mod.AdapterAnime("naruto", "Naruto"),
+        stream_provider=lambda _u: [dict(a) for a in akislar],
+        player_name="ANIMEDEPO", slug="naruto-1-bolum")
+
+
+def test_cli_yeniden_deneme_baska_videoyu_oynatiyor(cli, monkeypatch):
+    """ESKİ HATA: mpv düşünce `best_video.is_working = False` konup yeniden
+    deneniyordu ama `AdapterBolum.best_video` videoları her çağrıda yeniden
+    kuruyor; bayrak kayboluyor ve üç denemenin üçü de AYNI bozuk videoyu
+    açıyordu. Çalışan ikinci video hiç denenmiyor, bölüm "izlendi" olmuyordu."""
+    from turkanime_api.sources import adapter as adapter_mod
+    ana = cli
+    oynatilan: List[str] = []
+    bolum = _iki_videolu_bolum(adapter_mod, monkeypatch, oynatilan)
+    monkeypatch.setattr(ana.qa, "select", _sirali_cevaplar([bolum]))
+    dosya = ana.Dosyalar()
+    dosya.set_ayar("manuel fansub", False)
+
+    assert ana._bolum_izle([bolum], ana.Dosyalar()) is True
+
+    assert oynatilan == ["https://ok.ru/videoembed/A", "https://video.sibnet.ru/B"]
+    assert "naruto-1-bolum" in ana.Dosyalar().gecmis["izlendi"]["naruto"]
+
+
+def _okunamayan_bolum(adapter_mod):
+    """Akış sağlayıcısı kayıttaki sarmalayıcıdan (arşiv hatasını geçiren)."""
+    def akislar(_bolum_id):
+        raise animedepo.ArsivOkunamadi(
+            "TürkAnime arşivi okunamadı: uzak aynalar yanıt vermedi — ağ yok")
+    return adapter_mod.AdapterBolum(
+        "naruto/naruto-1-bolum", "1. Bölüm", adapter_mod.AdapterAnime("naruto", "Naruto"),
+        stream_provider=kayit.akis_saglayici(akislar, "naruto/naruto-1-bolum"),
+        player_name="ANIMEDEPO", slug="naruto-1-bolum")
+
+
+def test_cli_video_aranirken_arsiv_okunamazsa_sebebi_gosteriliyor(cli, monkeypatch):
+    from turkanime_api.sources import adapter as adapter_mod
+    ana = cli
+    cikti = _cikti_topla(ana, monkeypatch)
+    bolum = _okunamayan_bolum(adapter_mod)
+    monkeypatch.setattr(ana.qa, "select", _sirali_cevaplar([bolum]))
+
+    assert ana._bolum_izle([bolum], ana.Dosyalar()) is True, "CLI kapanmamalı"
+
+    metin = "\n".join(cikti)
+    assert "Video aranırken bir hata oluştu" in metin
+    assert "uzak aynalar yanıt vermedi" in metin
+
+
+def test_cli_indirmede_arsiv_okunamazsa_sebebi_gosteriliyor(cli, capsys):
+    """İndirme işi iş parçacığında koşuyor: yakalanmayan hata future'da kalır
+    ve kullanıcı hiçbir şey görmezdi."""
+    from rich.table import Table
+    from turkanime_api.cli.cli_tools import indirme_task_cli
+    from turkanime_api.sources import adapter as adapter_mod
+
+    indirme_task_cli(_okunamayan_bolum(adapter_mod), Table.grid(), cli.Dosyalar())
+
+    cikti = capsys.readouterr().out
+    assert "Video aranırken bir hata oluştu" in cikti
+    assert "uzak aynalar yanıt vermedi" in cikti
+
+
 def _kayit_kaynagini_yurut(monkeypatch, kaynak_metni: str):
     """kayit.py'nin kaynağını ayrı bir modül olarak yürüt (gerçek modüle dokunmadan)."""
     ad = "turkanime_api.sources._kayit_deneme"

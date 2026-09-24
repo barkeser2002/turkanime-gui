@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Any, Dict, Callable
+from typing import List, Optional, Any, Dict, Callable, Iterable
 import errno
 import hashlib
 import json
@@ -365,8 +365,24 @@ class AdapterBolum:
         by_fansub=None,
         default_res=600,
         callback=lambda x: None,
-        early_subset: int = 8
+        early_subset: int = 8,
+        atla: Optional[Iterable[str]] = None,
     ):
+        """En iyi çalışan videoyu bul; hiçbiri yoksa None.
+
+        ``atla``: bu adreslerdeki akışlar hiç denenmez. CLI'ın yeniden deneme
+        döngüsü, mpv'de oynatılamayan videonun adresini buraya ekliyor.
+        Gerekli çünkü bu sınıf videoları önbelleklemiyor: her çağrı akışlardan
+        YENİ `AdapterVideo`'lar kuruyor, çağıranın başarısız videoya koyduğu
+        ``is_working = False`` bir sonraki çağrıda kayboluyor ve aynı (ilk
+        sıradaki) adres yeniden seçiliyordu — CLI üç denemenin üçünde de aynı
+        bozuk videoyu açıyor, çalışan diğerlerine hiç geçmiyordu. (Eski
+        `objects.Bolum` videolarını sakladığı için bu sorun orada yoktu.)
+
+        Kaynak okunamadıysa (TürkAnime arşivine ulaşılamadı) sağlayıcının
+        hatası YÜKSELİR, "hiçbiri çalışmıyor" denmez; bkz.
+        `kayit.akis_saglayici`.
+        """
         # URL kontrolü
         if not self.url:
             callback({"current": 1, "total": 1, "player": "ANIMECIX", "status": "URL bulunamadı"})
@@ -380,7 +396,12 @@ class AdapterBolum:
             # `fansubs` az önce getirdi; aynı listeyi ikinci kez isteme.
             streams, self._bekleyen_akislar = self._bekleyen_akislar, None
         else:
-            streams = self._saglayici()(self.url)
+            try:
+                streams = self._saglayici()(self.url)
+            except Exception:
+                callback({"current": 1, "total": 1, "player": player_label,
+                          "status": "kaynak okunamadı"})
+                raise
             self._fansublari_not_et(streams or [])
         if not streams:
             callback({
@@ -404,6 +425,17 @@ class AdapterBolum:
                 "status": "video URL bulunamadı"
             })
             return None
+
+        # Daha önce denenip oynatılamayanlar elenir. Hepsi denendiyse "video
+        # yok" değil "hiçbiri çalışmıyor": adresler vardı, çalışmadılar.
+        if atla:
+            atlanacak = set(atla)
+            kalan = [s for s in adaylar if s.get("url") not in atlanacak]
+            if not kalan:
+                callback({"current": 1, "total": 1, "player": player_label,
+                          "status": "hiçbiri çalışmıyor"})
+                return None
+            adaylar = kalan
 
         # Seçilen fansub'un akışlarıyla sınırla. Hiçbiri eşleşmiyorsa (fansub
         # kavramı olmayan kaynak ya da o grubun kaydı artık yok) hepsiyle devam:
