@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -129,6 +130,53 @@ def _stub_discover_sources(request, monkeypatch):
                       ("update_anime_progress", False)):
         monkeypatch.setattr(anilist_mod.anilist_client, uc,
                             lambda *a, _s=sonuc, **k: _s)
+
+
+_ARSIV_YALITIM_SAYACI = itertools.count()
+
+
+@pytest.fixture(scope="session")
+def _arsiv_yalitim_koku(tmp_path_factory):
+    return tmp_path_factory.mktemp("arsiv_yalitim")
+
+
+@pytest.fixture(autouse=True)
+def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku):
+    """AnimeDepo istemcisini gerçek arşivlerden ve ağdan yalıt.
+
+    İstemci artık önce YEREL arşive bakıyor ve depodan çalışırken commit'lenmiş
+    `arsiv/` (~500 MB) orada duruyor: yalıtılmasa AnimeDepo'ya dokunan her test
+    sessizce gerçek arşivi okur ve sonucu arşivin o günkü içeriğine bağlanırdı.
+    Aynı sebeple geliştiricinin indirdiği `cevrimdisi_arsiv/`, disk önbelleği ve
+    `TURKANIME_ARSIV_*` ortam değişkenleri de devre dışı.
+
+    `_session` da kesiliyor: curl_cffi kendi (libcurl) soketlerini açtığı için
+    yukarıdaki ağ mandalı onu YAKALAMIYOR. HTTP isteyen test kendi sahtesini
+    `monkeypatch.setattr(animedepo, "_session", ...)` ile bunun üstüne yazar.
+
+    Önbellek klasörü test başına ayrı ve yalnızca yazılırsa oluşuyor: bir testin
+    önbelleğe aldığı dosya başka bir testin "çevrimdışı" yoluna sızmasın.
+    """
+    if "network" in request.keywords:
+        yield
+        return
+    from turkanime_api.sources import animedepo
+
+    kok = _arsiv_yalitim_koku / f"t{next(_ARSIV_YALITIM_SAYACI)}"
+
+    def _ag_yok():
+        raise AgEngellendi("testler AnimeDepo aynalarına çıkamaz; "
+                           "`animedepo._session`'ı sahteleyin")
+
+    monkeypatch.delenv(animedepo.DIZIN_ORTAM_ANAHTARI, raising=False)
+    monkeypatch.delenv(animedepo.ORTAM_ANAHTARI, raising=False)
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", kok / "depo_arsivi_yok")
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: kok / "indirilen_yok")
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: kok / "onbellek")
+    monkeypatch.setattr(animedepo, "_session", _ag_yok)
+    animedepo.sifirla()
+    yield
+    animedepo.sifirla()
 
 
 @pytest.fixture(scope="session", autouse=True)

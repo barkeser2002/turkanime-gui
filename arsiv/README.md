@@ -24,21 +24,48 @@ artık çözülemiyor ve istemci onları atlıyor.
 
 ## Uygulama bu klasörü nasıl kullanıyor
 
-`turkanime_api/sources/animedepo.py` arşivi şu sırayla arar:
+`turkanime_api/sources/animedepo.py` arşivi şu sırayla arar; yerel bir klasör
+ancak içinde okunabilir bir `dizin.json` varsa sayılır, yoksa sıradakine
+geçilir:
 
-1. `TURKANIME_ARSIV_DIZIN` ortam değişkeni veya `ayarlar.json` →
-   `animedepo_dizin` (yerel bir klasör)
-2. Kullanıcının indirdiği tam arşiv (Ayarlar → Çevrimdışı arşiv)
-3. Depodan çalıştırılıyorsa bu klasör
-4. Uzak aynalar: önce bu deponun GitHub kopyası, sonra GitLab
+1. `TURKANIME_ARSIV_DIZIN` ortam değişkeni, sonra `ayarlar.json` →
+   `animedepo_dizin` (kullanıcının gösterdiği yerel klasör)
+2. Kullanıcının indirdiği tam arşiv: `<veri kökü>/cevrimdisi_arsiv`
+   (`tam_arsiv_indir()`; önce GitLab paketi, olmazsa bu deponun GitHub
+   paketinden yalnızca `arsiv/`)
+3. Depodan çalıştırılıyorsa bu klasör (`arsiv/`)
+4. Uzak aynalar, sırayla: özel adres (`TURKANIME_ARSIV_URL` ortam değişkeni
+   veya `ayarlar.json` → `animedepo_url`) → GitLab
+   (`gitlab.com/AnimeDepo/animedepo`) → bu deponun GitHub kopyası
+   (`raw.githubusercontent.com/barkeser2002/turkanime-gui/main/arsiv`)
+
+Yerel okumada ağa hiç çıkılmaz. Uzaktan başarıyla gelen her dosya
+`<veri kökü>/arsiv_onbellek/` altına aynı göreli yolla yazılır; bütün aynalar
+düştüğünde oradan okunur (çevrimdışı).
+
+"Veri kökü" `~/Turkanime`; uygulama bir git deposunun içinden çalıştırılıyorsa
+depo kökü. Bu yüzden indirilenler `arsiv/` değil `cevrimdisi_arsiv/` adıyla
+duruyor ve `.gitignore`'da — uygulama bu klasörün üstüne asla yazmaz
+(yalnızca aşağıdaki bakımcı komutu günceller).
+
+Video kayıtlarından yalnızca oynatılabilecekler verilir: `DEAD_` önekli
+oynatıcılar, `alive: false` kayıtlar, yalnızca `mask`/`path` taşıyanlar ve
+turkanime alan adına giden adresler atlanır. VK kayıtlarındaki
+`https:https://href.li/?…` biçimi gerçek `vk.com` adresine çevrilir. Akışlar
+oynatıcı önceliğine göre sıralanır (`turkanime_api/common/oynatici_onceligi.py`).
 
 ## Güncelleme
 
 ```bash
 python -m turkanime_api.common.arsiv_senkron --hedef arsiv
+# başka kaynak/dal: --kaynak <git adresi> --dal <dal>
 ```
 
-Komut GitLab'daki son commit'i sığ olarak klonlar ve bu klasörü onunla
-eşitler: silinenler silinir, `KAYNAK.json` yeniden yazılır.
+Komut GitLab'daki son commit'i geçici bir klasöre sığ olarak klonlar, geçerli
+bir arşiv olduğunu doğrular ve bu klasörü onunla eşitler: yeni ve değişen
+dosyalar kopyalanır, kaynakta artık olmayanlar silinir. Bu klasörün kendi
+`README.md`'si ve `KAYNAK.json`'ı korunur; `KAYNAK.json` hangi commit'ten
+çekildiği bilgisiyle yeniden yazılır. Eklenen/değişen/silinen sayıları
+ekrana basılır.
 
 Arşivin kendi uyarı metni için: [DISCLAIMER.md](DISCLAIMER.md).

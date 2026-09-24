@@ -285,15 +285,49 @@ class AdapterBolum:
         self._player_name = player_name or "ANIMECIX"
         # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı)
         self.slug = _slugify(f"{anime.title}-{title}" if anime else title)
+        # `fansubs` akışları getirmek zorunda (fansub adları akışların içinde).
+        # CLI hemen ardından `best_video` çağırıyor; aynı listeyi ikinci kez
+        # istememek için burada bekletilir ve İLK `best_video` onu tüketir.
+        # Kalıcı cache DEĞİL: bazı kaynakların adresleri imzalı/süreli; aynı
+        # bölüm nesnesiyle saatler sonra yapılan oynatma taze liste almalı.
+        self._bekleyen_akislar: Optional[List[Dict[str, Any]]] = None
+        self._fansub_listesi: Optional[List[str]] = None
 
     @property
     def title(self):
         return self._title
 
+    def _saglayici(self) -> Callable[[str], List[Dict[str, Any]]]:
+        return self._stream_provider or _video_streams
+
+    def _fansublari_not_et(self, akislar: List[Dict[str, Any]]) -> None:
+        """Akışlardaki fansub adlarını (ilk görülme sırasıyla) hatırla."""
+        if self._fansub_listesi is not None or not akislar:
+            return
+        adlar: List[str] = []
+        for akis in akislar:
+            ad = akis.get("fansub") if isinstance(akis, dict) else None
+            if isinstance(ad, str) and ad.strip() and ad.strip() not in adlar:
+                adlar.append(ad.strip())
+        self._fansub_listesi = adlar
+
     @property
     def fansubs(self):
-        # AnimeciX tarafında fansub konsepti kullanılmıyor
-        return []
+        """Bölümün fansub adları; sağlayıcı "fansub" vermiyorsa boş liste.
+
+        AnimeciX/Tranimaci gibi kaynaklarda fansub kavramı yok, liste boş kalır
+        ve CLI seçim sormaz. AnimeDepo her akışta "fansub" taşıyor; aynı
+        bölümün birden çok grubu varsa kullanıcı seçebilir.
+        """
+        if self._fansub_listesi is None and self.url:
+            try:
+                akislar = self._saglayici()(self.url) or []
+            except Exception:
+                akislar = []          # fansub listesi yüzünden oynatma çökmesin
+            if akislar:
+                self._bekleyen_akislar = akislar
+                self._fansublari_not_et(akislar)
+        return list(self._fansub_listesi or [])
 
     def best_video(
         self,
@@ -309,11 +343,15 @@ class AdapterBolum:
             return None
 
         # Kaynağa uygun stream sağlayıcısını kullan
-        provider = self._stream_provider or _video_streams
         player_label = self._player_name
 
         callback({"current": 0, "total": 1, "player": player_label, "status": "üstbilgi çekiliyor"})
-        streams = provider(self.url)
+        if self._bekleyen_akislar is not None:
+            # `fansubs` az önce getirdi; aynı listeyi ikinci kez isteme.
+            streams, self._bekleyen_akislar = self._bekleyen_akislar, None
+        else:
+            streams = self._saglayici()(self.url)
+            self._fansublari_not_et(streams or [])
         if not streams:
             callback({
                 "current": 1,
@@ -337,6 +375,14 @@ class AdapterBolum:
             })
             return None
 
+        # Seçilen fansub'un akışlarıyla sınırla. Hiçbiri eşleşmiyorsa (fansub
+        # kavramı olmayan kaynak ya da o grubun kaydı artık yok) hepsiyle devam:
+        # kullanıcı "bu grubu tercih ederim" dedi, "başka grup oynatma" demedi.
+        if by_fansub:
+            secili = [s for s in adaylar if s.get("fansub") == by_fansub]
+            if secili:
+                adaylar = secili
+
         # Kaynaklar aynı kalite için birden çok CDN yedeği döndürüyor
         # ("1080p", "1080p (CDN2)", ...). Eskiden yalnızca en yüksek çözünürlüklü
         # İLK aday deneniyordu; o CDN 403/504 verdiğinde çalışan yedekler varken
@@ -351,15 +397,18 @@ class AdapterBolum:
 
         toplam = len(adaylar)
         for sira, aday in enumerate(adaylar, start=1):
-            callback({"current": sira, "total": toplam, "player": player_label,
+            # Akış kendi oynatıcısını söylüyorsa (AnimeDepo: SIBNET, MAIL…)
+            # ilerlemede o görünür; söylemeyen kaynaklarda eski etiket kalır.
+            oynatici = aday.get("player") or player_label
+            callback({"current": sira, "total": toplam, "player": oynatici,
                       "status": "üstbilgi çekiliyor"})
             vid = AdapterVideo(self, aday.get("url"), aday.get("label"),
-                               player=player_label, referer=aday.get("referer"))
+                               player=oynatici, referer=aday.get("referer"))
             if vid.is_working:
                 callback({"current": sira, "total": toplam,
-                          "player": player_label, "status": "çalışıyor"})
+                          "player": oynatici, "status": "çalışıyor"})
                 return vid
-            callback({"current": sira, "total": toplam, "player": player_label,
+            callback({"current": sira, "total": toplam, "player": oynatici,
                       "status": "çalışmıyor"})
         callback({"current": toplam, "total": toplam, "player": player_label,
                   "status": "hiçbiri çalışmıyor"})

@@ -172,7 +172,7 @@ python -m turkanime_api.gui.qt
 | **TRAnimeİzle** | Cookie tabanlı oturum — Ayarlar'dan gömülü tarayıcıyla çerez alınmalı |
 | **OpenAnime** | SvelteKit SSR JSON çıkarımı + CF bypass. Arama ve bölüm listesi çalışıyor; **stream uçları şu an 404 dönüyor** (bkz. [Bilinen Kısıtlar](#-bilinen-kısıtlar)) |
 | **Tranimaci** | SHA-256 proof-of-work WAF + JS kapısı (QtWebEngine ile aşılır), multi-CDN mp4 |
-| **AnimeDepo** | GitLab üzerinde barındırılan statik arşiv; gerçek arama ucu yok, dizin indirilip yerel fuzzy arama yapılır |
+| **AnimeDepo** | Kapanan turkanime.tv'nin statik JSON arşivi. Önce yerel kopyadan okunur (indirilen tam arşiv ya da depodaki [`arsiv/`](arsiv/README.md)), yoksa GitLab → GitHub aynalarından; gerçek arama ucu yok, dizin üzerinde yerel fuzzy arama yapılır |
 
 ### Meta Veri ve Keşif
 | Servis | Rol |

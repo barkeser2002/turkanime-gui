@@ -22,28 +22,13 @@ from .common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_
 
 from .bypass import get_real_url, unmask_real_url, fetch, get_m3u8_stream
 from .common.utils import get_platform, get_arch
+from .common.oynatici_onceligi import DESTEKLENEN_OYNATICILAR
 
-# Çalıştığı bilinen playerlar ve öncelikleri
-# (KebabLord upstream V9.2.2/V10: MP4UPLOAD false-positive'ler yüzünden çıkarıldı,
-#  ALUCARD/GDRIVE güvenilirlikleri nedeniyle öne alındı.)
-SUPPORTED = [
-    "YADISK",
-    "ALUCARD(BETA)",
-    "GDRIVE",
-    "MAIL",
-    "PIXELDRAIN",
-    "AMATERASU(BETA)",
-    "HDVID",
-    "ODNOKLASSNIKI",
-    "DAILYMOTION",
-    "SIBNET",
-    "VK",
-    "VIDMOLY",
-    "YOURUPLOAD",
-    "SENDVID",
-    "MYVI",
-    "UQLOAD",
-]
+# Çalıştığı bilinen playerlar ve öncelikleri. Liste `common.oynatici_onceligi`
+# içinde yaşıyor: AnimeDepo istemcisi de aynı sırayı kullanıyor ama bu modülü
+# (→ yt_dlp) import edemiyor. Burada liste KOPYASI tutuluyor çünkü çağıranlar
+# `.index()`/`in` bekliyor ve paylaşılan sabit dışarıdan değiştirilemesin.
+SUPPORTED = list(DESTEKLENEN_OYNATICILAR)
 
 class LogHandler:
     """ TODO: ytdlp log handler prototipi """

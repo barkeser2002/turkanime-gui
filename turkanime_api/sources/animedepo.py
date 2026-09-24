@@ -1,12 +1,13 @@
 """
 AnimeDepo sağlayıcı (KebabLord upstream V10 driver'ından uyarlandı).
 
-AnimeDepo, GitLab üzerinde barındırılan statik bir JSON arşividir; gerçek bir
-arama endpoint'i yoktur (gözat-tabanlı). Bu modül fork'un fonksiyon-stili kaynak
-sözleşmesine (search / episodes / streams) uyar ve `dizin.json` dizinini indirip
-**yerel fuzzy arama** yapar.
+turkanime.tv kapandı; sitenin anime/bölüm/video kayıtlarının yaşayan tek kopyası
+AnimeDepo adlı statik JSON arşivi. Gerçek bir arama endpoint'i yoktur
+(gözat-tabanlı). Bu modül fork'un fonksiyon-stili kaynak sözleşmesine
+(search / episodes / streams) uyar ve `dizin.json` üzerinde **yerel fuzzy
+arama** yapar.
 
-Dizin yapısı (GitLab raw):
+Arşiv yapısı:
 - dizin.json                              -> {"index": {grup: {slug: {"title": ...}}}}
 - animeler/{slug}/info.json               -> anime metadata
 - animeler/{slug}/bolumler.json           -> [[bolum_slug, baslik], ...]
@@ -15,20 +16,36 @@ Dizin yapısı (GitLab raw):
 Bölüm kimliği bu modülde "anime_slug/bolum_slug" bileşik biçiminde taşınır;
 böylece `get_episode_streams` doğru JSON yolunu kurabilir.
 
-Arşiv adresi yapılandırılabilir (Faz 12): `turkanime_server/yayinci` kendi
-arşivini başka bir depoya yayınlayabildiği için istemci de oraya
-yönlendirilebilmeli. Öncelik sırası ortam değişkeni → `ayarlar.json` →
-`BASE_URL`; hiçbiri yoksa davranış birebir eskisi gibidir.
+Arşiv NEREDEN okunur (`arsiv_konumu`)? Önce yerel, sonra uzak:
+
+1. `TURKANIME_ARSIV_DIZIN` ortam değişkeni, sonra `ayarlar.json` →
+   `animedepo_dizin` (kullanıcının gösterdiği klasör)
+2. Kullanıcının indirdiği tam arşiv: `<veri kökü>/cevrimdisi_arsiv`
+3. Depodan çalıştırılıyorsa depoya alınmış ayna: `<depo>/arsiv`
+4. Uzak aynalar sırayla: özel adres (`TURKANIME_ARSIV_URL` / `animedepo_url`)
+   → GitLab (`BASE_URL`) → bu projenin GitHub kopyası (`GITHUB_AYNA_URL`)
+
+Yerel bir klasör ancak içinde okunabilir bir `dizin.json` varsa sayılır. Yerel
+okumada tek bir HTTP isteği bile atılmaz. Uzaktan başarıyla gelen her dosya
+`<veri kökü>/arsiv_onbellek/` altına aynı göreli yolla yazılır; bütün aynalar
+düştüğünde oradan okunur (çevrimdışı).
+
+"Veri kökü" `cli.dosyalar.Dosyalar` ile aynı kural: `~/Turkanime`, çalışma
+dizini bir git deposuysa (.git) orası. DİKKAT: depoda veri kökü depo KÖKÜDÜR;
+indirilenler bu yüzden `arsiv/` değil `cevrimdisi_arsiv/` adıyla duruyor —
+`arsiv/` commit'lenmiş aynadır, üstüne yazılmamalı.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, unquote, urlsplit
 
 try:
     from curl_cffi import requests as _requests  # type: ignore
@@ -37,63 +54,213 @@ except ImportError:  # pragma: no cover - kütüphane yoksa düz requests'e dü�
     import requests as _requests  # type: ignore[no-redef]
     _HAS_CURL = False
 
+from ..common import arsiv_paketi as paket
+from ..common.oynatici_onceligi import oncelik_anahtari
+
 
 BASE_URL = "https://gitlab.com/AnimeDepo/animedepo/-/raw/master"
+# Arşivin bu depodaki kopyası (`arsiv/`). GitLab deposu kaybolursa veri buradan
+# gelmeye devam etsin diye depoya alındı; aynı dosya düzeni, aynı göreli yollar.
+GITHUB_AYNA_URL = "https://raw.githubusercontent.com/barkeser2002/turkanime-gui/main/arsiv"
+
 ORTAM_ANAHTARI = "TURKANIME_ARSIV_URL"
 AYAR_ANAHTARI = "animedepo_url"
+DIZIN_ORTAM_ANAHTARI = "TURKANIME_ARSIV_DIZIN"
+DIZIN_AYAR_ANAHTARI = "animedepo_dizin"
+
 HTTP_TIMEOUT = 10
+# Tam arşiv ~100 MB: toplam süre sınırı koymak yavaş bağlantıda indirmeyi
+# yarıda keser. (bağlanma, okuma) çifti akış kipinde "60 sn hiç veri gelmezse
+# vazgeç" demek (curl_cffi bunu LOW_SPEED_TIME ile uyguluyor).
+INDIRME_ZAMAN_ASIMI = (15, 60)
 
+CEVRIMDISI_KLASOR = "cevrimdisi_arsiv"
+ONBELLEK_KLASOR = "arsiv_onbellek"
+# Depodan çalıştırılırken commit'lenmiş ayna. Paketlenmiş (PyInstaller) sürümde
+# bu yol geçici açma klasörünün dışına düşer, orada `arsiv/` yok → atlanır.
+DEPO_ARSIVI = Path(__file__).resolve().parents[2] / "arsiv"
+
+
+@dataclass(frozen=True)
+class TamArsivKaynagi:
+    """Tam arşivin indirilebileceği bir tar.gz paketi."""
+
+    ad: str
+    url: str
+    ust_desen: str               # paketin tek üst klasörü (fnmatch)
+    alt_klasor: Optional[str]    # yalnızca bu alt ağacı aç (None: hepsi)
+    depo: str                    # KAYNAK.json'a yazılacak depo adresi
+    dal: str
+
+
+TAM_ARSIV_KAYNAKLARI: Tuple[TamArsivKaynagi, ...] = (
+    TamArsivKaynagi(
+        "GitLab",
+        "https://gitlab.com/AnimeDepo/animedepo/-/archive/master/animedepo-master.tar.gz",
+        "animedepo-master*", None,
+        "https://gitlab.com/AnimeDepo/animedepo", "master"),
+    # Yedek: bu deponun tamamı geliyor ama yalnızca `arsiv/` açılıyor.
+    TamArsivKaynagi(
+        "GitHub",
+        "https://codeload.github.com/barkeser2002/turkanime-gui/tar.gz/refs/heads/main",
+        "turkanime-gui-*", "arsiv",
+        "https://github.com/barkeser2002/turkanime-gui", "main"),
+)
+
+
+@dataclass(frozen=True)
+class ArsivKonumu:
+    """Arşivin okunduğu yer.
+
+    ``kaynak``: "ortam" | "ayar" | "indirilen" | "depo" | "uzak".
+    ``dizin``: yerel klasör; uzaktan okunuyorsa ``None``.
+    """
+
+    kaynak: str
+    dizin: Optional[Path] = None
+
+    @property
+    def yerel(self) -> bool:
+        return self.dizin is not None
+
+
+# Kilit sırası her yerde _dizin_lock → _konum_lock: `dizin()` kilidi tutarken
+# `fetch_json` → `arsiv_konumu` çağrılıyor; `sifirla` ikisini aynı sırayla alır.
 _dizin_lock = Lock()
+_konum_lock = Lock()
 _dizin_cache: Optional[Dict[str, Any]] = None
-# path → ETag. Koşullu istek için: dizin.json arşivin en çok indirilen dosyası
-# ve turların çoğunda değişmiyor.
-_etag_defteri: Dict[str, str] = {}
+_konum_cache: Optional[ArsivKonumu] = None
 _taban_cache: Optional[str] = None
+# path → (ayna, ETag). Koşullu istek için: dizin.json arşivin en çok indirilen
+# dosyası ve turların çoğunda değişmiyor. ETag'i hangi ayna verdiyse koşullu
+# istek ona gider; başka aynanın ETag'i anlamsızdır.
+_etag_defteri: Dict[str, Tuple[str, str]] = {}
+# path → (mtime_ns, boyut). Yerel arşivde `dizin(tazele=True)` megabaytlık
+# dosyayı ancak değiştiyse yeniden ayrıştırsın diye (ETag'in yerel karşılığı).
+_yerel_imzalar: Dict[str, Tuple[int, int]] = {}
+
+_YOK = object()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Arşiv adresi
+# Veri kökü ve ayarlar
 # ─────────────────────────────────────────────────────────────────────────────
-def _ayar_dosyasi() -> Optional[Path]:
-    """`ayarlar.json`'ın yolu — `Dosyalar` ile aynı kural, ama salt okunur.
+def veri_koku() -> Path:
+    """Kullanıcı verisinin kökü — `Dosyalar` ile aynı kural, ama salt okunur.
 
     `Dosyalar()` örneklemiyoruz: yapıcısı dosya yaratıyor, eksik ayarları
-    yazıyor ve gerekirse `user_id` üretiyor. Bir URL okumak için kullanıcının
+    yazıyor ve gerekirse `user_id` üretiyor. Bir yol çözmek için kullanıcının
     ayar dosyasına yazmak yanlış olurdu (sunucu/CI ortamında da istenmez).
     """
-    kok = Path.cwd() if (Path.cwd() / ".git").is_dir() else Path.home() / "Turkanime"
-    yol = kok / "ayarlar.json"
+    cwd = Path.cwd()
+    return cwd if (cwd / ".git").is_dir() else Path.home() / "Turkanime"
+
+
+def indirilen_arsiv_dizini() -> Path:
+    """`tam_arsiv_indir`'in varsayılan hedefi."""
+    return veri_koku() / CEVRIMDISI_KLASOR
+
+
+def onbellek_dizini() -> Path:
+    """Uzaktan gelen dosyaların disk önbelleği."""
+    return veri_koku() / ONBELLEK_KLASOR
+
+
+def _ayar_dosyasi() -> Optional[Path]:
+    yol = veri_koku() / "ayarlar.json"
     return yol if yol.is_file() else None
 
 
+def _ayar_oku(anahtar: str) -> str:
+    """`ayarlar.json`'dan dizgi ayar; yok/bozuk/dizgi değilse boş dizgi."""
+    yol = _ayar_dosyasi()
+    if yol is None:
+        return ""
+    try:
+        deger = json.loads(yol.read_text(encoding="utf-8")).get(anahtar)
+    except Exception:
+        return ""           # bozuk/okunamayan ayar varsayılanı bozmasın
+    return deger.strip() if isinstance(deger, str) else ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Arşiv konumu
+# ─────────────────────────────────────────────────────────────────────────────
+def _konumu_coz() -> ArsivKonumu:
+    adaylar: List[Tuple[str, Path]] = []
+    ortam = (os.environ.get(DIZIN_ORTAM_ANAHTARI) or "").strip()
+    if ortam:
+        adaylar.append(("ortam", Path(ortam).expanduser()))
+    ayar = _ayar_oku(DIZIN_AYAR_ANAHTARI)
+    if ayar:
+        adaylar.append(("ayar", Path(ayar).expanduser()))
+    adaylar.append(("indirilen", indirilen_arsiv_dizini()))
+    adaylar.append(("depo", DEPO_ARSIVI))
+    for kaynak, dizin_yolu in adaylar:
+        # Gösterilen klasör geçersizse (silinmiş, yarım kopya, yanlış klasör)
+        # sessizce sıradakine geçilir: yanlış bir ayar uygulamayı arşivsiz
+        # bırakmamalı, uzak ayna hâlâ orada.
+        if paket.arsiv_gecerli_mi(dizin_yolu):
+            return ArsivKonumu(kaynak, dizin_yolu)
+    return ArsivKonumu("uzak", None)
+
+
+def arsiv_konumu() -> ArsivKonumu:
+    """Arşivin okunacağı yer (süreç boyunca bir kez çözülür; bkz. `sifirla`)."""
+    global _konum_cache
+    with _konum_lock:
+        if _konum_cache is None:
+            _konum_cache = _konumu_coz()
+        return _konum_cache
+
+
 def taban_url() -> str:
-    """Kullanılacak arşiv kök adresi (süreç boyunca bir kez çözülür)."""
+    """İlk denenecek uzak arşiv kökü: özel adres, yoksa GitLab (`BASE_URL`)."""
     global _taban_cache
     if _taban_cache:
         return _taban_cache
-
-    aday = (os.environ.get(ORTAM_ANAHTARI) or "").strip()
-    if not aday:
-        yol = _ayar_dosyasi()
-        if yol is not None:
-            try:
-                deger = json.loads(yol.read_text(encoding="utf-8")).get(AYAR_ANAHTARI)
-                aday = (deger or "").strip() if isinstance(deger, str) else ""
-            except Exception:
-                aday = ""       # bozuk/okunamayan ayar varsayılanı bozmasın
+    aday = (os.environ.get(ORTAM_ANAHTARI) or "").strip() or _ayar_oku(AYAR_ANAHTARI)
     _taban_cache = (aday or BASE_URL).rstrip("/")
     return _taban_cache
 
 
-def taban_url_sifirla() -> None:
-    """Çözülmüş adresi ve ona bağlı cache'leri unut (ayar değişince)."""
-    global _taban_cache, _dizin_cache
-    with _dizin_lock:
+def uzak_aynalar() -> List[str]:
+    """Sırayla denenecek uzak kökler: özel → GitLab → GitHub (tekrarsız).
+
+    Özel adres (`turkanime_server/yayinci`'nın yayınladığı arşiv) başarısız
+    olursa bile GitLab/GitHub'a düşülür: kullanıcının yazdığı adresin ölmesi
+    uygulamayı arşivsiz bırakmamalı.
+    """
+    sira: List[str] = []
+    for aday in (taban_url(), BASE_URL, GITHUB_AYNA_URL):
+        aday = aday.rstrip("/")
+        if aday not in sira:
+            sira.append(aday)
+    return sira
+
+
+def sifirla() -> None:
+    """Çözülmüş konumu/adresi ve ona bağlı cache'leri unut.
+
+    Ayar değişince, tam arşiv indirilince ya da testlerde çağrılır.
+    """
+    global _taban_cache, _dizin_cache, _konum_cache
+    with _dizin_lock, _konum_lock:
         _taban_cache = None
         _dizin_cache = None
+        _konum_cache = None
         _etag_defteri.clear()
+        _yerel_imzalar.clear()
 
 
+def taban_url_sifirla() -> None:
+    """Geriye uyum: eski adı. Artık konum dahil her şeyi sıfırlar (`sifirla`)."""
+    sifirla()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dosya okuma: yerel → uzak aynalar → disk önbelleği
+# ─────────────────────────────────────────────────────────────────────────────
 def _session():
     if _HAS_CURL:
         return _requests.Session(impersonate="chrome131")
@@ -104,35 +271,136 @@ def _session():
     return sess
 
 
-def fetch_json(path: str) -> Any:
-    """AnimeDepo JSON dosyasını getir (yanıtın ETag'ini not eder)."""
-    url = taban_url() + "/" + path.lstrip("/")
-    r = _session().get(url, timeout=HTTP_TIMEOUT)
-    r.raise_for_status()
-    etag = r.headers.get("ETag")
+def _goreli(path: str) -> str:
+    """API'ye verilen yolu normalize et ve güvenliğini denetle.
+
+    Baştaki "/" eskiden de sessizce atılıyordu (`fetch_json("/dizin.json")`
+    çalışırdı); o uyum korunuyor. Sonrası `goreli_parcalar`'ın kuralları:
+    ``..``, sürücü, ters bölü → ``ValueError``. Slug'lar arşivden geliyor ve
+    arşiv bizim kontrolümüzde değil.
+    """
+    return "/".join(paket.goreli_parcalar(str(path).lstrip("/")))
+
+
+def _yerelden_oku(kok: Path, goreli: str) -> Any:
+    yol = paket.guvenli_birlestir(kok, goreli)
+    with open(yol, encoding="utf-8") as fp:
+        veri = json.load(fp)
+    try:
+        st = yol.stat()
+        _yerel_imzalar[goreli] = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        pass
+    return veri
+
+
+def _onbellege_yaz(goreli: str, veri: Any) -> None:
+    """Uzaktan gelen veriyi diske yaz; hata yutulur (önbellek en iyi çaba).
+
+    Ham yanıt baytı değil yeniden serileştirilmiş JSON yazılıyor: `r.json()`
+    zaten ayrıştırıldı, geçerli olduğu kesin — bozuk bir yanıt önbelleğe hiç
+    giremez.
+    """
+    try:
+        yol = paket.guvenli_birlestir(onbellek_dizini(), goreli)
+        paket.atomik_bayt_yaz(yol, json.dumps(veri, ensure_ascii=False).encode("utf-8"))
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _onbellekten_oku(goreli: str) -> Any:
+    try:
+        yol = paket.guvenli_birlestir(onbellek_dizini(), goreli)
+        with open(yol, encoding="utf-8") as fp:
+            return json.load(fp)
+    except (OSError, ValueError):
+        return _YOK
+
+
+def _basarili_yanit(goreli: str, taban: str, yanit: Any, veri: Any) -> None:
+    etag = (getattr(yanit, "headers", None) or {}).get("ETag")
     if etag:
-        _etag_defteri[path] = etag
-    return r.json()
+        _etag_defteri[goreli] = (taban, etag)
+    _onbellege_yaz(goreli, veri)
+
+
+def _uzaktan_getir(goreli: str, atla: Optional[str] = None) -> Any:
+    """Aynaları sırayla dene; hepsi düşerse disk önbelleğinden oku."""
+    son_hata: Optional[BaseException] = None
+    oturum = None
+    for taban in uzak_aynalar():
+        if taban == atla:
+            continue
+        try:
+            if oturum is None:
+                oturum = _session()
+            yanit = oturum.get(f"{taban}/{goreli}", timeout=HTTP_TIMEOUT)
+            yanit.raise_for_status()
+            veri = yanit.json()
+        except Exception as hata:          # 404, zaman aşımı, HTML hata sayfası…
+            son_hata = hata
+            continue
+        _basarili_yanit(goreli, taban, yanit, veri)
+        return veri
+    onbellekte = _onbellekten_oku(goreli)
+    if onbellekte is not _YOK:
+        return onbellekte
+    if son_hata is not None:
+        raise son_hata
+    raise paket.ArsivHatasi(f"{goreli} hiçbir aynadan alınamadı")
+
+
+def fetch_json(path: str) -> Any:
+    """AnimeDepo JSON dosyasını getir: yerel arşivden, yoksa uzak aynalardan.
+
+    Yerel arşiv varsa doğrudan dosya okunur, ağa çıkılmaz. Uzakta sırayla
+    özel adres → GitLab → GitHub denenir; hepsi düşerse disk önbelleği.
+    Dosya hiçbir yerde yoksa son hata fırlatılır (çağıranlar yakalıyor).
+    """
+    goreli = _goreli(path)
+    konum = arsiv_konumu()
+    if konum.dizin is not None:
+        return _yerelden_oku(konum.dizin, goreli)
+    return _uzaktan_getir(goreli)
 
 
 def _kosullu_getir(path: str) -> Tuple[Any, bool]:
-    """``(veri, degismedi)`` — ETag biliniyorsa `If-None-Match` ile ister.
+    """``(veri, degismedi)`` — değişmediği bilinen dosyayı yeniden indirme.
 
-    Bilinen ETag yoksa düz `fetch_json`'a düşer; böylece `fetch_json`'ı
-    sahteleyen çağrı yolları (testler, yerel arşiv) bozulmaz.
+    Uzakta: ETag biliniyorsa onu veren aynaya `If-None-Match` ile sorar.
+    Yerelde: dosyanın (mtime, boyut) imzası aynıysa yeniden ayrıştırmaz.
+    Bilinen imza yoksa düz `fetch_json`'a düşer; böylece `fetch_json`'ı
+    sahteleyen çağrı yolları (testler) bozulmaz.
     """
-    etag = _etag_defteri.get(path)
-    if not etag:
-        return fetch_json(path), False
-    url = taban_url() + "/" + path.lstrip("/")
-    r = _session().get(url, timeout=HTTP_TIMEOUT, headers={"If-None-Match": etag})
-    if r.status_code == 304:
-        return None, True
-    r.raise_for_status()
-    yeni = r.headers.get("ETag")
-    if yeni:
-        _etag_defteri[path] = yeni
-    return r.json(), False
+    goreli = _goreli(path)
+    konum = arsiv_konumu()
+    if konum.dizin is not None:
+        imza = _yerel_imzalar.get(goreli)
+        if imza is not None:
+            try:
+                st = paket.guvenli_birlestir(konum.dizin, goreli).stat()
+                if (st.st_mtime_ns, st.st_size) == imza:
+                    return None, True
+            except OSError:
+                pass
+        return fetch_json(goreli), False
+
+    kayit = _etag_defteri.get(goreli)
+    if not kayit:
+        return fetch_json(goreli), False
+    taban, etag = kayit
+    try:
+        yanit = _session().get(f"{taban}/{goreli}", timeout=HTTP_TIMEOUT,
+                               headers={"If-None-Match": etag})
+        if yanit.status_code == 304:
+            return None, True
+        yanit.raise_for_status()
+        veri = yanit.json()
+    except Exception:
+        # ETag'i veren ayna düştü: diğer aynaları (ve önbelleği) dene.
+        return _uzaktan_getir(goreli, atla=taban), False
+    _basarili_yanit(goreli, taban, yanit, veri)
+    return veri, False
 
 
 def dizin(tazele: bool = False) -> Dict[str, Any]:
@@ -173,6 +441,51 @@ def get_anime_listesi() -> List[Tuple[str, str]]:
             title = (anime or {}).get("title") if isinstance(anime, dict) else None
             liste.append((slug, title or slug.replace("-", " ").title()))
     return liste
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tam arşivi indir (çevrimdışı kullanım)
+# ─────────────────────────────────────────────────────────────────────────────
+def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = None,
+                    iptal: Any = None, hedef: Optional[Path] = None) -> Path:
+    """Arşivin tamamını indirip ``hedef``'e (varsayılan `cevrimdisi_arsiv`) kur.
+
+    Kaynaklar sırayla: GitLab paketi → bu deponun GitHub paketi (yalnızca
+    `arsiv/`). ``ilerleme(indirilen_bayt, toplam_bayt_ya_da_None)`` indirme
+    boyunca çağrılır; ``iptal`` `threading.Event` benzeri bir nesnedir ve
+    kurulduğunda işlem `IptalEdildi` ile durur (yedek kaynağa GEÇİLMEZ —
+    kullanıcı vazgeçti).
+
+    Eski arşiv yenisi doğrulanıp yerine konana kadar yerinde kalır; hata ya
+    da iptalde geçici dosyalar silinir. Başarıda modül cache'leri sıfırlanır,
+    sonraki okuma yeni arşivden yapılır.
+    """
+    hedef = Path(hedef) if hedef is not None else indirilen_arsiv_dizini()
+    hatalar: List[str] = []
+    for kaynak in TAM_ARSIV_KAYNAKLARI:
+        paket.iptal_denetle(iptal)
+        yanit = None
+        try:
+            yanit = _session().get(kaynak.url, stream=True, timeout=INDIRME_ZAMAN_ASIMI)
+            yanit.raise_for_status()
+            sonuc = paket.paketten_kur(
+                yanit, hedef, ust_desen=kaynak.ust_desen, alt_klasor=kaynak.alt_klasor,
+                kaynak=kaynak.depo, dal=kaynak.dal, ilerleme=ilerleme, iptal=iptal)
+        except paket.IptalEdildi:
+            raise
+        except Exception as hata:
+            hatalar.append(f"{kaynak.ad}: {hata}")
+            continue
+        finally:
+            kapat = getattr(yanit, "close", None)
+            if callable(kapat):
+                try:
+                    kapat()
+                except Exception:
+                    pass
+        sifirla()
+        return sonuc
+    raise paket.ArsivHatasi("tam arşiv indirilemedi — " + "; ".join(hatalar))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,32 +548,127 @@ def get_anime_episodes(anime_slug: str) -> List[Tuple[str, str]]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Stream linkleri
 # ─────────────────────────────────────────────────────────────────────────────
-def _resolve_mask(mask: str) -> Optional[str]:
-    """Turkanime-stili mask'i çöz; çözülemezse None.
+# turkanime.tv/.co/.net… — site kapandı; oraya giden adres oynatılamaz.
+_TURKANIME_KONAGI = re.compile(r"(^|\.)turkanime(\.[a-z]{2,})+$")
+# Site VK gömme adreslerini href.li "referer gizleyici"sinden geçiriyordu:
+# `https://href.li/?<gerçek adres>`. href.li bir JS/meta yönlendirme sayfası;
+# yt-dlp onu izleyemez, gerçek adres soru işaretinden sonrası.
+_YONLENDIRICILER = {"href.li", "www.href.li"}
+# `https:https://…` → `https://…` (aşağıda neden olduğu yazıyor).
+_CIFT_SEMA = re.compile(r"^(?:https?:)+(?=https?://)", re.I)
 
-    DİKKAT: `bypass.unmask_real_url()` başarısız olduğunda **girdiyi aynen geri
-    döndürür**. Bu değeri doğrulamadan kullanırsak `turkanime.tv/player/<MASK>`
-    gibi oynatılamaz bir adresi geçerli stream sanırız (yt-dlp de onu "generic
-    direct link" diye kabul edip sessizce bozuk indirme üretir).
+
+def _turkanime_sarmalayicisini_ac(parca) -> Optional[str]:
+    """turkanime.tv adresinden kurtarılabilecek gerçek adres; yoksa None.
+
+    Tek kurtarılabilen kalıp: `https://www.turkanime.tv/html/pixeldrain.php?id=<ID>`
+    (arşivde 102 kayıt). Sayfa pixeldrain dosyasını gömen bir sarmalayıcıydı;
+    ``id`` pixeldrain'in kendi dosya kimliği. Arşivdeki diğer 462 PIXELDRAIN
+    kaydı zaten doğrudan `https://pixeldrain.com/u/<ID>` biçiminde — aynı biçime
+    çevriliyor.
     """
-    try:
-        from .. import bypass  # type: ignore
-        full = mask if mask.startswith("http") else getattr(bypass, "BASE_URL", "") + mask
-        resolved = bypass.unmask_real_url(full)
-    except Exception:
+    if parca.path.rstrip("/").endswith("/pixeldrain.php"):
+        kimlik = (parse_qs(parca.query).get("id") or [""])[0]
+        if re.fullmatch(r"[A-Za-z0-9]{4,32}", kimlik):
+            return f"https://pixeldrain.com/u/{kimlik}"
+    return None
+
+
+def _url_duzelt(ham: Any) -> Optional[str]:
+    """Arşivdeki video adresini oynatılabilir biçime getir; olmuyorsa None.
+
+    Arşivdeki bütün VK kayıtları (~22 bin) şöyle:
+        ``https:https://href.li/?https://vk.com/video_ext.php?oid=…``
+    `urlsplit` bunu şema=``https``, konak=**boş**, yol=``https://href.li/…``
+    diye ayrıştırıyor — "VK kayıtlarının konağı boş" görünmesinin sebebi bu.
+    AnimeDepo'nun kazıyıcısı iframe adresini protokol-göreli (``//…``) sanıp
+    başına ``https:`` eklemiş; site ise zaten tam adres veriyordu. Düzeltme:
+    fazladan şemayı at, href.li sarmalayıcısını soy, sonucu yeniden doğrula.
+    Aynı çift şema 13 MAIL kaydında da var.
+
+    Ayrıca: baş/son boşluklar kırpılır (SAVEFILEWAY/MAIL kayıtlarında var),
+    gerçekten protokol-göreli (``//konak/…``) adrese ``https:`` eklenir,
+    konağı olmayan artıklar (``https:&hd=1``) ve turkanime alan adları atılır.
+    """
+    if not isinstance(ham, str):
         return None
-    if not resolved or "/player/" in resolved:
-        return None          # çözülemedi
-    return resolved
+    url = ham.strip()
+    for _ in range(3):                   # sarmalayıcı içinden yine çift şema çıkabilir
+        if url.startswith("//"):
+            url = "https:" + url
+        url = _CIFT_SEMA.sub("", url)
+        try:
+            konak = (urlsplit(url).hostname or "").lower()
+        except ValueError:
+            return None
+        if konak in _YONLENDIRICILER and "?" in url:
+            url = url.split("?", 1)[1].strip()
+            if re.match(r"https?%3A", url, re.I):
+                url = unquote(url)
+            continue
+        break
+    try:
+        parca = urlsplit(url)
+        konak = (parca.hostname or "").lower()
+    except ValueError:
+        return None
+    if parca.scheme.lower() not in ("http", "https") or not konak:
+        return None
+    if _TURKANIME_KONAGI.search(konak):
+        return _turkanime_sarmalayicisini_ac(parca)
+    return url
+
+
+def _akis_uret(item: Any) -> Optional[Dict[str, str]]:
+    """Tek arşiv kaydından stream sözlüğü; oynatılamayacaksa None.
+
+    Hiçbir koşulda ağa çıkılmaz. Eskiden `url`'siz (yalnızca `mask`/`path`
+    taşıyan) kayıtlar `bypass.unmask_real_url` ile turkanime.tv'ye sorularak
+    çözülüyordu; site kapandı, o istekler yalnızca zaman aşımı biriktirir.
+    """
+    if not isinstance(item, dict):
+        return None
+    player = str(item.get("player") or "AnimeDepo").strip().upper()
+    # Arşiv ölü oynatıcıları "DEAD_" önekiyle işaretliyor (DEAD_ALUCARD,
+    # DEAD_AMATERASU: turkanime'nin kendi sunucuları).
+    if player.startswith("DEAD_"):
+        return None
+    if item.get("alive") is False:
+        return None
+    url = _url_duzelt(item.get("url"))
+    if not url:
+        return None
+    fansub = str(item.get("fansub") or "").strip()
+    stream: Dict[str, str] = {
+        "url": url,
+        "label": " ".join(p for p in (player.title(), fansub) if p).strip() or player,
+        "type": item.get("type") or "direct",
+        "player": player,
+        "fansub": fansub,
+    }
+    # Arşiv kendi referer'ını veriyorsa ona uyulur: sunucu tarayıcısının
+    # (turkanime_server/crawler) ürettiği kayıtlarda link tranimaci/openani
+    # gibi kaynakların CDN'inden gelir ve turkanime referer'ı ile 403 döner.
+    # Referer yoksa eski davranış korunur (GitLab arşivindeki doğrudan dosya
+    # linkleri turkanime'nin gömmesi için verilmişti).
+    referer = item.get("referer")
+    if referer:
+        stream["referer"] = referer
+    elif re.search(r"\.(mp4|m3u8)(\?|$)", url):
+        stream["referer"] = "https://www.turkanime.co/"
+    return stream
 
 
 def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
-    """Bölümün video stream URL'lerini döndür.
+    """Bölümün video stream'lerini oynatıcı önceliğine göre sıralı döndür.
 
     Args:
         episode_id: "anime_slug/bolum_slug" bileşik kimliği.
 
-    Returns: [{"url": ..., "label": ..., "type": "direct", "referer"?: ...}, ...]
+    Returns: [{"url", "label", "type", "player", "fansub", "referer"?}, ...]
+        Sıra `common.oynatici_onceligi`: çalıştığı bilinen oynatıcılar önce,
+        bilinmeyenler ortada, bilinen false-positive'ler en sonda. Sıra önemli:
+        `AdapterBolum.best_video` yalnızca ilk birkaç adayı yokluyor.
     """
     if "/" not in episode_id:
         return []
@@ -269,41 +677,24 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
         data = fetch_json(f"animeler/{anime_slug}/{ep_slug}.json")
     except Exception:
         return []
+    if not isinstance(data, list):
+        return []
 
     streams: List[Dict[str, str]] = []
-    for item in data or []:
-        if not isinstance(item, dict):
+    gorulen = set()
+    for item in data:
+        stream = _akis_uret(item)
+        if stream is None:
             continue
-        if item.get("alive") is False:
+        # Aynı fansub'un aynı adresi iki kez: best_video'nun kısıtlı deneme
+        # bütçesini boşa harcamasın.
+        anahtar = (stream["url"], stream["fansub"])
+        if anahtar in gorulen:
             continue
-        player = (item.get("player") or "AnimeDepo").upper()
-        fansub = item.get("fansub") or ""
-        label = " ".join(p for p in (player.title(), fansub) if p).strip() or player
-
-        url = item.get("url")
-        if not url:
-            mask = item.get("mask") or item.get("path")
-            if mask:
-                url = _resolve_mask(mask)
-        if not url:
-            continue
-
-        stream: Dict[str, str] = {
-            "url": url,
-            "label": label,
-            "type": item.get("type") or "direct",
-        }
-        # Arşiv kendi referer'ını veriyorsa ona uyulur: sunucu tarayıcısının
-        # (turkanime_server/crawler) ürettiği kayıtlarda link tranimaci/openani
-        # gibi kaynakların CDN'inden gelir ve turkanime referer'ı ile 403 döner.
-        # Referer yoksa eski davranış korunur (GitLab arşivindeki linkler
-        # turkanime maskesinden çözülüyordu).
-        referer = item.get("referer")
-        if referer:
-            stream["referer"] = referer
-        elif re.search(r"\.(mp4|m3u8)(\?|$)", url):
-            stream["referer"] = "https://www.turkanime.co/"
+        gorulen.add(anahtar)
         streams.append(stream)
+    # `sort` kararlı: aynı öncelikteki kayıtlar arşivdeki sırasını korur.
+    streams.sort(key=lambda s: oncelik_anahtari(s["player"]))
     return streams
 
 
@@ -313,9 +704,22 @@ __all__ = [
     "get_episode_streams",
     "get_anime_listesi",
     "dizin",
+    "fetch_json",
+    "arsiv_konumu",
+    "ArsivKonumu",
+    "uzak_aynalar",
+    "tam_arsiv_indir",
+    "TAM_ARSIV_KAYNAKLARI",
+    "veri_koku",
+    "indirilen_arsiv_dizini",
+    "onbellek_dizini",
+    "sifirla",
     "taban_url",
     "taban_url_sifirla",
     "BASE_URL",
+    "GITHUB_AYNA_URL",
     "ORTAM_ANAHTARI",
     "AYAR_ANAHTARI",
+    "DIZIN_ORTAM_ANAHTARI",
+    "DIZIN_AYAR_ANAHTARI",
 ]

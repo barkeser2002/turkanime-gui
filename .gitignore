@@ -52,3 +52,14 @@ tranime_debug.html
 
 # Bozuk JSON karantinasi (dosyalar.py) - test artigi olabilir
 *.bozuk-*
+
+# ── Çevrimdışı arşiv: kullanıcının indirdikleri ─────────────────────────────
+# Depodan çalıştırılınca "veri kökü" depo KÖKÜ oluyor (bkz. cli/dosyalar.py),
+# yani uygulama bunları buraya yazıyor. `arsiv/` commit'lenmiş aynadır; bunlar
+# ise yarım gigabaytlık kullanıcı verisi ve asla commit'lenmemeli.
+# (bkz. turkanime_api/sources/animedepo.py)
+/cevrimdisi_arsiv/
+/arsiv_onbellek/
+# tam_arsiv_indir'in geçici/eski kopyaları (kesilen indirmeden kalabilir)
+/.cevrimdisi_arsiv-indirme-*/
+/.cevrimdisi_arsiv-eski-*/
