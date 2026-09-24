@@ -1,0 +1,562 @@
+{
+ "success": true,
+ "data": {
+  "uuid": "213e8b74-182d-490f-b31b-a9c56e86d63a",
+  "name": "JUJUTSU KAISEN",
+  "slot_number": 2,
+  "animpow_core_id": "9072-D03257F18BEC",
+  "total_seasons": 3,
+  "total_episodes": 59,
+  "seasons": [
+   {
+    "season": 1,
+    "total_episodes": 24,
+    "episodes": [
+     {
+      "episode": 1,
+      "episode_type": "regular",
+      "episode_code": "S1-E1",
+      "episode_title": "Ryoumen Sukuna",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 2,
+      "episode_type": "regular",
+      "episode_code": "S1-E2",
+      "episode_title": "Kendim İçin",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 3,
+      "episode_type": "regular",
+      "episode_code": "S1-E3",
+      "episode_title": "Çelik Kız",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 4,
+      "episode_type": "regular",
+      "episode_code": "S1-E4",
+      "episode_title": "Lanet Rahmi Ölmeli",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 5,
+      "episode_type": "regular",
+      "episode_code": "S1-E5",
+      "episode_title": "Lanet Rahmi Ölmeli 2. Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 6,
+      "episode_type": "regular",
+      "episode_code": "S1-E6",
+      "episode_title": "Yağmurdan Sonra",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 7,
+      "episode_type": "regular",
+      "episode_code": "S1-E7",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/213e8b74-182d-490f-b31b-a9c56e86d63a/S1-E7/e7867ae6-66a7-418c-8906-10c7ff81bc99/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/213e8b74-182d-490f-b31b-a9c56e86d63a/S1-E7/e7867ae6-66a7-418c-8906-10c7ff81bc99/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/213e8b74-182d-490f-b31b-a9c56e86d63a/S1-E7/e7867ae6-66a7-418c-8906-10c7ff81bc99/storyboard.vtt"
+     },
+     {
+      "episode": 8,
+      "episode_type": "regular",
+      "episode_code": "S1-E8",
+      "episode_title": "Can Sıkıntısı",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 9,
+      "episode_type": "regular",
+      "episode_code": "S1-E9",
+      "episode_title": "Ezikler ve Ters İlahi Ceza",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 10,
+      "episode_type": "regular",
+      "episode_code": "S1-E10",
+      "episode_title": "Aylak Değişim",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 11,
+      "episode_type": "regular",
+      "episode_code": "S1-E11",
+      "episode_title": "Bağnaz",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 12,
+      "episode_type": "regular",
+      "episode_code": "S1-E12",
+      "episode_title": "Günün Birinde, Sana",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 13,
+      "episode_type": "regular",
+      "episode_code": "S1-E13",
+      "episode_title": "Yarın",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 14,
+      "episode_type": "regular",
+      "episode_code": "S1-E14",
+      "episode_title": "Kyoto Kardeş Okul Değişim Programı - Takım Savaşı",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 15,
+      "episode_type": "regular",
+      "episode_code": "S1-E15",
+      "episode_title": "Kyoto Kardeş Okul Değişim Programı - Takım Savaşı 1",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 16,
+      "episode_type": "regular",
+      "episode_code": "S1-E16",
+      "episode_title": "Kyoto Kardeş Okul Değişim Programı - Takım Savaşı 2",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 17,
+      "episode_type": "regular",
+      "episode_code": "S1-E17",
+      "episode_title": "Kyoto Kardeş Okul Değişim Programı - Takım Savaşı 3",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 18,
+      "episode_type": "regular",
+      "episode_code": "S1-E18",
+      "episode_title": "Bilge",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 19,
+      "episode_type": "regular",
+      "episode_code": "S1-E19",
+      "episode_title": "Kara Parlama",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 20,
+      "episode_type": "regular",
+      "episode_code": "S1-E20",
+      "episode_title": "Standart Olmayan",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 21,
+      "episode_type": "regular",
+      "episode_code": "S1-E21",
+      "episode_title": "Sahir Okulu Beyzbol Turnuvası",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 22,
+      "episode_type": "regular",
+      "episode_code": "S1-E22",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 23,
+      "episode_type": "regular",
+      "episode_code": "S1-E23",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 24,
+      "episode_type": "regular",
+      "episode_code": "S1-E24",
+      "episode_title": "Suç Ortakları",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     }
+    ]
+   },
+   {
+    "season": 2,
+    "total_episodes": 23,
+    "episodes": [
+     {
+      "episode": 1,
+      "episode_type": "regular",
+      "episode_code": "S2-E1",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 2,
+      "episode_type": "regular",
+      "episode_code": "S2-E2",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 3,
+      "episode_type": "regular",
+      "episode_code": "S2-E3",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 4,
+      "episode_type": "regular",
+      "episode_code": "S2-E4",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 5,
+      "episode_type": "regular",
+      "episode_code": "S2-E5",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 6,
+      "episode_type": "regular",
+      "episode_code": "S2-E6",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 7,
+      "episode_type": "regular",
+      "episode_code": "S2-E7",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 8,
+      "episode_type": "regular",
+      "episode_code": "S2-E8",
+      "episode_title": null,
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 9,
+      "episode_type": "regular",
+      "episode_code": "S2-E9",
+      "episode_title": "Şibuya Hadisesi - Kapı Açıl",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 10,
+      "episode_type": "regular",
+      "episode_code": "S2-E10",
+      "episode_title": "Kargaşa",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 11,
+      "episode_type": "regular",
+      "episode_code": "S2-E11",
+      "episode_title": "Ruh Çağırma Seansı",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 12,
+      "episode_type": "regular",
+      "episode_code": "S2-E12",
+      "episode_title": "Kör Bıçak",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 13,
+      "episode_type": "regular",
+      "episode_code": "S2-E13",
+      "episode_title": "Kırmızı Terazi",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 14,
+      "episode_type": "regular",
+      "episode_code": "S2-E14",
+      "episode_title": "Dalgalanmalar",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 15,
+      "episode_type": "regular",
+      "episode_code": "S2-E15",
+      "episode_title": "Dalgalanmalar 2. Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 16,
+      "episode_type": "regular",
+      "episode_code": "S2-E16",
+      "episode_title": "Gök Gürültüsü",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 17,
+      "episode_type": "regular",
+      "episode_code": "S2-E17",
+      "episode_title": "Gök Gürültüsü 2. Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 18,
+      "episode_type": "regular",
+      "episode_code": "S2-E18",
+      "episode_title": "Doğru ve Yanlış",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 19,
+      "episode_type": "regular",
+      "episode_code": "S2-E19",
+      "episode_title": "Doğru ve Yanlış 2. Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 20,
+      "episode_type": "regular",
+      "episode_code": "S2-E20",
+      "episode_title": "Doğru ve Yanlış 3. Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 21,
+      "episode_type": "regular",
+      "episode_code": "S2-E21",
+      "episode_title": "Başkalaşım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 22,
+      "episode_type": "regular",
+      "episode_code": "S2-E22",
+      "episode_title": "Başkalaşım 2. Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 23,
+      "episode_type": "regular",
+      "episode_code": "S2-E23",
+      "episode_title": "Şibuya Hadisesi - Kapı Kapan",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     }
+    ]
+   },
+   {
+    "season": 3,
+    "total_episodes": 12,
+    "episodes": [
+     {
+      "episode": 1,
+      "episode_type": "regular",
+      "episode_code": "S3-E1",
+      "episode_title": "İcrâ",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 2,
+      "episode_type": "regular",
+      "episode_code": "S3-E2",
+      "episode_title": "Bir Kez Daha",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 3,
+      "episode_type": "regular",
+      "episode_code": "S3-E3",
+      "episode_title": "İtlaf Oyunu Hakkında",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 4,
+      "episode_type": "regular",
+      "episode_code": "S3-E4",
+      "episode_title": "Vedâ Seferinin Azığı",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 5,
+      "episode_type": "regular",
+      "episode_code": "S3-E5",
+      "episode_title": "Tutku",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 6,
+      "episode_type": "regular",
+      "episode_code": "S3-E6",
+      "episode_title": "Aksam",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 7,
+      "episode_type": "regular",
+      "episode_code": "S3-E7",
+      "episode_title": "Tokyo Kolonisi No. 1 Birinci Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 8,
+      "episode_type": "regular",
+      "episode_code": "S3-E8",
+      "episode_title": "Tokyo Kolonisi No. 1 İkinci Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 9,
+      "episode_type": "regular",
+      "episode_code": "S3-E9",
+      "episode_title": "Tokyo Kolonisi No. 1 Üçüncü Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 10,
+      "episode_type": "regular",
+      "episode_code": "S3-E10",
+      "episode_title": "Tokyo Kolonisi No. 1 Dördüncü Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 11,
+      "episode_type": "regular",
+      "episode_code": "S3-E11",
+      "episode_title": "Tokyo Kolonisi No. 1 Beşinci Kısım",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     },
+     {
+      "episode": 12,
+      "episode_type": "regular",
+      "episode_code": "S3-E12",
+      "episode_title": "Sendai Kolonisi",
+      "preview_url": null,
+      "thumbnail_url": null,
+      "storyboard_url": null
+     }
+    ]
+   }
+  ]
+ }
+}

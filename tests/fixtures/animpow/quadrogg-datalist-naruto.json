@@ -1,0 +1,127 @@
+{
+ "success": true,
+ "data": {
+  "uuid": "18e8e099-f5d3-4b06-9999-5cb0a9289b4e",
+  "name": "Naruto",
+  "slot_number": 2,
+  "animpow_core_id": "9072-19786DE3C7B2",
+  "total_seasons": 1,
+  "total_episodes": 12,
+  "seasons": [
+   {
+    "season": 1,
+    "total_episodes": 12,
+    "episodes": [
+     {
+      "episode": 1,
+      "episode_type": "regular",
+      "episode_code": "S1-E1",
+      "episode_title": "Giriş! Naruto Uzumaki!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E1/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E1/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E1/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 2,
+      "episode_type": "regular",
+      "episode_code": "S1-E2",
+      "episode_title": "Benim Adım Konohamaru!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E2/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E2/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E2/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 3,
+      "episode_type": "regular",
+      "episode_code": "S1-E3",
+      "episode_title": "Ezeli Rakip?! Sasuke ve Sakura",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E3/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E3/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E3/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 4,
+      "episode_type": "regular",
+      "episode_code": "S1-E4",
+      "episode_title": "Geçti mi, Kaldı mı? Hayatta Kalma Testi",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E4/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E4/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E4/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 5,
+      "episode_type": "regular",
+      "episode_code": "S1-E5",
+      "episode_title": "Sınıfta Kaldınız! Kakashi'nin Kararı",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E5/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E5/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E5/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 6,
+      "episode_type": "regular",
+      "episode_code": "S1-E6",
+      "episode_title": "Tehlikeli Bir Görev! Dalgalar Ülkesine Yolculuk!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E6/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E6/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E6/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 7,
+      "episode_type": "regular",
+      "episode_code": "S1-E7",
+      "episode_title": "Sis Suikastçısı!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E7/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E7/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E7/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 8,
+      "episode_type": "regular",
+      "episode_code": "S1-E8",
+      "episode_title": "Acı Yemini!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E8/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E8/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E8/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 9,
+      "episode_type": "regular",
+      "episode_code": "S1-E9",
+      "episode_title": "Sharingan Savaşçısı!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E9/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E9/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E9/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 10,
+      "episode_type": "regular",
+      "episode_code": "S1-E10",
+      "episode_title": "Çakra Ormanı",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E10/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E10/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E10/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 12,
+      "episode_type": "regular",
+      "episode_code": "S1-E12",
+      "episode_title": "Köprüdeki Savaş! Zabuza'nın Geri Dönüşü!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E12/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E12/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E12/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     },
+     {
+      "episode": 13,
+      "episode_type": "regular",
+      "episode_code": "S1-E13",
+      "episode_title": "Haku'nun Gizli Tekniği: Şeytani Aynalar!",
+      "preview_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E13/ab66e139-3702-4181-ae13-a4c19d1cdab4/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E13/ab66e139-3702-4181-ae13-a4c19d1cdab4/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s2-4k7m9q.benstreamsunucusuyum.xyz/18e8e099-f5d3-4b06-9999-5cb0a9289b4e/S1-E13/ab66e139-3702-4181-ae13-a4c19d1cdab4/storyboard.vtt"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,82 @@
+{
+ "success": true,
+ "data": {
+  "uuid": "b8a963be-c734-4de0-b2c3-ab8545ab1847",
+  "name": "ONE PIECE",
+  "slot_number": 4,
+  "animpow_core_id": "9072-18D4E79F4FC3",
+  "total_seasons": 1,
+  "total_episodes": 7,
+  "seasons": [
+   {
+    "season": 1,
+    "total_episodes": 7,
+    "episodes": [
+     {
+      "episode": 1173,
+      "episode_type": "regular",
+      "episode_code": "S1-E1173",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1173/bc5e235a-071c-48b8-9117-22b570f16500/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1173/bc5e235a-071c-48b8-9117-22b570f16500/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1173/bc5e235a-071c-48b8-9117-22b570f16500/storyboard.vtt"
+     },
+     {
+      "episode": 1174,
+      "episode_type": "regular",
+      "episode_code": "S1-E1174",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1174/bc5e235a-071c-48b8-9117-22b570f16500/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1174/bc5e235a-071c-48b8-9117-22b570f16500/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1174/bc5e235a-071c-48b8-9117-22b570f16500/storyboard.vtt"
+     },
+     {
+      "episode": 1175,
+      "episode_type": "regular",
+      "episode_code": "S1-E1175",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1175/bc5e235a-071c-48b8-9117-22b570f16500/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1175/bc5e235a-071c-48b8-9117-22b570f16500/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1175/bc5e235a-071c-48b8-9117-22b570f16500/storyboard.vtt"
+     },
+     {
+      "episode": 1176,
+      "episode_type": "regular",
+      "episode_code": "S1-E1176",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1176/bc5e235a-071c-48b8-9117-22b570f16500/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1176/bc5e235a-071c-48b8-9117-22b570f16500/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1176/bc5e235a-071c-48b8-9117-22b570f16500/storyboard.vtt"
+     },
+     {
+      "episode": 1177,
+      "episode_type": "regular",
+      "episode_code": "S1-E1177",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1177/bc5e235a-071c-48b8-9117-22b570f16500/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1177/bc5e235a-071c-48b8-9117-22b570f16500/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1177/bc5e235a-071c-48b8-9117-22b570f16500/storyboard.vtt"
+     },
+     {
+      "episode": 1178,
+      "episode_type": "regular",
+      "episode_code": "S1-E1178",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1178/541510c5-e32c-48c6-aad4-e5e16214d4d3/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1178/541510c5-e32c-48c6-aad4-e5e16214d4d3/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1178/541510c5-e32c-48c6-aad4-e5e16214d4d3/storyboard.vtt"
+     },
+     {
+      "episode": 1179,
+      "episode_type": "regular",
+      "episode_code": "S1-E1179",
+      "episode_title": null,
+      "preview_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1179/bc5e235a-071c-48b8-9117-22b570f16500/preview.webp",
+      "thumbnail_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1179/bc5e235a-071c-48b8-9117-22b570f16500/thumbnail.jpg",
+      "storyboard_url": "https://s3i--cdn-s4-6z3n5j.benstreamsunucusuyum.xyz/b8a963be-c734-4de0-b2c3-ab8545ab1847/S1-E1179/bc5e235a-071c-48b8-9117-22b570f16500/storyboard.vtt"
+     }
+    ]
+   }
+  ]
+ }
+}

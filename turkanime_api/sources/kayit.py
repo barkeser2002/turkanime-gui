@@ -302,6 +302,13 @@ def _animexe() -> KaynakUclari:
                         zengin_ara=search_animexe_zengin)
 
 
+def _animpow() -> KaynakUclari:
+    # Crypto (pycryptodome) modülün içinde, ilk şifreli istekte yükleniyor;
+    # sunucu imajında yoksa kaynak yalnızca QuadroGG ile çalışır.
+    from .animpow import get_anime_episodes, get_episode_streams, search_animpow
+    return KaynakUclari(search_animpow, get_anime_episodes, get_episode_streams)
+
+
 def _arsiv_bolum_slugu(bolum_id: str) -> str:
     """"anime_slug/bolum_slug" → "bolum_slug" (turkanime.tv'nin kendi slug'ı).
 
@@ -324,6 +331,19 @@ def _tranimaci_adresi(bolum_id: str) -> str:
 def _animexe_adresi(bolum_id: str) -> str:
     # Bölüm kimliği "slug/sezon/bölüm"; izleme sayfası tam olarak bu yolda.
     return f"https://animexe.com/watch/{bolum_id}"
+
+
+def _animpow_adresi(bolum_id: str) -> str:
+    """"core:sezon:bolum" → sitenin izleme adresi (/watch/{core}/s{S}e{E}).
+
+    Bölüm kimliği bir adres değil (iki arka ucu birleştiren bileşik anahtar);
+    sitenin kendi izleme sayfası bu biçimde. Biçime uymayan kimlik (eski/elle
+    girilmiş) olduğu gibi yolun sonuna eklenir: adres yalnızca gösterim için.
+    """
+    parca = str(bolum_id).rsplit(":", 2)
+    if len(parca) == 3:
+        return f"https://animpow.com/watch/{parca[0]}/s{parca[1]}e{parca[2]}"
+    return f"https://animpow.com/watch/{bolum_id}"
 
 
 # ── Tablo ───────────────────────────────────────────────────────────────────
@@ -354,6 +374,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
            taranabilir=True),
     Kaynak("Animexe", "Animexe", "AX", "#00b894", "ANIMEXE", _animexe,
            modul="animexe", cli_kodu="animexe", bolum_adresi=_animexe_adresi,
+           taranabilir=True),
+    Kaynak("AnimPow", "AnimPow", "AP", "#fd79a8", "ANIMPOW", _animpow,
+           modul="animpow", cli_kodu="animpow", bolum_adresi=_animpow_adresi,
            taranabilir=True),
 )
 
