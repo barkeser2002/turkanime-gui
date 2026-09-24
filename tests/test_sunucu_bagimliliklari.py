@@ -48,6 +48,7 @@ ISTEMCI_MODULLERI = [
     "turkanime_api.sources.animecix",
     "turkanime_api.sources.tranime",
     "turkanime_api.sources.tranimaci",
+    "turkanime_api.sources.animexe",
     "turkanime_api.sources.animedepo",
     "turkanime_api.common.episode_parser",
     "turkanime_api.common.title_match",

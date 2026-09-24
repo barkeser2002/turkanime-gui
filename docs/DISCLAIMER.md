@@ -60,6 +60,7 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 | TRAnimeİzle | [www.tranimeizle.io](https://www.tranimeizle.io) |
 | OpenAnime | [openani.me](https://openani.me) |
 | Tranimaci | [tranimaci.com](https://tranimaci.com) |
+| Animexe | [animexe.com](https://animexe.com) · video: AnimeciX'in tau-video CDN'leri (alan adları sık değişiyor) |
 
 > Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
 > `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce
