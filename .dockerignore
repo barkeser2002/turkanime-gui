@@ -76,6 +76,9 @@ bin
 tranime_debug.html
 
 # ── İmajda gereksiz olanlar ──────────────────────────────────────────────────
+# Çevrimdışı arşiv aynası (~500 MB JSON). Sunucu kendi arşivini üretiyor;
+# bunu context'e almak her build'i yarım gigabayt şişirir.
+arsiv
 tests
 docs
 *.md
