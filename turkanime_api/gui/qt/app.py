@@ -569,6 +569,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
+            # Aynı sebeple süren tam arşiv indirmesi (~230 MB) de iptal edilir;
+            # yarım paket geçici klasörle birlikte silinir, eski arşiv yerinde.
+            ayarlar = self.pages.get("settings")
+            if isinstance(ayarlar, SettingsPage):
+                ayarlar.arsiv_indirmeyi_durdur()
+        except Exception:
+            pass
+        try:
             from .workers import shutdown_pools
             shutdown_pools(KAPANIS_MUHLETI)
         except Exception:

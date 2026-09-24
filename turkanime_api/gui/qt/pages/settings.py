@@ -24,30 +24,81 @@ diyaloğu ya da sunucu ne yaparsa yapsın kullanıcının kendi çerezi elinde k
 bağışın başarısızlığı "kontrolü boşuna çözdüm" demek olmaz. Teklifin kendisi de
 iki kapıdan geçer: "kimlik paylas" ayarı açık olacak (varsayılan kapalı) VE
 kullanıcı diyaloğu onaylayacak — ayar tek başına hiçbir şey göndertmez.
+
+**Çevrimdışı arşiv (TürkAnime)**: turkanime.tv kapandı; "TürkAnime" kaynağı
+sitenin statik arşivinden okunuyor (`sources/animedepo.py`). Bölüm hangi
+konumun etkin olduğunu (ortam değişkeni / seçilen klasör / indirilen tam arşiv /
+depodaki `arsiv/` / uzak ayna), kaç anime olduğunu ve dizinin tarihini
+gösterir; tam arşivi indirir, günceller, siler ya da elle bir klasör
+gösterilmesini sağlar. Kural: sayfa KURULURKEN ne ağa çıkar ne diske yüklenir —
+ana pencere açılışta bütün sayfaları kuruyor ve megabaytlık `dizin.json`
+ayrıştırmak açılışı geciktirirdi. Durum sayfa ilk GÖSTERİLDİĞİNDE arka planda
+hesaplanır (`showEvent` → `arsiv_durumunu_tazele`); indirme/silme/klasör
+denetimi de arka planda koşar, sonuç `UiBridge` ile GUI thread'ine taşınır.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox, QVBoxLayout,
+    QWidget,
 )
 
+from ....common import arsiv_paketi as paket
+from ....sources import animedepo
 from .. import prefs
 from ..anilist import AniListService
 from ..widgets import StatusLabel
+from ..workers import UiBridge, run_bg
+
+# Etkin arşiv konumunun (`animedepo.ArsivKonumu.kaynak`) kullanıcıya görünen adı.
+ARSIV_KONUM_ADLARI = {
+    "ortam": f"Ortam değişkeni ({animedepo.DIZIN_ORTAM_ANAHTARI})",
+    "ayar": "Ayarlarda seçilen klasör",
+    "indirilen": "İndirilmiş tam arşiv",
+    "depo": "Depodaki arşiv klasörü (arsiv/)",
+    "uzak": "Uzak ayna (internet gerekir)",
+}
+# Boyut ölçüldü: `arsiv/`'in tar.gz'si 230,8 MB (açılınca ~0,5 GB). GitLab
+# paketi anında üretildiği için boyut başlığı gelmiyor; kullanıcı neye
+# başladığını düğmeden bilsin.
+TAM_ARSIV_DUGMESI = "Tüm arşivi indir (~230 MB)"
+ARSIV_GUNCELLE_DUGMESI = "Arşivi güncelle"
+TAM_ARSIV_BOYUTU_MB = 230
+# Paket 64 KB'lık parçalarla akıyor: ~3600 ilerleme çağrısı. Her birini GUI'ye
+# taşımak olay kuyruğunu boğar; saniyede ~10 güncelleme göze yetiyor.
+ILERLEME_ARALIGI = 0.1
+UYARI_RENGI = "#e17055"
 
 
 class SettingsPage(QWidget):
     """İndirme klasörü, TRAnime cookie'si, bypass, AniList ve çevresel servisler."""
+
+    # Arşiv durumu okunup panele yazıldı (`animedepo.ArsivDurumu`). Başka
+    # sayfalar arşiv konumu değişince tazelenmek isterse buna bağlanır.
+    arsiv_durumu_yenilendi = Signal(object)
 
     def __init__(self, servis: Optional[AniListService] = None,
                  parent: Optional[QWidget] = None, discord=None, updates=None,
                  requirements=None):
         super().__init__(parent)
         self._cookie_worker = None
+        # Arşiv bölümünün durumu. `_arsiv_nesil`: her durum isteği bir numara
+        # alır, geç dönen eski sonuç yenisinin üstüne yazamaz. `_arsiv_mesgul`:
+        # None | "indirme" | "islem" (klasör denetimi, silme) — aynı anda tek iş.
+        self._ui = UiBridge(self)
+        self._arsiv_nesil = 0
+        self._arsiv_durumu: Optional[animedepo.ArsivDurumu] = None
+        self._arsiv_mesgul: Optional[str] = None
+        self._arsiv_iptal: Optional[threading.Event] = None
+        self._arsiv_kaynak_adi = ""
         self.servis = servis or AniListService(self)
         # Çevresel servisler ana pencereye ait; sayfa yalnızca düğmelerini
         # bağlar. Yoksa (tek başına açılan sayfa/test) ilgili bölüm pasif olur.
@@ -67,9 +118,9 @@ class SettingsPage(QWidget):
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
+        dis = QVBoxLayout(self)
+        dis.setContentsMargins(24, 20, 24, 20)
+        dis.setSpacing(14)
 
         head = QHBoxLayout()
         title = QLabel("Ayarlar")
@@ -78,7 +129,22 @@ class SettingsPage(QWidget):
         head.addStretch(1)
         self.lblStatus = StatusLabel()
         head.addWidget(self.lblStatus)
-        layout.addLayout(head)
+        dis.addLayout(head)
+
+        # Bölümler kaydırılabilir alanda, başlık (ve durum satırı) dışında:
+        # dokuz panel küçük ekranda pencereye sığmıyor, kaydırma olmadan sayfa
+        # pencerenin asgari yüksekliğini ekrandan büyük yapardı. Durum satırı
+        # sabit kalıyor ki "Kaydet"in sonucu her zaman görünsün.
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        icerik = QWidget()
+        layout = QVBoxLayout(icerik)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(14)
+        self.scroll.setWidget(icerik)
+        dis.addWidget(self.scroll, 1)
 
         # ── İndirme ─────────────────────────────────────────────────────────
         box = QFrame(); box.setObjectName("Panel")
@@ -122,6 +188,9 @@ class SettingsPage(QWidget):
         self.chkAria = QCheckBox("aria2c ile indir")
         form.addRow("", self.chkAria)
         layout.addWidget(box)
+
+        # ── Çevrimdışı arşiv (TürkAnime) ────────────────────────────────────
+        layout.addWidget(self._build_arsiv())
 
         # ── Liste görünümü / fansub ─────────────────────────────────────────
         lbox = QFrame(); lbox.setObjectName("Panel")
@@ -344,6 +413,90 @@ class SettingsPage(QWidget):
         layout.addLayout(actions)
 
         layout.addStretch(1)
+
+    def _build_arsiv(self) -> QFrame:
+        """"Çevrimdışı arşiv (TürkAnime)" paneli — yalnızca widget'lar.
+
+        Burada disk/ağ YOK: durum, sayfa gösterilince arka planda dolar.
+        """
+        rbox = QFrame(); rbox.setObjectName("Panel")
+        rl = QVBoxLayout(rbox)
+        rl.setContentsMargins(16, 14, 16, 14)
+        rl.setSpacing(8)
+
+        rl.addWidget(QLabel("Çevrimdışı arşiv (TürkAnime)"))
+        aciklama = QLabel(
+            "turkanime.tv kapandı; TürkAnime kaynağı sitenin arşivinden okunur. "
+            "Tüm arşivi indirirseniz TürkAnime araması ve bölüm listeleri "
+            "internetsiz çalışır. Videolar yine üçüncü parti sunuculardan "
+            "(ok.ru, Sibnet, Mail.ru…) gelir.")
+        aciklama.setObjectName("Muted")
+        aciklama.setWordWrap(True)
+        rl.addWidget(aciklama)
+
+        rform = QFormLayout()
+        rform.setSpacing(6)
+        self.lblArsivKonum = QLabel("—")
+        rform.addRow("Etkin konum", self.lblArsivKonum)
+        self.lblArsivYer = QLabel("—")
+        self.lblArsivYer.setWordWrap(True)
+        # Yol/adres kopyalanabilsin: kullanıcı onu dosya yöneticisinde açmak
+        # ya da hata bildirirken yapıştırmak isteyecek.
+        self.lblArsivYer.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        rform.addRow("Yer", self.lblArsivYer)
+        self.lblArsivIcerik = QLabel("Ayarlar açılınca okunur.")
+        self.lblArsivIcerik.setWordWrap(True)
+        rform.addRow("İçerik", self.lblArsivIcerik)
+        rl.addLayout(rform)
+
+        self.lblArsivUyari = QLabel()
+        self.lblArsivUyari.setWordWrap(True)
+        self.lblArsivUyari.setStyleSheet(f"color: {UYARI_RENGI};")
+        self.lblArsivUyari.setVisible(False)
+        rl.addWidget(self.lblArsivUyari)
+
+        prow = QHBoxLayout()
+        self.prgArsiv = QProgressBar()
+        self.prgArsiv.setTextVisible(False)   # metin ayrı etikette (belirsiz kipte görünmüyor)
+        prow.addWidget(self.prgArsiv, 1)
+        self.btnArsivIptal = QPushButton("İptal")
+        self.btnArsivIptal.clicked.connect(self._arsiv_iptal_et)
+        prow.addWidget(self.btnArsivIptal)
+        rl.addLayout(prow)
+        self.lblArsivIlerleme = QLabel()
+        self.lblArsivIlerleme.setObjectName("Muted")
+        self.lblArsivIlerleme.setWordWrap(True)
+        rl.addWidget(self.lblArsivIlerleme)
+
+        rrow = QHBoxLayout()
+        self.btnArsivIndir = QPushButton(TAM_ARSIV_DUGMESI)
+        self.btnArsivIndir.setObjectName("Primary")
+        self.btnArsivIndir.clicked.connect(self._arsiv_indir)
+        rrow.addWidget(self.btnArsivIndir)
+        self.btnArsivKlasor = QPushButton("Klasör seç…")
+        self.btnArsivKlasor.setToolTip(
+            "Elinizdeki bir arşiv kopyasını gösterin (içinde dizin.json olmalı).")
+        self.btnArsivKlasor.clicked.connect(self._arsiv_klasor_sec)
+        rrow.addWidget(self.btnArsivKlasor)
+        self.btnArsivVarsayilan = QPushButton("Varsayılana dön")
+        self.btnArsivVarsayilan.setToolTip(
+            "Seçilen klasörü unut; arşiv varsayılan sırayla aransın.")
+        self.btnArsivVarsayilan.clicked.connect(self._arsiv_varsayilana_don)
+        rrow.addWidget(self.btnArsivVarsayilan)
+        self.btnArsivSil = QPushButton("İndirilen arşivi sil")
+        self.btnArsivSil.clicked.connect(self._arsiv_sil)
+        rrow.addWidget(self.btnArsivSil)
+        rrow.addStretch(1)
+        rl.addLayout(rrow)
+
+        # Arşiv işlemlerinin sonucu panelin içinde: sayfa kaydırılabilir ve
+        # kullanıcı düğmeye bastığı yere bakıyor.
+        self.lblArsivDurum = StatusLabel()
+        rl.addWidget(self.lblArsivDurum)
+
+        self._arsiv_dugmelerini_guncelle()
+        return rbox
 
     # ── Ayar okuma/yazma ────────────────────────────────────────────────────
     @staticmethod
@@ -652,6 +805,379 @@ class SettingsPage(QWidget):
                           if len(kimlikler) == 1 else
                           f"{len(kimlikler)} bağış geri çekildi ve sunucudan silindi.")
 
+    # ── Çevrimdışı arşiv (TürkAnime) ────────────────────────────────────────
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt imzası)
+        """Arşiv durumunu sayfa GÖRÜNÜNCE tazele (kurulumda değil).
+
+        Ana pencere bütün sayfaları açılışta kuruyor; durumu kurulumda okumak
+        her açılışta megabaytlık `dizin.json`'ı ayrıştırmak demekti — kullanıcı
+        Ayarlar'a hiç girmese bile. Her gösterimde yeniden okunuyor çünkü
+        konum arada değişebilir (başka pencereden indirme, elle silinen klasör);
+        yerel dizin önbellekte olduğundan ikinci okuma ucuz.
+        """
+        super().showEvent(event)
+        self.arsiv_durumunu_tazele()
+
+    def _gui(self, fn: Callable[[], Any]) -> None:
+        """Arka plan thread'inden GUI thread'ine iş gönder (`after(0, fn)`).
+
+        Sayfa (ve köprüsü) iş bitmeden yok edilmişse `emit` RuntimeError
+        fırlatır. Gösterecek pencere kalmadığı için yutmak doğru; yutulmazsa
+        kapanışta thread yığın izi basar.
+        """
+        try:
+            self._ui.post(fn)
+        except RuntimeError:
+            pass
+
+    def arsiv_durumunu_tazele(self) -> None:
+        """Etkin arşiv konumunu ve içeriğini arka planda oku, panele yaz."""
+        self._arsiv_nesil += 1
+        nesil = self._arsiv_nesil
+        if self._arsiv_durumu is None:
+            self.lblArsivIcerik.setText("Okunuyor…")
+        run_bg(self._arsiv_durumu_is, nesil)
+
+    def _arsiv_durumu_is(self, nesil: int) -> None:
+        """ARKA PLAN: `animedepo.arsiv_durumu` ağa çıkmaz ama diske yüklenir."""
+        try:
+            durum = animedepo.arsiv_durumu()
+        except Exception as exc:          # kullanıcıya gösteriliyor (sessiz değil)
+            mesaj = str(exc) or type(exc).__name__
+            self._gui(lambda: self._arsiv_durumu_hatasi(nesil, mesaj))
+            return
+        self._gui(lambda: self._arsiv_durumu_geldi(nesil, durum))
+
+    def _arsiv_durumu_hatasi(self, nesil: int, mesaj: str) -> None:
+        if nesil != self._arsiv_nesil:
+            return
+        self.lblArsivIcerik.setText("Okunamadı.")
+        self.lblArsivDurum.error(f"Arşiv durumu okunamadı: {mesaj}")
+
+    def _arsiv_durumu_geldi(self, nesil: int, durum: Any) -> None:
+        if nesil != self._arsiv_nesil:
+            return                       # geç dönen eski istek — yenisini ezmesin
+        self._arsiv_durumu = durum
+        self.lblArsivKonum.setText(ARSIV_KONUM_ADLARI.get(durum.kaynak, durum.kaynak))
+        self.lblArsivYer.setText(durum.adres)
+        self.lblArsivIcerik.setText(self._arsiv_icerik_metni(durum))
+        uyarilar = self._arsiv_uyarilari(durum)
+        self.lblArsivUyari.setText("\n".join(uyarilar))
+        self.lblArsivUyari.setVisible(bool(uyarilar))
+        self._arsiv_dugmelerini_guncelle()
+        self.arsiv_durumu_yenilendi.emit(durum)
+
+    @staticmethod
+    def _arsiv_icerik_metni(durum: Any) -> str:
+        """"6.098 anime · son güncelleme 14.09.2026" biçiminde özet."""
+        if durum.anime_sayisi is None:
+            if durum.konum.yerel:
+                return "dizin.json okunamadı."
+            # Durum göstermek için ağa çıkılmıyor (bkz. `animedepo.arsiv_durumu`).
+            return "Henüz okunmadı — ilk TürkAnime aramasında aynadan gelecek."
+        sayi = f"{durum.anime_sayisi:,}".replace(",", ".")
+        tarih = _tarih_metni(durum.son_guncelleme)
+        metin = f"{sayi} anime · " + (f"son güncelleme {tarih}" if tarih
+                                     else "güncelleme tarihi bilinmiyor")
+        if durum.onbellekten:
+            metin += " (disk önbelleğindeki kopya)"
+        return metin
+
+    @staticmethod
+    def _arsiv_uyarilari(durum: Any) -> List[str]:
+        """Kullanıcının bilmesi gereken sessiz geçişler.
+
+        Geçersiz bir klasör konum çözümünde SESSİZCE atlanıyor (yanlış ayar
+        uygulamayı arşivsiz bırakmasın diye); ama kullanıcı gösterdiği klasörün
+        kullanılmadığını buradan öğrenmeli, yoksa "seçtim ama olmadı" kalır.
+        """
+        uyarilar: List[str] = []
+        ortam_adi = animedepo.DIZIN_ORTAM_ANAHTARI
+        if durum.ortam_dizini and durum.kaynak != "ortam":
+            uyarilar.append(
+                f"{ortam_adi} ({durum.ortam_dizini}) geçerli bir arşiv değil "
+                "(dizin.json yok ya da okunamıyor); atlandı.")
+        if durum.ayar_dizini and durum.kaynak not in ("ortam", "ayar"):
+            uyarilar.append(
+                f"Seçtiğiniz klasör ({durum.ayar_dizini}) geçerli bir arşiv değil "
+                "(dizin.json yok ya da okunamıyor); atlandı. “Klasör seç…” ile "
+                "yenisini gösterin ya da “Varsayılana dön”e basın.")
+        elif durum.ayar_dizini and durum.kaynak == "ortam":
+            uyarilar.append(
+                f"Seçtiğiniz klasör kayıtlı ama {ortam_adi} ortam değişkeni önce geliyor.")
+        if durum.indirilen_var and durum.kaynak in ("ortam", "ayar"):
+            uyarilar.append(
+                "İndirilmiş tam arşiv de var, ama gösterilen klasör önce geliyor.")
+        if durum.kaynak == "uzak":
+            uyarilar.append(
+                "Yerel arşiv yok: TürkAnime araması ve bölüm listeleri internetten "
+                "gelir. Çevrimdışı kullanmak için tüm arşivi indirin.")
+        return uyarilar
+
+    def _arsiv_dugmelerini_guncelle(self) -> None:
+        """Düğmeleri işe ve bilinen duruma göre aç/kapa, metinleri ayarla."""
+        mesgul = self._arsiv_mesgul is not None
+        indirilen_var = bool(self._arsiv_durumu and self._arsiv_durumu.indirilen_var)
+        # Aynı eylem: indirme eskiyi ancak yenisi doğrulanınca değiştiriyor.
+        self.btnArsivIndir.setText(ARSIV_GUNCELLE_DUGMESI if indirilen_var
+                                   else TAM_ARSIV_DUGMESI)
+        self.btnArsivIndir.setEnabled(not mesgul)
+        self.btnArsivKlasor.setEnabled(not mesgul)
+        self.btnArsivVarsayilan.setEnabled(not mesgul)
+        self.btnArsivSil.setEnabled(not mesgul and indirilen_var)
+        indiriyor = self._arsiv_mesgul == "indirme"
+        self.prgArsiv.setVisible(indiriyor)
+        self.lblArsivIlerleme.setVisible(indiriyor)
+        self.btnArsivIptal.setVisible(indiriyor)
+        iptal = self._arsiv_iptal
+        self.btnArsivIptal.setEnabled(indiriyor and not (iptal and iptal.is_set()))
+
+    def _arsiv_isi_bitti(self) -> None:
+        self._arsiv_mesgul = None
+        self._arsiv_iptal = None
+        self._arsiv_dugmelerini_guncelle()
+
+    # İndirme ────────────────────────────────────────────────────────────────
+    def _arsiv_indir(self) -> None:
+        """"Tüm arşivi indir" / "Arşivi güncelle" — ikisi aynı eylem."""
+        if self._arsiv_mesgul is not None:
+            self.lblArsivDurum.info("Bir arşiv işlemi zaten sürüyor.")
+            return
+        iptal = threading.Event()
+        self._arsiv_iptal = iptal
+        self._arsiv_mesgul = "indirme"
+        self._arsiv_kaynak_adi = ""
+        self.prgArsiv.setRange(0, 0)     # belirsiz: ilk yanıta kadar boyut yok
+        self.lblArsivIlerleme.setText("Bağlanılıyor…")
+        self.lblArsivDurum.info("Tam arşiv indiriliyor…")
+        self._arsiv_dugmelerini_guncelle()
+        # Genel havuz, bilinçli: uzun işler için ayrılmış havuzun sınırı
+        # "paralel indirme sayısı" ve bölüm indirmeleriyle dolu olabilir; arşiv
+        # o kuyruğun sonunda dakikalarca "bağlanılıyor"da beklerdi. Aynı anda tek
+        # arşiv işi var (`_arsiv_mesgul`), kısa görevleri aç bırakmaz.
+        run_bg(self._arsiv_indir_is, iptal)
+
+    def _arsiv_indir_is(self, iptal: threading.Event) -> None:
+        """ARKA PLAN: tam arşivi indir; her sonuç GUI'ye taşınır."""
+        son = [0.0]
+
+        def ilerleme(indirilen: int, toplam: Optional[int]) -> None:
+            simdi = time.monotonic()
+            bitti = toplam is not None and indirilen >= toplam
+            if indirilen and not bitti and simdi - son[0] < ILERLEME_ARALIGI:
+                return
+            son[0] = simdi
+            self._gui(lambda: self._arsiv_ilerleme(indirilen, toplam))
+
+        def asama(ad: str, kaynak_adi: str) -> None:
+            self._gui(lambda: self._arsiv_asama(ad, kaynak_adi))
+
+        try:
+            yol = animedepo.tam_arsiv_indir(ilerleme=ilerleme, iptal=iptal, asama=asama)
+        except paket.IptalEdildi:
+            self._gui(self._arsiv_indirme_iptal_edildi)
+            return
+        except Exception as exc:          # kullanıcıya gösteriliyor (sessiz değil)
+            mesaj = str(exc) or type(exc).__name__
+            self._gui(lambda: self._arsiv_indirme_hatasi(mesaj))
+            return
+        self._gui(lambda: self._arsiv_indirildi(yol))
+
+    def _arsiv_asama(self, ad: str, kaynak_adi: str) -> None:
+        if self._arsiv_mesgul != "indirme":
+            return
+        self._arsiv_kaynak_adi = kaynak_adi
+        if ad == paket.ASAMA_BAGLANMA:
+            self.prgArsiv.setRange(0, 0)
+            self.lblArsivIlerleme.setText(f"Bağlanılıyor: {kaynak_adi}…")
+        elif ad == paket.ASAMA_INDIRME:
+            self.prgArsiv.setRange(0, 0)
+            self.lblArsivIlerleme.setText(f"{kaynak_adi} paketi indiriliyor…")
+        elif ad == paket.ASAMA_ACMA:
+            # Açarken bayt ilerlemesi akmıyor: çubuk belirsiz kipe dönmezse
+            # %100'de donmuş görünür ve kullanıcı "takıldı" sanar.
+            self.prgArsiv.setRange(0, 0)
+            self.lblArsivIlerleme.setText(
+                "Paket açılıyor (83 bin dosya; bir dakika kadar sürebilir)…")
+        elif ad == paket.ASAMA_YERLESTIRME:
+            self.lblArsivIlerleme.setText("Yeni arşiv yerine konuyor…")
+
+    def _arsiv_ilerleme(self, indirilen: int, toplam: Optional[int]) -> None:
+        if self._arsiv_mesgul != "indirme":
+            return                       # geç gelen ilerleme, iş bitmiş
+        kaynak = f"{self._arsiv_kaynak_adi}: " if self._arsiv_kaynak_adi else ""
+        if toplam:
+            # Binde bir çözünürlük: QProgressBar int alıyor, bayt sayısı
+            # büyük dosyada taşabilir.
+            self.prgArsiv.setRange(0, 1000)
+            self.prgArsiv.setValue(min(1000, int(indirilen * 1000 / toplam)))
+            self.lblArsivIlerleme.setText(
+                f"{kaynak}{_mb(indirilen)} / {_mb(toplam)} MB indirildi")
+        else:
+            # GitLab paketi anında üretiyor, boyut başlığı yok: yüzde verilemez.
+            self.prgArsiv.setRange(0, 0)
+            self.lblArsivIlerleme.setText(
+                f"{kaynak}{_mb(indirilen)} MB indirildi (toplam ~{TAM_ARSIV_BOYUTU_MB} MB)")
+
+    def _arsiv_iptal_et(self) -> None:
+        """"İptal": indirme bir sonraki parçada (ya da tar üyesinde) durur."""
+        if self._arsiv_iptal is None:
+            return
+        self._arsiv_iptal.set()
+        self.btnArsivIptal.setEnabled(False)
+        self.lblArsivIlerleme.setText("İptal ediliyor…")
+
+    def arsiv_indirmeyi_durdur(self) -> None:
+        """Pencere kapanırken çağrılır: süren arşiv indirmesini iptal et.
+
+        Yalnızca havuzu beklemek yetmez; iptal edilmezse indirme sonuna kadar
+        sürer ve süreç kapanmaz (bkz. `MainWindow.closeEvent`).
+        """
+        if self._arsiv_iptal is not None:
+            self._arsiv_iptal.set()
+
+    def _arsiv_indirildi(self, yol: Any) -> None:
+        self._arsiv_isi_bitti()
+        self.lblArsivDurum.ok(
+            f"Tam arşiv indirildi: {yol}. TürkAnime araması ve bölüm listeleri "
+            "artık internetsiz çalışır.")
+        self.arsiv_durumunu_tazele()
+
+    def _arsiv_indirme_iptal_edildi(self) -> None:
+        self._arsiv_isi_bitti()
+        self.lblArsivDurum.info(
+            "Arşiv indirmesi iptal edildi; önceki arşiv (varsa) yerinde duruyor.")
+
+    def _arsiv_indirme_hatasi(self, mesaj: str) -> None:
+        self._arsiv_isi_bitti()
+        # `tam_arsiv_indir` kaynak başına sebepleri "tam arşiv indirilemedi —
+        # GitLab: …; GitHub: …" diye topluyor; başlığı tekrar etmeyelim.
+        onek = "tam arşiv indirilemedi — "
+        sebep = mesaj[len(onek):] if mesaj.startswith(onek) else mesaj
+        self.lblArsivDurum.error(
+            f"Arşiv indirilemedi. Sebep: {sebep}. Önceki arşiv (varsa) yerinde duruyor.")
+
+    # Klasör seç / varsayılana dön ────────────────────────────────────────────
+    def _arsiv_klasor_sec(self) -> None:
+        """Kullanıcının elindeki bir arşiv kopyasını göster (`animedepo_dizin`)."""
+        if self._arsiv_mesgul is not None:
+            return
+        durum = self._arsiv_durumu
+        baslangic = (durum.ayar_dizini if durum else "") or str(Path.home())
+        secilen = QFileDialog.getExistingDirectory(
+            self, "Arşiv klasörünü seç (içinde dizin.json olmalı)", baslangic)
+        if not secilen:
+            return
+        self._arsiv_mesgul = "islem"
+        self._arsiv_dugmelerini_guncelle()
+        self.lblArsivDurum.info("Klasör denetleniyor…")
+        # Doğrulama `dizin.json`'ı ayrıştırıyor (~1 MB); klasör ağ sürücüsünde
+        # de olabilir — GUI thread'inde yapılmaz.
+        run_bg(self._arsiv_klasor_is, secilen)
+
+    def _arsiv_klasor_is(self, secilen: str) -> None:
+        """ARKA PLAN: seçilen klasör gerçekten bir arşiv mi?"""
+        try:
+            veri = paket.arsivi_dogrula(Path(secilen))
+        except Exception as exc:          # kullanıcıya gösteriliyor (sessiz değil)
+            mesaj = str(exc) or type(exc).__name__
+            self._gui(lambda: self._arsiv_klasor_reddedildi(mesaj))
+            return
+        sayi = paket.anime_sayisi(veri)
+        self._gui(lambda: self._arsiv_klasor_kabul(secilen, sayi))
+
+    def _arsiv_klasor_reddedildi(self, mesaj: str) -> None:
+        self._arsiv_isi_bitti()
+        self.lblArsivDurum.error(
+            f"Bu klasör arşiv olarak kullanılamaz: {mesaj}. dizin.json'ın "
+            "bulunduğu klasörü seçin (ör. indirilen arşivin kendisi ya da "
+            "depodaki arsiv/). Ayar değiştirilmedi.")
+
+    def _arsiv_klasor_kabul(self, secilen: str, sayi: int) -> None:
+        self._arsiv_isi_bitti()
+        try:
+            self._dosya().set_ayar(animedepo.DIZIN_AYAR_ANAHTARI, secilen)
+        except Exception as exc:
+            self.lblArsivDurum.error(f"Arşiv klasörü kaydedilemedi: {exc}")
+            return
+        # Konum süreç boyunca bir kez çözülüp önbellekleniyor; sıfırlanmazsa
+        # yeni klasör ancak yeniden başlatınca kullanılırdı.
+        animedepo.sifirla()
+        adet = f"{sayi:,}".replace(",", ".")
+        self.lblArsivDurum.ok(f"Arşiv klasörü ayarlandı ({adet} anime): {secilen}")
+        self.arsiv_durumunu_tazele()
+
+    def _arsiv_varsayilana_don(self) -> None:
+        """Seçilen klasörü unut; konum varsayılan sırayla çözülsün."""
+        if self._arsiv_mesgul is not None:
+            return
+        try:
+            silindi = self._dosya().ayar_sil(animedepo.DIZIN_AYAR_ANAHTARI)
+        except Exception as exc:
+            self.lblArsivDurum.error(f"Arşiv klasörü ayarı silinemedi: {exc}")
+            return
+        animedepo.sifirla()
+        if silindi:
+            self.lblArsivDurum.ok(
+                "Seçilen arşiv klasörü unutuldu; arşiv varsayılan sırayla aranıyor.")
+        else:
+            self.lblArsivDurum.info("Zaten varsayılan sıra kullanılıyor.")
+        self.arsiv_durumunu_tazele()
+
+    # Silme ──────────────────────────────────────────────────────────────────
+    def _onay_al(self, baslik: str, metin: str) -> bool:
+        """Evet/Hayır sorusu; varsayılan Hayır (testlerde sahtelenir)."""
+        cevap = QMessageBox.question(
+            self, baslik, metin,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return cevap == QMessageBox.StandardButton.Yes
+
+    def _arsiv_sil(self) -> None:
+        """İndirilen tam arşivi sil — YALNIZCA `<veri kökü>/cevrimdisi_arsiv`.
+
+        Seçilen klasör ve depodaki `arsiv/` hiçbir koşulda silinmez
+        (bkz. `animedepo.indirilen_arsivi_sil`).
+        """
+        if self._arsiv_mesgul is not None:
+            return
+        hedef = animedepo.indirilen_arsiv_dizini()
+        if not self._onay_al(
+                "İndirilen arşivi sil",
+                f"{hedef}\n\nklasörü ve içindeki bütün dosyalar silinecek. "
+                "TürkAnime bundan sonra (varsa) depodaki arşivden ya da "
+                "internetten okunur. Devam edilsin mi?"):
+            self.lblArsivDurum.info("Silme iptal edildi.")
+            return
+        self._arsiv_mesgul = "islem"
+        self._arsiv_dugmelerini_guncelle()
+        self.lblArsivDurum.info("İndirilen arşiv siliniyor…")
+        # 83 bin dosya: silmek saniyeler sürer, GUI thread'inde yapılmaz.
+        run_bg(self._arsiv_sil_is)
+
+    def _arsiv_sil_is(self) -> None:
+        """ARKA PLAN: indirilen arşivi sil."""
+        try:
+            silindi = animedepo.indirilen_arsivi_sil()
+        except Exception as exc:          # kullanıcıya gösteriliyor (sessiz değil)
+            mesaj = str(exc) or type(exc).__name__
+            self._gui(lambda: self._arsiv_silme_hatasi(mesaj))
+            return
+        self._gui(lambda: self._arsiv_silindi(silindi))
+
+    def _arsiv_silindi(self, silindi: bool) -> None:
+        self._arsiv_isi_bitti()
+        if silindi:
+            self.lblArsivDurum.ok("İndirilen arşiv silindi.")
+        else:
+            self.lblArsivDurum.info("Silinecek indirilmiş arşiv yok.")
+        self.arsiv_durumunu_tazele()
+
+    def _arsiv_silme_hatasi(self, mesaj: str) -> None:
+        self._arsiv_isi_bitti()
+        self.lblArsivDurum.error(f"İndirilen arşiv silinemedi: {mesaj}")
+        self.arsiv_durumunu_tazele()
+
     # ── Discord / bakım ─────────────────────────────────────────────────────
     def _reload_discord(self, acik: bool) -> None:
         """Anahtarı ayardan doldur (sinyali tetiklemeden) ve durumu yaz."""
@@ -750,6 +1276,22 @@ class SettingsPage(QWidget):
         self.servis.cikis_yap()
         self._show_anilist_state(None)
         self.lblStatus.info("AniList oturumu kapatıldı.")
+
+
+
+def _mb(bayt: int) -> str:
+    """Bayt → "45,2" (ondalık MB; düğmedeki ~230 MB ile aynı birim)."""
+    return f"{bayt / 1_000_000:.1f}".replace(".", ",")
+
+
+def _tarih_metni(zaman: Optional[int]) -> str:
+    """dizin.json `last_update` (unix) → "14.09.2026"; geçersizse boş."""
+    if zaman is None:
+        return ""
+    try:
+        return datetime.fromtimestamp(int(zaman)).strftime("%d.%m.%Y")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
 
 
 __all__ = ["SettingsPage"]

@@ -277,7 +277,9 @@ class AnimeMatchDialog(QDialog):
             items = [i for i in (results[source] or []) if isinstance(i, dict)]
             if not items:
                 continue
-            parent = QTreeWidgetItem(self.tree, [f"{source} ({len(items)})"])
+            # Etiket ("TürkAnime (arşiv)") ve sayı ayrı: "(arşiv) (1)" okunmuyordu.
+            parent = QTreeWidgetItem(
+                self.tree, [f"{gorunen_ad(source)} — {len(items)} sonuç"])
             parent.setFirstColumnSpanned(True)
             for item in items:
                 slug = str(item.get("slug") or "")
@@ -678,7 +680,8 @@ class DetailPage(QWidget):
     def _on_source_changed(self, source: str) -> None:
         if source in METADATA_ONLY:
             self.lblStatus.info(
-                f"{source} yalnızca metadata kaynağı; bölüm için başka kaynak seçin.")
+                f"{gorunen_ad(source)} yalnızca metadata kaynağı; "
+                "bölüm için başka kaynak seçin.")
 
     def current_source(self) -> str:
         """Seçili kaynağın kanonik adı (kutudaki etiket değil)."""
@@ -871,7 +874,7 @@ class DetailPage(QWidget):
             message = (f"{len(merge_episodes(episodes, title))} bölüm • "
                        f"{len(episodes)} kaynaktan {len(loaded)} tanesi yüklendi.")
             if failed:
-                message += f" Yüklenemeyen: {', '.join(failed)}."
+                message += f" Yüklenemeyen: {', '.join(gorunen_ad(s) for s in failed)}."
             self.lblStatus.ok(message)
         else:
             self.lblStatus.ok(f"{total} bölüm bulundu.")

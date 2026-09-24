@@ -60,6 +60,18 @@ def source_color(name: str) -> str:
             or DEFAULT_SOURCE_COLOR)
 
 
+def source_label(name: str) -> str:
+    """Kaynağın kullanıcıya görünen adı ("TürkAnime" → "TürkAnime (arşiv)").
+
+    Sayfa içinde kaynaklar KANONİK adla anahtarlı (satır düğmeleri, seçim,
+    indirme sırası); yalnızca ekrana basılan metin etikete çevrilir. Arama
+    kartı ve detay sayfası da aynı `kayit.gorunen_ad`'ı kullanıyor: kullanıcı
+    turkanime.tv'nin kapandığını ve verinin arşivden geldiğini her yerde aynı
+    adla görsün.
+    """
+    return kayit.gorunen_ad(name)
+
+
 def as_sources_data(source: str, episodes: Any) -> Dict[str, List[Dict[str, Any]]]:
     """Gelen yükü daima ``{kaynak: [bölüm, ...]}`` şekline getir.
 
@@ -144,7 +156,7 @@ class SourceSelectDialog(QDialog):
 
         self.buttons: Dict[str, QPushButton] = {}
         for name in sorted(counts, key=lambda n: (-counts[n], n)):
-            btn = QPushButton(f"{name} — {counts[name]}/{total} bölüm")
+            btn = QPushButton(f"{source_label(name)} — {counts[name]}/{total} bölüm")
             btn.setStyleSheet(
                 f"text-align: left; border-left: 4px solid {source_color(name)};")
             btn.clicked.connect(lambda _=False, n=name: self._choose(n))
@@ -242,7 +254,7 @@ class EpisodeRow(QFrame):
             badge = QLabel(source_short(name))
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             badge.setFixedWidth(26)
-            badge.setToolTip(name)
+            badge.setToolTip(source_label(name))
             badge.setStyleSheet(
                 f"background: {source_color(name)}; color: #111111;"
                 "border-radius: 4px; font-size: 10px; font-weight: 700; padding: 2px 0;"
@@ -251,20 +263,20 @@ class EpisodeRow(QFrame):
 
             play = QPushButton("▶")
             play.setFixedWidth(30)
-            play.setToolTip(f"{name} — oynat")
+            play.setToolTip(f"{source_label(name)} — oynat")
             play.clicked.connect(lambda _=False, n=name: self._emit_play(n))
             layout.addWidget(play)
 
             download = QPushButton("⬇")
             download.setFixedWidth(30)
-            download.setToolTip(f"{name} — indir")
+            download.setToolTip(f"{source_label(name)} — indir")
             download.clicked.connect(lambda _=False, n=name: self._emit_download(n))
             layout.addWidget(download)
 
             self.source_buttons[name] = (play, download)
 
     def _tooltip(self) -> str:
-        names = ", ".join(sorted(self.sources)) or "kaynak yok"
+        names = ", ".join(source_label(n) for n in sorted(self.sources)) or "kaynak yok"
         return f"{self.episode.get('title') or ''}\nKaynaklar: {names}"
 
     # ── Geçmiş rozeti ───────────────────────────────────────────────────────
@@ -445,7 +457,7 @@ class EpisodePage(QWidget):
         self._needle = ""
         self._context = (source, slug, title)
         self._reload_gecmis()
-        self.lblTitle.setText(f"{title} — {source}")
+        self.lblTitle.setText(f"{title} — {source_label(source)}")
         self.lblSources.setVisible(False)
         self._clear_rows()
         self.btnMore.hide()
@@ -476,7 +488,7 @@ class EpisodePage(QWidget):
         names = active_sources(self._sources)
         if len(names) > 1:
             self.lblTitle.setText(f"{title} — {len(names)} kaynak")
-            self.lblSources.setText("Kaynaklar: " + ", ".join(names))
+            self.lblSources.setText("Kaynaklar: " + ", ".join(source_label(n) for n in names))
             self.lblSources.setVisible(True)
         else:
             self.lblSources.setVisible(False)
@@ -624,7 +636,7 @@ class EpisodePage(QWidget):
         entries = [e["sources"][source] for e in picked
                    if (e.get("sources") or {}).get(source)]
         missing = len(picked) - len(entries)
-        message = f"{len(entries)} bölüm indirme sırasına alındı ({source})."
+        message = f"{len(entries)} bölüm indirme sırasına alındı ({source_label(source)})."
         if missing:
             message += f" {missing} bölüm bu kaynakta yok, atlandı."
         self.lblStatus.info(message)
@@ -658,4 +670,4 @@ def _key_of(episode: Dict[str, Any]) -> Tuple[int, int, int]:
 
 __all__ = ["EpisodePage", "EpisodeRow", "SourceSelectDialog", "as_sources_data",
            "active_sources", "episode_matches", "primary_entry", "source_counts",
-           "source_short", "source_color"]
+           "source_short", "source_color", "source_label"]

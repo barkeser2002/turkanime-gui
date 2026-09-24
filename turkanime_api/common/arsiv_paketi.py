@@ -48,6 +48,20 @@ AZAMI_ACILMIS_BAYT = 4 * 1024 ** 3
 _SURUCU = re.compile(r"^[A-Za-z]:")
 
 IlerlemeFn = Callable[[int, Optional[int]], Any]
+AsamaFn = Callable[[str], Any]
+
+# `paketten_kur`'un `asama` geri çağrısına verdiği adlar, sırasıyla. Neden ayrı
+# bir geri çağrı: bayt ilerlemesi yalnızca İNDİRME boyunca akıyor; ardından
+# 83 bin dosyanın açılması onlarca saniye sürüyor ve bu sürede `ilerleme` hiç
+# çağrılmıyor. Arayüz aşamayı bilmezse çubuk %100'de donmuş görünür, kullanıcı
+# "takıldı" sanıp iptal eder.
+# `sources.animedepo.tam_arsiv_indir` her kaynağa istek atmadan ÖNCE bunu
+# bildiriyor: GitLab bağlanma zaman aşımına kadar (15 sn) yanıt vermezse
+# kullanıcı hangi kaynağın beklendiğini görsün.
+ASAMA_BAGLANMA = "baglaniyor"
+ASAMA_INDIRME = "indiriliyor"
+ASAMA_ACMA = "aciliyor"
+ASAMA_YERLESTIRME = "yerlestiriliyor"
 
 
 class ArsivHatasi(RuntimeError):
@@ -225,7 +239,7 @@ def govdeyi_indir(yanit: Any, hedef_dosya: Path, ilerleme: Optional[IlerlemeFn] 
     ``ilerleme(indirilen, toplam)`` her parçada çağrılır; ``toplam`` sunucu
     `Content-Length` vermediyse ``None`` (GitLab'ın arşiv ucu paketi anında
     ürettiği için vermiyor — arayüz belirsiz ilerleme göstermeli).
-    İptal her parçada denetlenir: 100 MB'lık bir indirme bitmeden durabilmeli.
+    İptal her parçada denetlenir: ~230 MB'lık bir indirme bitmeden durabilmeli.
     """
     toplam = _uzunluk(getattr(yanit, "headers", None))
     indirilen = 0
@@ -364,7 +378,8 @@ def yerine_koy(yeni: Path, hedef: Path) -> None:
 
 def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
                  alt_klasor: Optional[str] = None, kaynak: str = "", dal: str = "",
-                 ilerleme: Optional[IlerlemeFn] = None, iptal: Any = None) -> Path:
+                 ilerleme: Optional[IlerlemeFn] = None, iptal: Any = None,
+                 asama: Optional[AsamaFn] = None) -> Path:
     """Akıştaki tar.gz paketini indir, güvenle aç, doğrula ve ``hedef``'e koy.
 
     Her ara ürün ``hedef``'in YANINDAKİ geçici bir klasörde durur (aynı dosya
@@ -375,17 +390,24 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
     Paket kendi `KAYNAK.json`'ını taşımıyorsa (GitLab paketi) git arşivinin
     commit bilgisinden bir tane yazılır; arayüz hangi sürümün inik olduğunu
     iki kaynakta da aynı dosyadan okuyabilir.
+
+    ``asama(ad)`` her aşamanın BAŞINDA çağrılır: `ASAMA_INDIRME`,
+    `ASAMA_ACMA`, `ASAMA_YERLESTIRME` (bkz. modül sabitleri).
     """
     hedef = Path(hedef)
     hedef.parent.mkdir(parents=True, exist_ok=True)
     gecici = Path(tempfile.mkdtemp(prefix=f".{hedef.name}-indirme-", dir=hedef.parent))
     try:
         paket = gecici / "paket.tar.gz"
+        if asama:
+            asama(ASAMA_INDIRME)
         govdeyi_indir(yanit, paket, ilerleme=ilerleme, iptal=iptal)
         acilan = gecici / "acilan"
+        if asama:
+            asama(ASAMA_ACMA)
         bilgi = guvenli_ac(paket, acilan, ust_desen=ust_desen,
                            alt_klasor=alt_klasor, iptal=iptal)
-        paket.unlink()                   # takastan önce yer aç (~100 MB)
+        paket.unlink()                   # takastan önce yer aç (~230 MB)
         arsivi_dogrula(acilan)
         if not (acilan / MANIFEST_DOSYASI).is_file():
             zaman = bilgi.get("commit_zamani")
@@ -396,6 +418,8 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
                 dosya_sayisi=bilgi["dosya"] + 1,
             ))
         iptal_denetle(iptal)
+        if asama:
+            asama(ASAMA_YERLESTIRME)
         yerine_koy(acilan, hedef)
         return hedef
     finally:
@@ -405,6 +429,7 @@ def paketten_kur(yanit: Any, hedef: Path, *, ust_desen: str,
 __all__ = [
     "ArsivHatasi", "GuvensizUye", "IptalEdildi",
     "DIZIN_DOSYASI", "MANIFEST_DOSYASI", "MANIFEST_ANAHTARLARI",
+    "ASAMA_BAGLANMA", "ASAMA_INDIRME", "ASAMA_ACMA", "ASAMA_YERLESTIRME",
     "goreli_parcalar", "guvenli_birlestir", "atomik_bayt_yaz",
     "arsivi_dogrula", "arsiv_gecerli_mi", "anime_sayisi",
     "manifest_uret", "manifest_yaz",

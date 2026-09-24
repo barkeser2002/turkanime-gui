@@ -43,6 +43,11 @@ Yerel okumada ağa hiç çıkılmaz. Uzaktan başarıyla gelen her dosya
 `<veri kökü>/arsiv_onbellek/` altına aynı göreli yolla yazılır; bütün aynalar
 düştüğünde oradan okunur (çevrimdışı).
 
+Masaüstü uygulamasında Ayarlar → **Çevrimdışı arşiv (TürkAnime)** bölümü
+hangi konumun etkin olduğunu, anime sayısını ve dizinin tarihini gösterir;
+ikinci maddedeki tam arşivi indirir, günceller ve siler, ilk maddedeki
+klasörü seçtirir. Silme yalnızca `cevrimdisi_arsiv/`'e dokunur.
+
 "Veri kökü" `~/Turkanime`; uygulama bir git deposunun içinden çalıştırılıyorsa
 depo kökü. Bu yüzden indirilenler `arsiv/` değil `cevrimdisi_arsiv/` adıyla
 duruyor ve `.gitignore`'da — uygulama bu klasörün üstüne asla yazmaz

@@ -26,6 +26,9 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
   **6'sı video sunar**; AniList yalnızca meta veri ve kullanıcı listesi sağlar.
   turkanime.tv kapandı: TürkAnime kaynağı artık sitenin statik arşivi ve
   yerel kopyadan **ağsız** aranır.
+- **Çevrimdışı TürkAnime arşivi:** Ayarlar'dan tek tıkla indirilir
+  (~230 MB); sonra TürkAnime araması ve bölüm listeleri internetsiz çalışır
+  (bkz. [Çevrimdışı Arşiv](#-çevrimdışı-arşiv-türkanime)).
 - **Alakaya göre sıralama:** Sonuçlar sorguya yakınlığa göre dizilir. "one piece"
   aramasında ilk sıra One Piece olur — "Koisuru One Piece" değil.
 - **Gömülü Cloudflare atlatma:** Uygulamanın içindeki Chromium (QtWebEngine)
@@ -48,13 +51,13 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
-- **Testler:** 988 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Testler:** 1.205 otomatik test (pytest + pytest-qt), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 
 1. **Keşfet:** Jikan (MyAnimeList) trend ve sezon listeleri; Jikan erişilemezse
    AniList trendlerine düşülür.
-2. **Ara:** 8 kaynakta paralel arama; yavaş kaynak aramayı çökertmez, zaman
+2. **Ara:** 7 kaynakta paralel arama; yavaş kaynak aramayı çökertmez, zaman
    aşımına uğrayan kaynak boş döner.
 3. **İndir & Oynat:** mpv entegrasyonu sayesinde indirme ve izleme tek pencerede.
 4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, AniList'e yansır.
@@ -151,17 +154,64 @@ python -m turkanime_api.gui.qt
 
 1. **İlk açılışta** ffmpeg/mpv/aria2c/yt-dlp denetlenir; eksik varsa kurulum
    sihirbazı açılır (hazır pakette hepsi gömülü gelir).
-2. **TRAnimeİzle** kullanmak istiyorsan Ayarlar → TRAnimeİzle Cookie →
+2. **TürkAnime'yi internetsiz** kullanmak istiyorsan Ayarlar →
+   **Çevrimdışı arşiv (TürkAnime)** → **"Tüm arşivi indir (~230 MB)"**.
+   Ayrıntı: [Çevrimdışı Arşiv](#-çevrimdışı-arşiv-türkanime).
+3. **TRAnimeİzle** kullanmak istiyorsan Ayarlar → TRAnimeİzle Cookie →
    **"Tarayıcıdan Al"** düğmesine bas. Uygulama içindeki tarayıcı açılır, bot
    kontrolünü çözersin, çerez kaydedilir.
-3. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden
+4. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden
    sunucu adresini gir (zorunlu değil).
-4. **Keşfet veya Ara sekmesinden** anime seç.
-5. **Bölümü oynat** ya da **indir**; her bölüm için ayrı ilerleme çubuğu,
+5. **Keşfet veya Ara sekmesinden** anime seç.
+6. **Bölümü oynat** ya da **indir**; her bölüm için ayrı ilerleme çubuğu,
    yeniden deneme ve iptal desteği mevcut.
-6. **AniList'e bağlanmak** istersen Ayarlar → AniList → "AniList'e Giriş Yap";
+7. **AniList'e bağlanmak** istersen Ayarlar → AniList → "AniList'e Giriş Yap";
    gizli anahtar (client secret) gerekmez, ayrıntı için
    [AniList Girişi](ANILIST_OAUTH.md).
+
+## 📦 Çevrimdışı Arşiv (TürkAnime)
+
+turkanime.tv kapandı (sitenin görselleri bile 503 dönüyor). Sitenin anime,
+bölüm ve video kayıtları [AnimeDepo](https://gitlab.com/AnimeDepo/animedepo)
+adlı statik JSON arşivinde yaşıyor ve uygulamadaki **"TürkAnime (arşiv)"**
+kaynağı artık bu arşiv: 6.098 anime, ~83 bin dosya. Arama, bölüm listesi ve
+video bağlantıları arşivden okunur; videoların kendisi yine üçüncü parti
+sunuculardan (ok.ru, Sibnet, Mail.ru, Google Drive…) gelir, yani izlemek ve
+indirmek için internet gerekir.
+
+**Arşiv nereden okunur?** Sırayla, içinde okunabilir bir `dizin.json` olan
+ilk konum kullanılır; geçersiz klasör atlanır ve Ayarlar'da uyarı çıkar:
+
+1. `TURKANIME_ARSIV_DIZIN` ortam değişkeni, sonra Ayarlar'da **"Klasör seç…"**
+   ile gösterilen klasör
+2. Ayarlar'dan indirilen tam arşiv: `<veri kökü>/cevrimdisi_arsiv`
+3. Depodan çalıştırılıyorsa depodaki [`arsiv/`](../arsiv/README.md) aynası
+4. Uzak aynalar: varsa özel adres (`TURKANIME_ARSIV_URL`), sonra GitLab,
+   olmazsa bu deponun GitHub kopyası. Gelen her dosya
+   `<veri kökü>/arsiv_onbellek` altında saklanır; aynalar düşerse oradan okunur.
+
+"Veri kökü" `~/Turkanime` klasörü; uygulama bir git deposunun içinden
+çalıştırılıyorsa depo kökü (indirilenler bu yüzden `arsiv/` değil
+`cevrimdisi_arsiv/` adıyla durur ve `.gitignore`'dadır).
+
+**Ayarlar'dan indirme:** Ayarlar → **Çevrimdışı arşiv (TürkAnime)** bölümü
+etkin konumu, yolunu ya da adresini, anime sayısını ve dizinin son güncelleme
+tarihini gösterir. Bu bilgi sayfa açılınca arka planda okunur; ağa çıkılmaz.
+
+- **"Tüm arşivi indir (~230 MB)"** arşivin tamamını indirir (açılınca
+  ~0,5 GB). İlerleme çubuğu ve **"İptal"** düğmesi var; GitLab'a
+  ulaşılamazsa GitHub paketine geçilir. İndirilmiş bir kopya varsa düğmenin
+  adı **"Arşivi güncelle"** olur: eski kopya, yenisi doğrulanıp yerine konana
+  kadar silinmez; iptal ya da hata olursa yerinde kalır.
+- **"Klasör seç…"** elinizdeki bir kopyayı gösterir (içinde `dizin.json`
+  olmalı, seçerken denetlenir). **"Varsayılana dön"** bu seçimi unutur.
+- **"İndirilen arşivi sil"** onay sorar ve yalnızca `cevrimdisi_arsiv`
+  klasörünü siler; seçtiğiniz klasöre ve depodaki `arsiv/`'e dokunmaz.
+
+Arşivdeki video kayıtlarının yaklaşık dörtte biri yalnızca turkanime.tv'nin
+kendi oynatıcısıyla açılabiliyordu; site kapandığı için bunlar ve `DEAD_`
+işaretli oynatıcılar atlanır. Arşivde İngilizce adlar yok, romaji ile arayın
+("attack on titan" değil "shingeki no kyojin").
 
 ## 📺 Desteklenen Kaynaklar
 
@@ -213,6 +263,7 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 
 | Kısıt | Ne oluyor |
 |-------|-----------|
+| **TürkAnime kapandı** | Kaynak artık sitenin arşivi: içerik sitenin kapanmadan önceki kaydı (dizinin tarihi Ayarlar'da görünür). Video kayıtlarının yaklaşık dörtte biri turkanime.tv'nin kendi oynatıcısına bağlıydı ve oynatılamıyor; arama yalnızca romaji adlarla bulur. |
 | **TRAnimeİzle çerez istiyor** | Çerez alınmadan bu kaynak bölüm döndürmez. Ayarlar → "Tarayıcıdan Al" ile bir kez alınır. |
 | **OpenAnime stream 404** | Arama ve bölüm listesi çalışıyor, ama CDN uçları `not_found` dönüyor. `api.openani.me` kimlik doğrulama ("Vanguard") istiyor. Uygulama bu durumda sessiz kalmaz, sebebi yazar. |
 | ~~**pip kurulumunda 4 kademeli CF zinciri**~~ | Geçersiz: `cloudscraper` zorunlu bağımlılık (`pyproject.toml`, `requirements.txt`); her kurulum 5 kademenin tamamını taşır. |
@@ -273,6 +324,7 @@ python tests/adapters-test-all.py --skip-streams
 |------|---------|
 | **Arayüz (pytest-qt)** | Keşif/arama/detay/bölüm/indirme sayfaları, oynatma, izleme listesi, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
 | **Arama** | Alakaya göre sıralama, çok kaynaklı arama zaman aşımı, başlık eşleştirme |
+| **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, iptal, eskiyi koruyan takas), Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme) |
 | **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
 | **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi |
 | **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası |

@@ -312,7 +312,9 @@ def test_match_dialog_groups_results_by_source(qtbot, fake_engine):
 
     qtbot.waitUntil(lambda: dlg.tree.topLevelItemCount() == 2, timeout=5000)
     groups = {dlg.tree.topLevelItem(i).text(0) for i in range(2)}
-    assert groups == {"TürkAnime (1)", "AnimeciX (2)"}
+    # Grup başlığı kayıttaki etiketi gösteriyor; "TürkAnime (arşiv) (1)" okunmadığı
+    # için sayı ayrı yazılıyor.
+    assert groups == {"TürkAnime (arşiv) — 1 sonuç", "AnimeciX — 2 sonuç"}
     assert "3 aday" in dlg.lblStatus.text()
 
 
@@ -451,7 +453,8 @@ def test_search_result_opens_detail_then_episodes(qtbot, main_window, fake_fetch
     qtbot.waitUntil(lambda: main_window.stack.currentWidget() is episodes,
                     timeout=5000)
     assert len(episodes.visible_rows()) == 2
-    assert "Cowboy Bebop — TürkAnime" == episodes.lblTitle.text()
+    # Kaynak kanonik adla taşınıyor, başlıkta kayıttaki etiket görünüyor.
+    assert "Cowboy Bebop — TürkAnime (arşiv)" == episodes.lblTitle.text()
 
 
 def test_episode_page_does_not_refetch_when_given_list(main_window, fake_fetch):

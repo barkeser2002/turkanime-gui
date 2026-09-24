@@ -86,7 +86,9 @@ def test_tek_kaynakta_sade_satir(page):
     assert row.btnPlay is not None and row.btnPlay.text() == "Oynat"
     assert row.btnDl is not None and row.btnDl.text() == "İndir"
     assert list(row.source_buttons) == ["TürkAnime"]
-    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime"
+    # Kanonik anahtar "TürkAnime", ekrandaki ad kayıttaki etiket (turkanime.tv
+    # kapandı, veri arşivden geliyor — kullanıcı bunu her sayfada aynı adla görür).
+    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime (arşiv)"
     assert not page.lblSources.isVisible()
 
 
@@ -174,7 +176,9 @@ def test_bos_kaynak_liste_basligini_kirletmiyor(page):
         "TürkAnime": numbered(1), "Anizle": [],
     })
     assert list(page._rows[0].source_buttons) == ["TürkAnime"]
-    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime"
+    # Kanonik anahtar "TürkAnime", ekrandaki ad kayıttaki etiket (turkanime.tv
+    # kapandı, veri arşivden geliyor — kullanıcı bunu her sayfada aynı adla görür).
+    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime (arşiv)"
 
 
 # ── Mevcut davranışlar: sayfalama / filtre / seçim ──────────────────────────
@@ -336,6 +340,51 @@ def test_dialog_secimi_donduruyor(qtbot):
 
     assert dialog.selection == "AnimeciX"
     assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+# ── Kaynak adı: ekranda kayıttaki etiket, içeride kanonik anahtar ────────────
+ARSIV_ETIKETI = "TürkAnime (arşiv)"
+
+
+def test_cok_kaynakta_turkanime_her_yerde_arsiv_etiketiyle(page):
+    """turkanime.tv kapandı; kullanıcı verinin arşivden geldiğini arama
+    kartında, detay sayfasında ve burada AYNI adla görmeli. Anahtarlar
+    (satır düğmeleri, seçim) kanonik kalıyor — kayıtlı eşleşmeler o adla."""
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes={
+        "TürkAnime": numbered(1), "AnimeciX": numbered(1, "Bölüm {}"),
+    })
+    row = page._rows[0]
+
+    assert set(row.source_buttons) == {"TürkAnime", "AnimeciX"}
+    assert page.lblSources.text() == f"Kaynaklar: {ARSIV_ETIKETI}, AnimeciX"
+    assert f"Kaynaklar: AnimeciX, {ARSIV_ETIKETI}" in row.toolTip()
+    oynat, indir = row.source_buttons["TürkAnime"]
+    assert oynat.toolTip() == f"{ARSIV_ETIKETI} — oynat"
+    assert indir.toolTip() == f"{ARSIV_ETIKETI} — indir"
+    rozetler = [w for w in row.findChildren(type(page.lblTitle))
+                if w.text() == "TA"]
+    assert rozetler and rozetler[0].toolTip() == ARSIV_ETIKETI
+
+
+def test_kaynak_secim_diyalogunda_arsiv_etiketi(qtbot):
+    dialog = SourceSelectDialog({"TürkAnime": 12, "AnimeciX": 3}, 12)
+    qtbot.addWidget(dialog)
+
+    assert dialog.buttons["TürkAnime"].text() == f"{ARSIV_ETIKETI} — 12/12 bölüm"
+    dialog.buttons["TürkAnime"].click()
+    assert dialog.selection == "TürkAnime", "seçim kanonik adla dönmeli"
+
+
+def test_toplu_indirme_mesajinda_arsiv_etiketi(page, monkeypatch):
+    monkeypatch.setattr(page, "_ask_source", lambda counts, total: "TürkAnime")
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes={
+        "TürkAnime": numbered(2), "Anizle": [ep("Bölüm 1")],
+    })
+    page.btnAll.setChecked(True)
+
+    page._download_selected()
+
+    assert f"({ARSIV_ETIKETI})" in page.lblStatus.text()
 
 
 def test_secim_yokken_uyari(page):

@@ -651,6 +651,165 @@ def test_takas_basarida_eskiyi_siliyor(tmp_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 4b) Ayarlar sayfasının kullandığı uçlar: aşama bildirimi, durum özeti, silme
+# ─────────────────────────────────────────────────────────────────────────────
+def test_asamalar_kaynak_adiyla_sirayla_bildiriliyor(http, tmp_path):
+    """Açma aşamasında bayt ilerlemesi akmıyor; arayüz aşamayı bilmezse çubuk
+    %100'de donmuş görünür. Düşen kaynak da "bağlanılıyor" olarak görünmeli."""
+    ust = "turkanime-gui-main"
+    uyeler = [_tur(ust, tarfile.DIRTYPE),
+              *[_dosya(ti.name.replace(ust, f"{ust}/arsiv", 1), veri or b"")
+                for ti, veri in arsiv_uyeleri(ust) if ti.isfile()]]
+    http({GITLAB_PAKET: SahteYanit(502),
+          GITHUB_PAKET: SahteYanit(200, govde=tar_gz(uyeler))})
+    asamalar: List[Tuple[str, str]] = []
+
+    animedepo.tam_arsiv_indir(hedef=tmp_path / "cevrimdisi_arsiv",
+                              asama=lambda ad, kaynak: asamalar.append((ad, kaynak)))
+
+    assert asamalar == [
+        (paket.ASAMA_BAGLANMA, "GitLab"),
+        (paket.ASAMA_BAGLANMA, "GitHub"),
+        (paket.ASAMA_INDIRME, "GitHub"),
+        (paket.ASAMA_ACMA, "GitHub"),
+        (paket.ASAMA_YERLESTIRME, "GitHub"),
+    ]
+
+
+def test_asama_verilmezse_eski_cagri_bicimi_calisiyor(http, tmp_path):
+    """`asama` isteğe bağlı: CLI ve bakımcı yolları onu hiç vermiyor."""
+    http({GITLAB_PAKET: SahteYanit(200, govde=tar_gz(arsiv_uyeleri("animedepo-master")))})
+    yol = animedepo.tam_arsiv_indir(hedef=tmp_path / "cevrimdisi_arsiv")
+    assert (yol / "dizin.json").is_file()
+
+
+def test_durum_yerel_arsivin_sayisini_ve_tarihini_veriyor(tmp_path, monkeypatch, ag_yasak):
+    hedef = arsiv_yaz(tmp_path / "cevrimdisi_arsiv", animeler={
+        "naruto": {"title": "Naruto"}, "bleach": {"title": "Bleach"}})
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: hedef)
+
+    durum = animedepo.arsiv_durumu()
+
+    assert durum.kaynak == "indirilen" and durum.konum.dizin == hedef
+    assert durum.adres == str(hedef)
+    assert (durum.anime_sayisi, durum.son_guncelleme) == (2, 1700000000)
+    assert durum.indirilen_var and not durum.onbellekten
+
+
+def test_durum_uzakta_aga_cikmiyor_bilinmeyeni_none_birakiyor(ag_yasak):
+    """Ayarlar sayfasını açmak kullanıcıyı internete çıkarmamalı."""
+    durum = animedepo.arsiv_durumu()
+
+    assert durum.kaynak == "uzak" and durum.konum.dizin is None
+    assert durum.adres == animedepo.uzak_aynalar()[0]
+    assert durum.anime_sayisi is None and durum.son_guncelleme is None
+    assert not durum.indirilen_var
+
+
+def test_durum_uzakta_disk_onbellegindeki_dizini_kullaniyor(ag_yasak):
+    kopya = animedepo.onbellek_dizini() / "dizin.json"
+    kopya.parent.mkdir(parents=True)
+    kopya.write_text(json.dumps({"last_update": 5, "index": {"N": {"naruto": {}}}}), "utf-8")
+
+    durum = animedepo.arsiv_durumu()
+
+    assert (durum.anime_sayisi, durum.son_guncelleme) == (1, 5)
+    assert durum.onbellekten, "sayının önbellekteki kopyadan geldiği söylenmeli"
+
+
+def test_durum_gecersiz_klasorlerin_ham_degerini_tasiyor(tmp_path, veri_koku, monkeypatch):
+    """Geçersiz klasör konum çözümünde sessizce atlanıyor; arayüz bunu
+    kullanıcıya söyleyebilsin diye ham değerler özette."""
+    ayar_yaz(veri_koku, animedepo_dizin=str(tmp_path / "bos-klasor"))
+    monkeypatch.setenv(animedepo.DIZIN_ORTAM_ANAHTARI, str(tmp_path / "olmayan"))
+
+    durum = animedepo.arsiv_durumu()
+
+    assert durum.kaynak == "uzak"
+    assert durum.ayar_dizini == str(tmp_path / "bos-klasor")
+    assert durum.ortam_dizini == str(tmp_path / "olmayan")
+
+
+def test_indirileni_sil_yalnizca_indirileni_siliyor(tmp_path, monkeypatch):
+    """Depoda veri kökü depo KÖKÜ: `arsiv/` (commit'lenmiş ayna) ile
+    `cevrimdisi_arsiv/` yan yana. Silme ikincisiyle sınırlı kalmalı."""
+    kok = tmp_path / "veri"
+    indirilen = arsiv_yaz(kok / animedepo.CEVRIMDISI_KLASOR, etiket=" INDIRILEN")
+    depo = arsiv_yaz(kok / "arsiv", etiket=" DEPO")
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: indirilen)
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", depo)
+    assert animedepo.arsiv_konumu().kaynak == "indirilen"     # önbelleğe girsin
+
+    assert animedepo.indirilen_arsivi_sil() is True
+
+    assert not indirilen.exists()
+    assert "DEPO" in (depo / "dizin.json").read_text("utf-8")
+    assert _artiklar(kok) == [], "kenara alınan kopya da silinmeli"
+    assert animedepo.arsiv_konumu() == animedepo.ArsivKonumu("depo", depo), \
+        "silmeden sonra konum önbelleği sıfırlanmalı"
+
+
+def test_indirileni_sil_yoksa_false(tmp_path, monkeypatch):
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini",
+                        lambda: tmp_path / animedepo.CEVRIMDISI_KLASOR)
+    assert animedepo.indirilen_arsivi_sil() is False
+
+
+def test_indirileni_sil_baska_adli_klasoru_reddediyor(tmp_path, monkeypatch):
+    """Savunma: yol hesabı bir gün yanlışlıkla `arsiv/`'i gösterirse silinmesin."""
+    ayna = arsiv_yaz(tmp_path / "arsiv")
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: ayna)
+    with pytest.raises(paket.ArsivHatasi, match="indirilen arşiv klasörü değil"):
+        animedepo.indirilen_arsivi_sil()
+    assert (ayna / "dizin.json").is_file()
+
+
+def test_indirileni_sil_depo_aynasini_reddediyor(tmp_path, monkeypatch):
+    hedef = arsiv_yaz(tmp_path / animedepo.CEVRIMDISI_KLASOR)
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: hedef)
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", hedef)
+    with pytest.raises(paket.ArsivHatasi, match="depodaki arşiv"):
+        animedepo.indirilen_arsivi_sil()
+    assert (hedef / "dizin.json").is_file()
+
+
+def test_indirileni_sil_sembolik_bagda_yalnizca_bagi_kaldiriyor(tmp_path, monkeypatch):
+    """Kullanıcı arşivini başka diske koyup bağ vermiş olabilir; o kopya onun."""
+    asil = arsiv_yaz(tmp_path / "harici-disk" / "arsivim")
+    bag = tmp_path / "veri" / animedepo.CEVRIMDISI_KLASOR
+    bag.parent.mkdir(parents=True)
+    try:
+        os.symlink(asil, bag, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("sembolik bağ oluşturulamıyor")
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: bag)
+
+    assert animedepo.indirilen_arsivi_sil() is True
+
+    assert not bag.exists() and not bag.is_symlink()
+    assert (asil / "dizin.json").is_file()
+
+
+def test_indirileni_sil_yarim_kalirsa_hata_ama_konum_dusuyor(tmp_path, monkeypatch):
+    """Kilitli dosya yüzünden silme yarım kalsa bile klasör konum çözümüne bir
+    daha görünmemeli (önce kenara taşınıyor) ve hata sebebiyle söylenmeli."""
+    indirilen = arsiv_yaz(tmp_path / "veri" / animedepo.CEVRIMDISI_KLASOR)
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: indirilen)
+    assert animedepo.arsiv_konumu().kaynak == "indirilen"
+
+    def kilitli_rmtree(yol, onerror=None, onexc=None, **_):
+        (onexc or onerror)(os.unlink, os.path.join(yol, "dizin.json"),
+                           PermissionError("kilitli"))
+
+    monkeypatch.setattr(animedepo.shutil, "rmtree", kilitli_rmtree)
+    with pytest.raises(paket.ArsivHatasi, match="1 dosya silinemedi"):
+        animedepo.indirilen_arsivi_sil()
+
+    assert not indirilen.exists()
+    assert animedepo.arsiv_konumu().kaynak == "uzak"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 5) Bakımcı eşitleme aracı
 # ─────────────────────────────────────────────────────────────────────────────
 def _yaz(kok: Path, goreli: str, metin: str) -> None:

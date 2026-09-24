@@ -36,12 +36,19 @@ düştüğünde oradan okunur (çevrimdışı).
 dizini bir git deposuysa (.git) orası. DİKKAT: depoda veri kökü depo KÖKÜDÜR;
 indirilenler bu yüzden `arsiv/` değil `cevrimdisi_arsiv/` adıyla duruyor —
 `arsiv/` commit'lenmiş aynadır, üstüne yazılmamalı.
+
+Ayarlar sayfasının ("Çevrimdışı arşiv (TürkAnime)") kullandığı uçlar:
+`arsiv_durumu` (ağsız özet), `tam_arsiv_indir(ilerleme, iptal, asama)` ve
+`indirilen_arsivi_sil` (yalnızca `cevrimdisi_arsiv/`).
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import shutil
+import sys
+import uuid
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -77,9 +84,10 @@ DIZIN_ORTAM_ANAHTARI = "TURKANIME_ARSIV_DIZIN"
 DIZIN_AYAR_ANAHTARI = "animedepo_dizin"
 
 HTTP_TIMEOUT = 10
-# Tam arşiv ~100 MB: toplam süre sınırı koymak yavaş bağlantıda indirmeyi
-# yarıda keser. (bağlanma, okuma) çifti akış kipinde "60 sn hiç veri gelmezse
-# vazgeç" demek (curl_cffi bunu LOW_SPEED_TIME ile uyguluyor).
+# Tam arşiv ~230 MB (sıkıştırılmış; açılınca ~0,5 GB): toplam süre sınırı
+# koymak yavaş bağlantıda indirmeyi yarıda keser. (bağlanma, okuma) çifti akış
+# kipinde "60 sn hiç veri gelmezse vazgeç" demek (curl_cffi bunu
+# LOW_SPEED_TIME ile uyguluyor).
 INDIRME_ZAMAN_ASIMI = (15, 60)
 
 CEVRIMDISI_KLASOR = "cevrimdisi_arsiv"
@@ -130,6 +138,33 @@ class ArsivKonumu:
     @property
     def yerel(self) -> bool:
         return self.dizin is not None
+
+
+@dataclass(frozen=True)
+class ArsivDurumu:
+    """Etkin arşivin özeti — Ayarlar sayfası bunu gösteriyor (bkz. `arsiv_durumu`).
+
+    ``anime_sayisi``/``son_guncelleme`` bilinmiyorsa ``None``: uzak aynadan
+    okunuyor ve dizin henüz hiç inmemiş olabilir; durum göstermek için ağa
+    çıkılmaz. ``son_guncelleme`` dizin.json'daki ``last_update`` (unix zamanı).
+    ``ortam_dizini``/``ayar_dizini`` kullanıcının gösterdiği klasörlerin HAM
+    değerleri: geçersiz olduklarında konum sessizce sıradakine geçiyor ve
+    arayüz bunu kullanıcıya söyleyebilsin diye taşınıyorlar.
+    """
+
+    konum: ArsivKonumu
+    adres: str
+    anime_sayisi: Optional[int]
+    son_guncelleme: Optional[int]
+    indirilen_dizini: Path
+    indirilen_var: bool
+    ortam_dizini: str = ""
+    ayar_dizini: str = ""
+    onbellekten: bool = False    # uzakta sayılar disk önbelleğindeki kopyadan
+
+    @property
+    def kaynak(self) -> str:
+        return self.konum.kaynak
 
 
 # Kilit sırası her yerde _dizin_lock → _konum_lock: `dizin()` kilidi tutarken
@@ -454,7 +489,8 @@ def get_anime_listesi() -> List[Tuple[str, str]]:
 # Tam arşivi indir (çevrimdışı kullanım)
 # ─────────────────────────────────────────────────────────────────────────────
 def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = None,
-                    iptal: Any = None, hedef: Optional[Path] = None) -> Path:
+                    iptal: Any = None, hedef: Optional[Path] = None,
+                    asama: Optional[Callable[[str, str], Any]] = None) -> Path:
     """Arşivin tamamını indirip ``hedef``'e (varsayılan `cevrimdisi_arsiv`) kur.
 
     Kaynaklar sırayla: GitLab paketi → bu deponun GitHub paketi (yalnızca
@@ -462,6 +498,12 @@ def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = No
     boyunca çağrılır; ``iptal`` `threading.Event` benzeri bir nesnedir ve
     kurulduğunda işlem `IptalEdildi` ile durur (yedek kaynağa GEÇİLMEZ —
     kullanıcı vazgeçti).
+
+    ``asama(asama_adi, kaynak_adi)`` her kaynağın her aşamasının başında
+    çağrılır (``paket.ASAMA_*``; kaynak adı "GitLab"/"GitHub"): önce
+    `ASAMA_BAGLANMA` (istekten önce, kaynak düşse bile), yanıt geldiyse
+    indirme → açma → yerleştirme. Arayüz böylece hangi kaynağın beklendiğini
+    ve açma aşamasını (bayt ilerlemesi akmıyor) gösterebilir.
 
     Eski arşiv yenisi doğrulanıp yerine konana kadar yerinde kalır; hata ya
     da iptalde geçici dosyalar silinir. Başarıda modül cache'leri sıfırlanır,
@@ -471,13 +513,16 @@ def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = No
     hatalar: List[str] = []
     for kaynak in TAM_ARSIV_KAYNAKLARI:
         paket.iptal_denetle(iptal)
+        if asama:
+            asama(paket.ASAMA_BAGLANMA, kaynak.ad)
         yanit = None
         try:
             yanit = _session().get(kaynak.url, stream=True, timeout=INDIRME_ZAMAN_ASIMI)
             yanit.raise_for_status()
             sonuc = paket.paketten_kur(
                 yanit, hedef, ust_desen=kaynak.ust_desen, alt_klasor=kaynak.alt_klasor,
-                kaynak=kaynak.depo, dal=kaynak.dal, ilerleme=ilerleme, iptal=iptal)
+                kaynak=kaynak.depo, dal=kaynak.dal, ilerleme=ilerleme, iptal=iptal,
+                asama=_asama_bagla(asama, kaynak.ad))
         except paket.IptalEdildi:
             raise
         except Exception as hata:
@@ -493,6 +538,118 @@ def tam_arsiv_indir(ilerleme: Optional[Callable[[int, Optional[int]], Any]] = No
         sifirla()
         return sonuc
     raise paket.ArsivHatasi("tam arşiv indirilemedi — " + "; ".join(hatalar))
+
+
+def _asama_bagla(asama: Optional[Callable[[str, str], Any]],
+                 kaynak_adi: str) -> Optional[Callable[[str], Any]]:
+    """`paketten_kur`'un tek argümanlı `asama`sına kaynak adını ekle."""
+    if asama is None:
+        return None
+    return lambda ad: asama(ad, kaynak_adi)
+
+
+def indirilen_arsivi_sil() -> bool:
+    """İndirilmiş tam arşivi (`<veri kökü>/cevrimdisi_arsiv`) sil.
+
+    Silinecek bir şey yoksa ``False``. YALNIZCA `tam_arsiv_indir`'in varsayılan
+    hedefi silinir; kullanıcının gösterdiği klasör (ayar/ortam) ve depodaki
+    `arsiv/` asla: depodan çalışırken veri kökü depo KÖKÜ, yani yanlış bir yol
+    hesabı commit'lenmiş aynayı silebilirdi. Bu yüzden ad ve konum ayrıca
+    denetleniyor — savunma, tek satırlık bir hatanın 83 bin dosyaya mal
+    olmaması için.
+
+    Önce aynı klasörde gizli bir ada taşınır (`.cevrimdisi_arsiv-eski-*`,
+    `.gitignore`'da; `paket.yerine_koy` da eskiyi bu adla bırakıyor). Taşıma
+    anlık; silme ise binlerce dosya ve yarıda kesilebilir (kilitli dosya,
+    izin). Yarım kalan klasör böylece konum çözümüne bir daha görünmez.
+    Sembolik bağsa yalnızca BAĞ kaldırılır, gösterdiği klasöre dokunulmaz.
+    """
+    hedef = Path(indirilen_arsiv_dizini())
+    if hedef.name != CEVRIMDISI_KLASOR:
+        raise paket.ArsivHatasi(
+            f"{hedef} indirilen arşiv klasörü değil ({CEVRIMDISI_KLASOR} bekleniyordu); "
+            "silinmedi")
+    if hedef.is_symlink():
+        hedef.unlink()
+        sifirla()
+        return True
+    if not hedef.exists():
+        return False
+    try:
+        depo_mu = hedef.resolve() == Path(DEPO_ARSIVI).resolve()
+    except OSError:
+        depo_mu = False
+    if depo_mu:
+        raise paket.ArsivHatasi(f"{hedef} depodaki arşiv aynası; silinmedi")
+
+    cop = hedef.with_name(f".{hedef.name}-eski-{uuid.uuid4().hex[:8]}")
+    try:
+        os.replace(hedef, cop)
+    except OSError as hata:
+        raise paket.ArsivHatasi(f"{hedef} kaldırılamadı: {hata}") from hata
+    sifirla()                            # konum artık sıradaki yere düşmeli
+    silinemeyen: List[str] = []
+
+    def _hata(_fn, yol, _bilgi):
+        silinemeyen.append(str(yol))
+
+    # 3.12 `onerror`'ı `onexc` lehine kullanımdan kaldırdı; iki geri çağrı da
+    # (fonksiyon, yol, hata) alıyor, yalnızca argüman adı farklı.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(cop, onexc=_hata)   # pylint: disable=unexpected-keyword-arg
+    else:
+        shutil.rmtree(cop, onerror=_hata)
+    if silinemeyen:
+        raise paket.ArsivHatasi(
+            f"arşiv devre dışı bırakıldı ama {len(silinemeyen)} dosya silinemedi "
+            f"({cop}); elle silebilirsiniz. İlki: {silinemeyen[0]}")
+    return True
+
+
+def _dizin_ozeti(veri: Any) -> Tuple[Optional[int], Optional[int]]:
+    """``(anime_sayisi, last_update)``; dizin yok/bozuksa ``(None, None)``."""
+    if not isinstance(veri, dict) or not isinstance(veri.get("index"), dict):
+        return None, None
+    son = veri.get("last_update")
+    try:
+        son = int(son) if son is not None else None
+    except (TypeError, ValueError):
+        son = None
+    return paket.anime_sayisi(veri), son
+
+
+def arsiv_durumu() -> ArsivDurumu:
+    """Etkin arşiv konumu ve içeriğinin özeti. ASLA ağa çıkmaz.
+
+    Yerel konumda dizin `dizin()` ile okunur — önbelleğe girer, ilk arama
+    ayrıca beklemez. Uzak aynada yalnızca eldeki bilgi kullanılır: bellekteki
+    dizin, yoksa disk önbelleğindeki kopya; ikisi de yoksa sayılar ``None``.
+    Ayarlar sayfasını açmak kullanıcıyı internete çıkarmamalı.
+
+    GUI thread'inde çağrılmamalı: ilk çağrıda megabaytlık dizin.json
+    (gerekirse birkaç aday klasörde) ayrıştırılıyor.
+    """
+    konum = arsiv_konumu()
+    onbellekten = False
+    if konum.dizin is not None:
+        adres = str(konum.dizin)
+        sayi, son = _dizin_ozeti(dizin())
+    else:
+        adres = uzak_aynalar()[0]
+        veri: Any = _dizin_cache
+        if not veri:
+            veri = _onbellekten_oku("dizin.json")
+            onbellekten = veri is not _YOK
+        sayi, son = _dizin_ozeti(veri if veri is not _YOK else None)
+    indirilen = Path(indirilen_arsiv_dizini())
+    return ArsivDurumu(
+        konum=konum, adres=adres, anime_sayisi=sayi, son_guncelleme=son,
+        indirilen_dizini=indirilen,
+        indirilen_var=konum.kaynak == "indirilen" or indirilen.exists(),
+        ortam_dizini=(os.environ.get(DIZIN_ORTAM_ANAHTARI) or "").strip(),
+        ayar_dizini=_ayar_oku(DIZIN_AYAR_ANAHTARI),
+        onbellekten=onbellekten and sayi is not None,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -826,6 +983,9 @@ __all__ = [
     "fetch_json",
     "arsiv_konumu",
     "ArsivKonumu",
+    "arsiv_durumu",
+    "ArsivDurumu",
+    "indirilen_arsivi_sil",
     "uzak_aynalar",
     "tam_arsiv_indir",
     "TAM_ARSIV_KAYNAKLARI",
