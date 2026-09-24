@@ -553,53 +553,77 @@ def _extract_fireplayer_id(player_html: str) -> Optional[str]:
     return None
 
 
+def fireplayer_istegi(sayfa: str, *, form: Optional[Dict[str, str]] = None,
+                      referer: Optional[str] = None,
+                      timeout: int = 60) -> Optional[Dict[str, Any]]:
+    """FirePlayer oynatıcısının `do=getVideo` ucunu çağır; ham JSON sözlüğü.
+
+    FirePlayer bir PHP oynatıcı betiği; aynı betik birden çok sitede çalışıyor
+    (anizmplayer.com, Animeler'in play.animeler.pw'si). Tarayıcıdaki JS, oynatıcı
+    sayfasının KENDİ adresine `do=getVideo` ekleyip POST ediyor; bu yüzden uç
+    sayfa adresinden türetiliyor, sabit yazılmıyor. Anizle'nin eski yolu
+    (`/player/index.php?data=<id>`) da aynı betiğe çıkıyor.
+
+    Args:
+        sayfa: Oynatıcı sayfasının adresi (sorgu dizgisi taşıyabilir).
+        form:  POST gövdesi. Anizle göndermiyor; Animeler'in oynatıcısı
+               ``{"hash", "r", "s"}`` ile diğer sunucuları (s1, s2…) veriyor.
+        referer: Verilmezse sayfanın kendisi (tarayıcının gönderdiği).
+
+    Returns: JSON sözlüğü; istek başarısız ya da yanıt JSON değilse None.
+    """
+    ayrac = "&" if "?" in sayfa else "?"
+    origin = _origin_of(sayfa) or PLAYER_BASE_URL
+    response = _http_post(
+        f"{sayfa}{ayrac}do=getVideo",
+        timeout=timeout,
+        headers={"Referer": referer or sayfa, "Origin": origin},
+        data=form,
+    )
+    if response is None or response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError as e:        # json.JSONDecodeError de ValueError
+        print(f"[FirePlayer] JSON parse hatası ({sayfa}): {e}")
+        return None
+    if not isinstance(data, dict):
+        print(f"[FirePlayer] cevap dict değil: {type(data)}")
+        return None
+    return data
+
+
+def fireplayer_akisi(data: Dict[str, Any], etiket: str,
+                     referer: Optional[str] = None) -> Optional[Dict[str, str]]:
+    """`fireplayer_istegi` yanıtındaki oynatılabilir adresi akış sözlüğüne çevir.
+
+    ``securedLink`` (HLS, istek atan IP'ye bağlı imzalı adres) önce gelir;
+    yoksa ``videoSource`` doğrudan dosya sayılır. ``videoSrc`` (başka bir
+    barındırıcının gömme sayfası) burada ele alınmaz: onu açmak çağıranın işi.
+    """
+    if data.get("hls") and data.get("securedLink"):
+        akis = {"url": data["securedLink"], "label": f"{etiket} (HLS)", "type": "hls"}
+    elif data.get("videoSource"):
+        akis = {"url": data["videoSource"], "label": etiket, "type": "direct"}
+    else:
+        return None
+    if referer:
+        akis["referer"] = referer
+    return akis
+
+
 def _get_video_stream_from_player(player_id: str, video_name: str) -> Optional[Dict[str, str]]:
     """
     FirePlayer ID'sinden gerçek video stream URL'sini al.
-    
+
     Endpoint: anizmplayer.com/player/index.php?data=ID&do=getVideo
     """
     try:
-        url = f"{PLAYER_BASE_URL}/player/index.php?data={player_id}&do=getVideo"
-        response = _http_post(
-            url,
-            headers={
-                "Referer": f"{PLAYER_BASE_URL}/player/{player_id}",
-                "Origin": PLAYER_BASE_URL,
-            }
+        data = fireplayer_istegi(
+            f"{PLAYER_BASE_URL}/player/index.php?data={player_id}",
+            referer=f"{PLAYER_BASE_URL}/player/{player_id}",
         )
-        
-        if response is None or response.status_code != 200:
-            return None
-
-        try:
-            data = response.json()
-        except json.JSONDecodeError as e:
-            print(f"[Anizle] FirePlayer JSON parse hatası: {e}")
-            return None
-
-        if not isinstance(data, dict):
-            print(f"[Anizle] FirePlayer cevabı dict değil: {type(data)}")
-            return None
-
-        # HLS stream
-        if data.get("hls") and data.get("securedLink"):
-            return {
-                "url": data["securedLink"],
-                "label": f"{video_name} (HLS)",
-                "type": "hls"
-            }
-
-        # Video source
-        if data.get("videoSource"):
-            return {
-                "url": data["videoSource"],
-                "label": video_name,
-                "type": "direct"
-            }
-
-        return None
-
+        return fireplayer_akisi(data, video_name) if data else None
     except Exception as e:
         print(f"[Anizle] FirePlayer video çekme hatası: {e}")
         return None
@@ -1040,6 +1064,8 @@ def get_anime_details(slug: str) -> Optional[AnizleAnime]:
 __all__ = [
     "AnizleAnime",
     "AnizleEpisode",
+    "fireplayer_akisi",
+    "fireplayer_istegi",
     "get_anime_details",
     "get_anime_episodes",
     "get_episode_streams",

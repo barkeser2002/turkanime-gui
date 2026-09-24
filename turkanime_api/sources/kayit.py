@@ -332,6 +332,11 @@ def _asyaanimeleri_adresi(bolum_id: str) -> str:
     return bolum_adresi(bolum_id)
 
 
+def _animeler() -> KaynakUclari:
+    from .animeler import get_anime_episodes, get_episode_streams, search_animeler
+    return KaynakUclari(search_animeler, get_anime_episodes, get_episode_streams)
+
+
 def _arsiv_bolum_slugu(bolum_id: str) -> str:
     """"anime_slug/bolum_slug" → "bolum_slug" (turkanime.tv'nin kendi slug'ı).
 
@@ -379,6 +384,22 @@ def _deokwave_adresi(bolum_id: str) -> str:
     return watch_url(bolum_id)
 
 
+def _animeler_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği sitedeki yol ("one-piece/bolum-1161"). Adres burada elle
+    # kuruluyor: kayıt modülü kaynak modülünü import etmiyor (bkz. üst not).
+    return f"https://animeler.pw/{bolum_id}"
+
+
+def _animeler_bolum_slugu(bolum_id: str) -> str:
+    """"one-piece/bolum-1161" → "one-piece-bolum-1161".
+
+    Varsayılan slug çağıranın verdiği anime BAŞLIĞINDAN üretiliyor; aynı dizi
+    AniList eşleşmesiyle başka adla açılınca izleme geçmişinin anahtarı ve
+    indirme dosyasının adı değişirdi. Sitenin kimliği her açılışta aynı.
+    """
+    return str(bolum_id).strip("/").replace("/", "-")
+
+
 # ── Tablo ───────────────────────────────────────────────────────────────────
 # Sıra önemli: arama sonuçları, CLI menüsü ve PROVIDERS önceliği bu sırayı
 # izler. TürkAnime en başta: CLI'ın varsayılanı ve ağsız çalışan tek kaynak.
@@ -416,6 +437,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("Asya Animeleri", "Asya Animeleri", "AA", "#e17055", "ASYAANIMELERI",
            _asyaanimeleri, modul="asyaanimeleri", cli_kodu="asyaanimeleri",
            bolum_adresi=_asyaanimeleri_adresi, taranabilir=True),
+    Kaynak("Animeler", "Animeler.pw", "AN", "#00cec9", "ANIMELER", _animeler,
+           modul="animeler", cli_kodu="animeler", bolum_adresi=_animeler_adresi,
+           bolum_slugu=_animeler_bolum_slugu, taranabilir=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").

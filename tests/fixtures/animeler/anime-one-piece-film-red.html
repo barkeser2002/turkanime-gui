@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<title>One Piece Film: Red izle - Anime izle - Animeler Pw - Turkanime - Tranimeizle</title>
+<meta name="csrf-token" content="kWniaKsciIK8JOakvTq9tl8rYt9zBWWx4qQHgkY1">
+<link rel="canonical" href="https://animeler.pw/one-piece-film-red">
+</head>
+<body>
+<!-- kirpildi: sayfanin geri kalani -->
+<script>
+    (function($) {
+        "use strict";
+        var seasonEpisodesData = {
+                    };
+
+        var allEpisodesData = [
+                                            { id: 19125, url: "https://animeler.pw/one-piece-film-red/bolum-1", start: 1, end: 1, display: "1", title: "One Piece Film: Red 1. B\u00f6l\u00fcm izle" }                    ];
+
+        window.selectSeason = function(btn, seasonId) {
+            $('.season-btn').removeClass('active');
+            $(btn).addClass('active');
+            window.loadSeasonEpisodes(seasonId);
+        }
+
+        window.episodeViewMode = localStorage.getItem('animeDetailEpView') || 'grid';
+
+        window.setEpisodeView = function(mode) {
+            window.episodeViewMode = mode;
+            try { localStorage.setItem('animeDetailEpView', mode); } catch (e) {}
+            var container = document.getElementById('episodeContainer');
+            if (!container) return;
+            container.setAttribute('data-ep-view', mode);
+            var listEl = document.getElementById('episodeList');
+            if (listEl) listEl.setAttribute('aria-hidden', mode !== 'list');
+            if (typeof $ !== 'undefined') $('.ep-view-btn').removeClass('active').filter('[data-view="' + mode + '"]').addClass('active');
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                var saved = (typeof localStorage !== 'undefined' && localStorage.getItem('animeDetailEpView')) || 'grid';
+                if (saved === 'list') setEpisodeView('list');
+            });
+        } else {
+            var saved = (typeof localStorage !== 'undefined' && localStorage.getItem('animeDetailEpView')) || 'grid';
+            if (saved === 'list') setEpisodeView('list');
+        }
+
+        $(document).on('click', '#episodeContainer .detail-ep-order-btn', function() {
+            var order = $(this).data('order');
+            if (!order || (order !== 'asc' && order !== 'desc')) return;
+            window.animeDetailEpisodeOrder = order;
+            try { localStorage.setItem('animeDetail_episode_order', order); } catch (e) {}
+            $('#episodeContainer .detail-ep-order-btn').removeClass('active').filter('[data-order="' + order + '"]').addClass('active');
+            applyDetailEpisodeOrderToContainer();
+        });
+
+        var currentPage = 0;
+        var perPage = 100;
+        window.animeDetailEpisodeOrder = (function() { try { return localStorage.getItem('animeDetail_episode_order') || 'asc'; } catch (e) { return 'asc'; } })();
+
+        function sortDetailPageEps(arr) {
+            var order = window.animeDetailEpisodeOrder || 'asc';
+            return arr.slice().sort(function(a, b) {
+                var na = parseInt(a.start, 10) || 0;
+                var nb = parseInt(b.start, 10) || 0;
+                return order === 'desc' ? nb - na : na - nb;
+            });
+        }
+        function applyDetailEpisodeOrderToContainer() {
+            var container = document.getElementById('episodeContainer');
+            if (!container) return;
+            var grid = container.querySelector('#episodeGrid');
+            var listEl = container.querySelector('#episodeList');
+            var order = window.animeDetailEpisodeOrder || 'asc';
+            function byEpNum(a, b) {
+                var na = parseInt(a.getAttribute('data-ep-num'), 10) || 0;
+                var nb = parseInt(b.getAttribute('data-ep-num'), 10) || 0;
+                return order === 'desc' ? nb - na : na - nb;
+            }
+            if (grid) {
+                var items = [].slice.call(grid.querySelectorAll('.ep-item'));
+                items.sort(byEpNum);
+                items.forEach(function(el) { grid.appendChild(el); });
+            }
+            if (listEl) {
+                var listItems = [].slice.call(listEl.querySelectorAll('.ep-list-item'));
+                listItems.sort(byEpNum);
+                listItems.forEach(function(el) { listEl.appendChild(el); });
+            }
+            if (typeof window.applyWatchedStyles === 'function') window.applyWatchedStyles();
+        }
+
+        window.loadSeasonEpisodes = function(seasonId) {
+            if (seasonId === null || !seasonEpisodesData[seasonId]) return;
+
+            const eps = seasonEpisodesData[seasonId];
+            const container = document.getElementById('episodeContainer');
+            if (!container) return;
+            const maxEnd = eps.length ? Math.max.apply(null, eps.map(function(e) { return e.end || 0; })) : 0;
+            const maxEpisodeNum = maxEnd >= 1 ? maxEnd : eps.length;
+            const totalPages = Math.max(1, Math.ceil(maxEpisodeNum / perPage));
+
+            let dropdownHtml = '';
+            for (let i = 0; i < totalPages; i++) {
+                const start = (i * perPage) + 1;
+                const end = Math.min((i + 1) * perPage, maxEpisodeNum);
+                dropdownHtml += '<option value="' + i + '">' + start + '-' + end + '</option>';
+            }
+
+            function getEpisodesInRange(epList, pageIndex, maxEp) {
+                var rStart = (pageIndex * perPage) + 1;
+                var rEnd = Math.min((pageIndex + 1) * perPage, maxEp);
+                return epList.filter(function(ep) {
+                    var s = ep.start || 0;
+                    var e = ep.end || s;
+                    if (s < 1 && e < 1) return rStart <= 1;
+                    return s <= rEnd && e >= rStart;
+                });
+            }
+            var pageEps = sortDetailPageEps(getEpisodesInRange(eps, 0, maxEpisodeNum));
+            var viewMode = window.episodeViewMode || 'grid';
+            var orderAsc = (window.animeDetailEpisodeOrder || 'asc') === 'asc';
+            var listHtml = '';
+            pageEps.forEach((ep, i) => {
+                listHtml += '<a href="' + ep.url + '" class="ep-list-item' + (i === 0 ? ' active' : '') + '" data-ep-id="' + (ep.id || '') + '" data-ep-num="' + ep.start + '"' + (ep.title ? ' data-episode-title="' + (ep.title || '').replace(/"/g, '&quot;') + '"' : '') + '><span class="ep-list-num">' + ep.display + '</span><span class="ep-list-label">' + ep.display + '. Bölüm</span>' + (ep.title ? '<span class="ep-title-sr" aria-hidden="true">' + (ep.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>' : '') + '<i class="fas fa-play ep-list-play"></i></a>';
+            });
+            let html = '<div class="episodenav">' +
+                        '<div class="episode-view-toggle" role="group" aria-label="Bölüm görünümü">' +
+                        '<button type="button" class="ep-view-btn' + (viewMode === 'grid' ? ' active' : '') + '" data-view="grid" onclick="setEpisodeView(\'grid\')" title="Izgara görünümü"><i class="fas fa-th-large"></i></button>' +
+                        '<button type="button" class="ep-view-btn' + (viewMode === 'list' ? ' active' : '') + '" data-view="list" onclick="setEpisodeView(\'list\')" title="Liste görünümü"><i class="fas fa-list"></i></button>' +
+                        '</div>' +
+                        '<div class="episode-order-toggle d-flex align-items-center gap-1 flex-wrap" style="margin-bottom: 0;">' +
+                        '<span class="text-muted small">Sıra:</span>' +
+                        '<button type="button" class="detail-ep-order-btn btn btn-sm btn-outline-secondary' + (orderAsc ? ' active' : '') + '" data-order="asc" title="A-Z">A-Z</button>' +
+                        '<button type="button" class="detail-ep-order-btn btn btn-sm btn-outline-secondary' + (!orderAsc ? ' active' : '') + '" data-order="desc" title="Z-A">Z-A</button>' +
+                        '</div>' +
+                        '<div class="episodenav__right">' +
+                        '<div class="episode-search-bar episode-search-bar--in-toolbar">' +
+                        '<input type="text" inputmode="numeric" class="ep-search-input" placeholder="Bölüm numarası girin" data-min="1" data-max="' + maxEpisodeNum + '" data-season-id="' + seasonId + '" autocomplete="off">' +
+                        '<button class="ep-search-btn" onclick="window.goToEpisodeNumber(' + seasonId + ')" aria-label="Belirli Bölüme Git"><i class="fas fa-search"></i></button>' +
+                        '</div>' +
+                        '<div class="episodenav__range">' +
+                        '<select class="ep-range-dropdown" id="epRangeSelect" onchange="window.changeEpisodeRange(this.value, ' + seasonId + ')">' + dropdownHtml + '</select>' +
+                        '<button class="ep-nav-btn" onclick="window.navigateEpisodePage(\'prev\')" aria-label="Önceki Bölüm Sayfası"><i class="fas fa-chevron-left"></i></button>' +
+                        '<button class="ep-nav-btn" onclick="window.navigateEpisodePage(\'next\')" aria-label="Sonraki Bölüm Sayfası"><i class="fas fa-chevron-right"></i></button>' +
+                        '</div></div></div>' +
+                        '<div class="episode-grid" id="episodeGrid" data-total="' + eps.length + '" data-max-ep="' + maxEpisodeNum + '" data-per-page="' + perPage + '" data-season-id="' + seasonId + '">';
+
+            pageEps.forEach((ep, i) => {
+                html += '<a href="' + ep.url + '" class="ep-item' + (i === 0 ? ' active' : '') + '" data-ep-id="' + (ep.id || '') + '" data-ep-num="' + ep.start + '"' + (ep.title ? ' data-episode-title="' + (ep.title || '').replace(/"/g, '&quot;') + '"' : '') + '>' + ep.display + (ep.title ? '<span class="ep-title-sr" aria-hidden="true">' + (ep.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>' : '') + '</a>';
+            });
+
+            html += '</div><div class="episode-list" id="episodeList" aria-hidden="' + (viewMode !== 'list') + '">' + listHtml + '</div>';
+
+            container.setAttribute('data-ep-view', viewMode);
+            container.innerHTML = html;
+            currentPage = 0;
+
+            if (typeof window.applyWatchedStyles === 'function') {
+                window.applyWatchedStyles();
+            }
+        };
+
+        window.changeEpisodeRange = function(page, seasonId) {
+            page = parseInt(page);
+            currentPage = page;
+
+            let eps;
+            if (seasonId !== null && seasonEpisodesData[seasonId]) {
+                eps = seasonEpisodesData[seasonId];
+            } else {
+                eps = allEpisodesData;
+            }
+
+            if (!eps) return;
+
+            var maxEp = 0;
+            eps.forEach(function(e) { var n = e.end || 0; if (n > maxEp) maxEp = n; });
+            if (maxEp < 1) maxEp = eps.length;
+            var gridEl = document.getElementById('episodeGrid');
+            if (gridEl && gridEl.getAttribute('data-max-ep')) maxEp = parseInt(gridEl.getAttribute('data-max-ep'), 10) || maxEp;
+
+            var rStart = (page * perPage) + 1;
+            var rEnd = Math.min((page + 1) * perPage, maxEp);
+            var pageEps = sortDetailPageEps(eps.filter(function(ep) {
+                var s = ep.start || 0;
+                var e = ep.end || s;
+                if (s < 1 && e < 1) return rStart <= 1;
+                return s <= rEnd && e >= rStart;
+            }));
+
+            const grid = document.getElementById('episodeGrid');
+            const listEl = document.getElementById('episodeList');
+            if (!grid) return;
+
+            let gridHtml = '';
+            let listHtml = '';
+            pageEps.forEach(function(ep, i) {
+gridHtml += '<a href="' + ep.url + '" class="ep-item' + (i === 0 ? ' active' : '') + '" data-ep-id="' + (ep.id || '') + '" data-ep-num="' + ep.start + '"' + (ep.title ? ' data-episode-title="' + (ep.title || '').replace(/"/g, '&quot;') + '"' : '') + '>' + ep.display + (ep.title ? '<span class="ep-title-sr" aria-hidden="true">' + (ep.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>' : '') + '</a>';
+                                                listHtml += '<a href="' + ep.url + '" class="ep-list-item' + (i === 0 ? ' active' : '') + '" data-ep-id="' + (ep.id || '') + '" data-ep-num="' + ep.start + '"' + (ep.title ? ' data-episode-title="' + (ep.title || '').replace(/"/g, '&quot;') + '"' : '') + '><span class="ep-list-num">' + ep.display + '</span><span class="ep-list-label">' + ep.display + '. Bölüm</span>' + (ep.title ? '<span class="ep-title-sr" aria-hidden="true">' + (ep.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>' : '') + '<i class="fas fa-play ep-list-play"></i></a>';
+            });
+
+            grid.innerHTML = gridHtml;
+            if (listEl) listEl.innerHTML = listHtml;
+
+            if (typeof window.applyWatchedStyles === 'function') {
+                window.applyWatchedStyles();
+            }
+        };
+
+        (function initDetailEpisodeOrder() {
+            var order = window.animeDetailEpisodeOrder || 'asc';
+            if (typeof $ !== 'undefined') {
+                $('#episodeContainer .detail-ep-order-btn').removeClass('active').filter('[data-order="' + order + '"]').addClass('active');
+            }
+            applyDetailEpisodeOrderToContainer();
+        })();
+
+        function applyInitialEpisodeRange() {
+            var grid = document.getElementById('episodeGrid');
+            if (!grid) return;
+            var pp = parseInt(grid.getAttribute('data-per-page'), 10);
+            if (pp > 0) perPage = pp;
+            var sid = grid.getAttribute('data-season-id');
+            var seasonId = (sid === '' || sid === null || sid === undefined) ? null : sid;
+            if (seasonId !== null && typeof seasonEpisodesData !== 'undefined' && !seasonEpisodesData[seasonId]) return;
+            if (seasonId === null && (!window.allEpisodesData || allEpisodesData.length === 0)) return;
+            currentPage = 0;
+            var select = document.getElementById('epRangeSelect');
+            if (select) select.value = '0';
+            changeEpisodeRange(0, seasonId);
+        }
+        (function initDetailEpisodeRange() {
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', function() {
+                    setTimeout(applyInitialEpisodeRange, 0);
+                });
+            } else {
+                setTimeout(applyInitialEpisodeRange, 0);
+            }
+        })();
+
+        window.navigateEpisodePage = function(dir) {
+            const select = document.getElementById('epRangeSelect');
+            if (!select) return;
+
+            const currentVal = parseInt(select.value);
+            const maxVal = select.options.length - 1;
+
+            if (dir === 'prev' && currentVal > 0) {
+                select.value = currentVal - 1;
+                $(select).trigger('change');
+            } else if (dir === 'next' && currentVal < maxVal) {
+                select.value = currentVal + 1;
+                $(select).trigger('change');
+            }
+        }
+
+        window.goToEpisodeNumber = function(seasonId) {
+            const input = document.querySelector('.ep-search-input');
+            if (!input) return;
+
+            const num = parseInt(input.value, 10);
+            if (num <= 0) return;
+
+            var maxEp = parseInt(input.getAttribute('data-max'), 10) || 0;
+            if (maxEp && num > maxEp) {
+                alert('Geçersiz bölüm numarası (1-' + maxEp + ')');
+                return;
+            }
+
+            let eps;
+            if (seasonId !== null && seasonEpisodesData[seasonId]) {
+                eps = seasonEpisodesData[seasonId];
+            } else {
+                eps = allEpisodesData;
+            }
+            if (!eps || eps.length === 0) return;
+
+            var found = eps.find(function(ep) {
+                var start = ep.start || 0;
+                var end = ep.end || start;
+                return num >= start && num <= end;
+            });
+            if (found) {
+                window.location.href = found.url;
+            } else {
+                var byStart = eps.find(function(ep) { return (ep.start || 0) >= num; });
+                window.location.href = (byStart || eps[eps.length - 1]).url;
+            }
+        }
+
+        window.searchEpisode = function() {
+            window.goToEpisodeNumber(null);
+        }
+
+        window.searchEpisodeInSeason = function(seasonId) {
+            const input = document.querySelector(`.ep-search-input[data-season-id="${seasonId}"]`) || document.querySelector('.ep-search-input');
+            if (!input) return;
+            const num = parseInt(input.value);
+            if (num > 0) {
+                const items = document.querySelectorAll('.ep-item');
+                if (num <= items.length) {
+                    window.location.href = items[num - 1].href;
+                }
+            }
+        }
+
+        window.toggleAllCharacters = function() {
+            const moreChars = document.getElementById('moreCharacters');
+            const btnText = document.getElementById('charBtnText');
+            const btnIcon = document.getElementById('charBtnIcon');
+
+            if (moreChars.classList.contains('d-none')) {
+                moreChars.classList.remove('d-none');
+                btnText.textContent = 'Daha Az Göster';
+                btnIcon.classList.replace('fa-chevron-down', 'fa-chevron-up');
+            } else {
+                moreChars.classList.add('d-none');
+                btnText.textContent = 'Tüm Karakterleri Göster (57)';
+                btnIcon.classList.replace('fa-chevron-up', 'fa-chevron-down');
+            }
+        }
+    })(jQuery);
+</script>
+</body>
+</html>

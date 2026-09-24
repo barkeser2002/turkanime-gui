@@ -1064,7 +1064,7 @@ def test_kaynak_tablosu_turkanime_api_adaptorlerini_kullaniyor():
 
     defter = KaynakDefteri()
     assert set(KAYNAKLAR) == {"anizle", "openani", "tranimaci", "tranime", "animecix",
-                              "animexe", "animpow", "deokwave", "asyaanimeleri"}
+                              "animexe", "animpow", "deokwave", "asyaanimeleri", "animeler"}
     assert defter.uclar("anizle").ara is anizle.search_anizle
     assert defter.uclar("openani").bolumler is openani.get_anime_episodes
     assert defter.uclar("tranimaci").akislar is tranimaci.get_episode_streams

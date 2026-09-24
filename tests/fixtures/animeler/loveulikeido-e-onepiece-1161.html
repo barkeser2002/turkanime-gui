@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animeler.pw </title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js" integrity="sha512-a+SUDuwNzXDvz4XrIcXHuCf089/iJAoN4lmrXJg18XnduKK6YlDHNRalv4yd1N40OKI80tFidF+rqTFKGPoWFQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link href="https://fonts.googleapis.com/css?family=Roboto+Condensed:300,400,700" rel="stylesheet">
+    <link rel="stylesheet" href="https://loveulikeido.site/styles-vast-player-oxserver.css">
+    <style>
+        /* Estilos Generales */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Roboto Condensed', sans-serif;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+
+        /* Contenedor Principal */
+        #DisplayContent {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Reproductor */
+        #PlayerDisplay {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            min-height: 0; /* Importante para que flex funcione correctamente */
+        }
+
+        /* Contenedor de Botones */
+        .buttons-container {
+            padding: 8px;
+            background: #2d2d2d;
+            flex-shrink: 0;
+            width: 100%;
+            max-height: 51px;
+            overflow: hidden;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-wrap: wrap;
+            width: 100%;
+            height: 35px; /* Altura fija para los botones */
+            overflow: hidden;
+        }
+
+        /* Botones más compactos */
+        .server-btn, .file-btn, .file_ads-btn {
+            padding: 6px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+            min-width: 35px;
+            height: 35px;
+            text-align: center;
+            flex-shrink: 0;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Ajustes para móvil */
+        @media (max-width: 768px) {
+            .buttons-container {
+                padding: 6px;
+                max-height: 45px;
+            }
+            
+            .button-group {
+                gap: 4px;
+                height: 33px;
+            }
+            
+            .server-btn, .file-btn, .file_ads-btn {
+                padding: 4px 8px;
+                min-width: 30px;
+                height: 33px;
+                font-size: 12px;
+            }
+
+            .server-btn-text {
+                font-size: 0 !important;
+            }
+            .server-btn-text::before {
+                content: attr(data-short);
+                font-size: 12px;
+            }
+        }
+
+        /* Iframe Responsive */
+        .iframe-container {
+            flex: 1;
+            position: relative;
+            width: 100%;
+            min-height: 0; /* Importante para que flex funcione correctamente */
+            background: #000;
+            overflow: hidden; /* Previene scroll */
+        }
+
+        #iframePlayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        /* Overlay y contador */
+        .iframe-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            z-index: 16;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            padding: 20px;
+        }
+
+        .click-counter-text {
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            backdrop-filter: blur(2px);
+        }
+
+        /* Resto de estilos sin cambios */
+        .server-btn, .file-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+            min-width: 40px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .server-btn {
+            background: #6b3fa0;
+            color: white;
+        }
+
+        .server-btn:hover {
+            background: #6b3fa0;
+        }
+
+        .server-btn.active {
+            background: #6a33ac;
+            box-shadow: 0 0 8px rgba(0,123,255,0.4);
+        }
+
+       
+
+        /* Ajustes para móvil */
+        @media (max-width: 768px) {
+            .buttons-container {
+                padding: 8px;
+            }
+            
+            .server-btn, .file-btn, .file_ads-btn {
+                padding: 6px 10px;
+                min-width: 35px;
+                font-size: 12px;
+            }
+
+            .button-group {
+                gap: 6px;
+            }
+
+            .click-counter-text {
+                padding: 6px 12px;
+                font-size: 12px;
+            }
+        }
+
+        .custom-tooltip {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .custom-tooltip::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 120%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: black;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s ease-in-out;
+            z-index: 20;
+        }
+
+        .custom-tooltip:hover::after {
+            opacity: 1;
+            visibility: visible;
+        }
+    </style>
+    
+</head>
+<body>
+    <!-- VAST Ads -->
+    <div id="modal" class="modal-vast" style="display: none;">
+        <div class="modal-content-vast">
+            <video id="videoPlayer" playsinline controlsList="nodownload noplaybackrate" style="width: 100%; height: auto;">
+            </video>
+        </div>
+    </div>
+
+    <div id="DisplayContent">
+        <div id="PlayerDisplay">
+            <div class="iframe-container">
+                <div id="iframeOverlay" class="iframe-overlay" style="display: none;">
+                    <div class="click-counter-text">Espera <span id="clickCounter">0</span> segundos...</div>
+                </div>
+                <iframe id="iframePlayer" frameborder="0" allowfullscreen></iframe>
+            </div>
+            <div class="buttons-container">
+                <div id="buttonGroup" class="button-group">
+                    <!-- Los botones se generarán dinámicamente con JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function decryptLink(encryptedLink) {
+            const bytes = CryptoJS.AES.decrypt(encryptedLink, 'Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE');
+            return bytes.toString(CryptoJS.enc.Utf8);
+        }
+
+        const dataLink = {"data":{"embeds":[{"servername":"byse","link":"U2FsdGVkX18TdXKTfRwWAOkoHh5E+J3vWfR/SLw4lqzjVY5QBXgNEFTLdte5P9X9s/LLQePdswxdtLBpBGK5gg==","type":"video"},{"servername":"voe","link":"U2FsdGVkX18w1xNMBSfT26f9gpHmV4fegt4wqhnnv7GvJby9ukBbr/ZoXoJQL6xV","type":"video"},{"servername":"lulustream","link":"U2FsdGVkX18TnYclTNPJtEDQ/XYWPlJBel9rfeIoUEG5k9HWOTkbs29v2hJoKmRL4foXh/5IyN7yWm6CfU5D2g==","type":"video"},{"servername":"vidhide","link":"U2FsdGVkX185KLXLbx1+mRjjTmke/4ExxXFkETINpMT0CGfAP+zGGbBkRuLfP7j8WN3fnUo8CeLaxkMRgsqkmQ==","type":"video"},{"servername":"savefiles","link":"U2FsdGVkX1/nfmu8sIJ6hY9QC3A5DMSphUgVkX2vXqIB7v+dUwucZbs3zGXWcGBN1ST62mxSjpJzUW4EJAx29w==","type":"video"},{"servername":"download","link":"U2FsdGVkX19msqXvCu65BQtTNmsgrByd8EEAxcQWGJ1LDsT04Zh1kGQzRr2SdAMINQTQ5Nx3gi9yD5rRtwMwVG/6KORVZ6fm2eWL+VpY/kQ=","type":"file"}],"subtitles":[]}};
+        const getButtonAdsIconoURL = '';
+        const playerDisplayNames = {"filemoon":"Byse.sx","voe":"Voe","rpmshare":"Junie","lulustream":"Lulu","upnshare":"Upn","vidhide":"Hide","savefiles":"Save","streamwish":"Wish"};
+
+        function getServerName(serverName) {
+            // Sadece domain adını al, uzantıları kaldır
+            try {
+                if (serverName.includes('://')) {
+                    const url = new URL(serverName);
+                    return url.hostname.replace('www.', '').replace('.com', '').replace('.net', '').replace('.org', '');
+                }
+                return serverName.replace('www.', '').replace('.com', '').replace('.net', '').replace('.org', '');
+            } catch (e) {
+                return serverName.replace('www.', '').replace('.com', '').replace('.net', '').replace('.org', '');
+            }
+        }
+
+        function createButtons() {
+            const buttonGroup = document.getElementById('buttonGroup');
+            buttonGroup.innerHTML = '';
+
+            // Separar los servidores por tipo
+            const videoServers = [];
+            const fileServers = [];
+            const fileAdsServers = [];
+            
+            dataLink.data.embeds.forEach(embed => {
+                if (embed.type === 'file') {
+                    fileServers.push(embed);
+                } else if (embed.type === 'file_ads') {
+                    fileAdsServers.push(embed);
+                } else {
+                    videoServers.push(embed);
+                }
+            });
+
+            // Crear botones para servidores de video
+            videoServers.forEach((embed, index) => {
+                const serverName = getServerName(embed.servername);
+                const displayName = playerDisplayNames[embed.servername] || (serverName.charAt(0).toUpperCase() + serverName.slice(1));
+                const shortName = displayName.substring(0, 4);
+
+                const serverBtn = document.createElement('button');
+                serverBtn.className = `server-btn custom-tooltip ${index === 0 ? 'active' : ''}`;
+                serverBtn.onclick = () => showTabContent(embed, index);
+                serverBtn.setAttribute('data-tooltip', displayName);
+                
+                const textSpan = document.createElement('span');
+                textSpan.className = 'server-btn-text';
+                textSpan.setAttribute('data-full', displayName);
+                textSpan.setAttribute('data-short', shortName);
+                textSpan.textContent = displayName;
+                
+                serverBtn.appendChild(textSpan);
+                buttonGroup.appendChild(serverBtn);
+            });
+
+            // Crear contenedor para botones de archivo
+            if (fileAdsServers.length > 0 || fileServers.length > 0) {
+                const fileButtonsContainer = document.createElement('div');
+                fileButtonsContainer.className = 'file-buttons';
+                
+                // Crear botones para servidores de file_ads (al lado izquierdo)
+                fileAdsServers.forEach(embed => {
+                    const serverName = getServerName(embed.servername);
+                    const displayName = playerDisplayNames[embed.servername] || serverName;
+
+                    const fileAdsBtn = document.createElement('button');
+                    fileAdsBtn.className = 'file_ads-btn custom-tooltip';
+                    fileAdsBtn.onclick = () => window.open(decryptLink(embed.link), '_blank');
+                    fileAdsBtn.setAttribute('data-tooltip', displayName);
+                    
+                    // Agregar icono si está configurado
+                    if (getButtonAdsIconoURL && getButtonAdsIconoURL.trim() !== '') {
+                        const icon = document.createElement('img');
+                        icon.src = getButtonAdsIconoURL;
+                        icon.style.width = '16px';
+                        icon.style.height = '16px';
+                        icon.style.marginRight = '6px';
+                        icon.style.objectFit = 'contain';
+                        fileAdsBtn.appendChild(icon);
+                    }
+                    
+                    const textSpan = document.createElement('span');
+                    textSpan.textContent = displayName;
+                    fileAdsBtn.appendChild(textSpan);
+                    
+                    fileButtonsContainer.appendChild(fileAdsBtn);
+                });
+                
+                // Crear botones para servidores de archivo
+               
+
+                buttonGroup.appendChild(fileButtonsContainer);
+            }
+        }
+
+        function showTabContent(server, index) {
+            const iframePlayer = document.getElementById('iframePlayer');
+            const iframeOverlay = document.getElementById('iframeOverlay');
+            const clickCounter = document.getElementById('clickCounter');
+            
+            // Actualizar botones
+            document.querySelectorAll('.server-btn').forEach(btn => btn.classList.remove('active'));
+            const activeButton = document.querySelectorAll('.server-btn')[index];
+            if (activeButton) activeButton.classList.add('active');
+
+            if (server && server.link && server.type !== 'file') {
+                const decryptedLink = decryptLink(server.link);
+                
+                if (server.counter && server.counter > 0) {
+                    iframeOverlay.style.display = 'block';
+                    let count = server.counter;
+                    clickCounter.textContent = count;
+                    
+                    const timer = setInterval(() => {
+                        count--;
+                        clickCounter.textContent = count;
+                        
+                        if (count <= 0) {
+                            clearInterval(timer);
+                            iframeOverlay.style.display = 'none';
+                            iframePlayer.src = decryptedLink;
+                        }
+                    }, 1000);
+                } else {
+                    iframeOverlay.style.display = 'none';
+                    iframePlayer.src = decryptedLink;
+                }
+            }
+        }
+
+        // Inicialización
+        document.addEventListener('DOMContentLoaded', () => {
+            createButtons();
+            // Buscar el primer servidor de video para cargar
+            const firstVideoServer = dataLink.data.embeds.find(embed => embed.type !== 'file');
+            if (firstVideoServer) {
+                showTabContent(firstVideoServer, 0);
+            }
+        });
+    </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"74c3fde4622240ff87a1b8ff5c2ebf23","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>

@@ -64,6 +64,7 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 | AnimPow | [animpow.com](https://animpow.com) · API: [client-api.animpow.com](https://client-api.animpow.com) · [quadrogg.best](https://quadrogg.best) · CDN: [benstreamsunucusuyum.xyz](https://benstreamsunucusuyum.xyz) |
 | Deokwave | [deokwave.com](https://deokwave.com) · video: [sw2.deokwave.com](https://sw2.deokwave.com) |
 | Asya Animeleri | [asyaanimeleri.top](https://asyaanimeleri.top) |
+| Animeler | [animeler.pw](https://animeler.pw) · oynatıcı: [play.animeler.pw](https://play.animeler.pw), [anizmplayer.com](https://anizmplayer.com), [loveulikeido.site](https://loveulikeido.site) |
 
 > Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
 > `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce
