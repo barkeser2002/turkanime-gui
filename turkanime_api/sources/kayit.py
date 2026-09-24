@@ -314,6 +314,24 @@ def _deokwave() -> KaynakUclari:
     return KaynakUclari(search_deokwave, get_anime_episodes, get_episode_streams)
 
 
+def _asyaanimeleri() -> KaynakUclari:
+    # Arama kartı kapak görselini de taşıyor; `zengin_ara` aynı isteği
+    # kullanıyor, görsel için ek istek yok.
+    from .asyaanimeleri import (
+        get_anime_episodes, get_episode_streams, search_asyaanimeleri, zengin_ara,
+    )
+    return KaynakUclari(search_asyaanimeleri, get_anime_episodes, get_episode_streams,
+                        zengin_ara=zengin_ara)
+
+
+def _asyaanimeleri_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği sayfanın kök yolu ("one-piece-1161-bolum-izle"); adresi
+    # modül kuruyor çünkü alan adı ortam değişkeniyle değiştirilebiliyor
+    # (site .com'dan .top'a taşındı). Tembel: kayıt modülü hafif kalmalı.
+    from .asyaanimeleri import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
 def _arsiv_bolum_slugu(bolum_id: str) -> str:
     """"anime_slug/bolum_slug" → "bolum_slug" (turkanime.tv'nin kendi slug'ı).
 
@@ -395,6 +413,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("Deokwave", "Deokwave", "DW", "#6c5ce7", "DEOKWAVE", _deokwave,
            modul="deokwave", cli_kodu="deokwave", bolum_adresi=_deokwave_adresi,
            taranabilir=True),
+    Kaynak("Asya Animeleri", "Asya Animeleri", "AA", "#e17055", "ASYAANIMELERI",
+           _asyaanimeleri, modul="asyaanimeleri", cli_kodu="asyaanimeleri",
+           bolum_adresi=_asyaanimeleri_adresi, taranabilir=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").
