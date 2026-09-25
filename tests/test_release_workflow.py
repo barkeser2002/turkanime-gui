@@ -213,6 +213,22 @@ def test_derleme_ve_yayin_yalnizca_github_da():
     assert "if" not in isler["test"], "test kapısı Gitea'da da koşmalı"
 
 
+def test_derleme_arsivi_checkout_etmiyor():
+    """Windows derlemesi arşiv yüzünden checkout'ta düşüyordu.
+
+    `arsiv/` altında 153 dosyanın runner'daki tam yolu 260 karakteri aşıyor
+    ("Filename too long"). Derleme arşivi kullanmıyor; seyrek checkout onu
+    hiç yazmamalı. Test kapısı ise tam checkout'la arşivi okumaya devam etmeli.
+    """
+    checkout = _adim("build", "Checkout")
+    ayar = checkout.get("with") or {}
+    desenler = [d.strip() for d in str(ayar.get("sparse-checkout", "")).splitlines() if d.strip()]
+    assert "!/arsiv/" in desenler and "/*" in desenler, desenler
+    assert ayar.get("sparse-checkout-cone-mode") is False
+    test_checkout = (_adim("test", "Checkout").get("with") or {})
+    assert "sparse-checkout" not in test_checkout, "test kapısı arşivi okumalı"
+
+
 def test_test_kapisi_libgl_kuruyor():
     """Gitea runner imajında libGL.so.1 yok; QtGui import'u orada düşüyordu."""
     adim = _adim("test", "Sistem bağımlılıkları (offscreen Qt)")
