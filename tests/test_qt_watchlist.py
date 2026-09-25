@@ -365,7 +365,7 @@ def test_ayarlara_yonlendirme_butonu(qtbot, main_window, sahte_anilist):
     assert main_window.stack.currentWidget() is main_window.pages["settings"]
 
 
-def test_kart_tiklamasi_detay_sayfasini_aciyor(qtbot, main_window, sahte_anilist):
+def test_kart_tiklamasi_detay_sayfasini_aciyor(qtbot, main_window, web, sahte_anilist):
     ist = sahte_anilist()
     ist.listeler["CURRENT"] = lists(entry(title="Cowboy Bebop"))
 
@@ -376,9 +376,9 @@ def test_kart_tiklamasi_detay_sayfasini_aciyor(qtbot, main_window, sahte_anilist
 
     qtbot.mouseClick(page.cards()[0], Qt.MouseButton.LeftButton)
 
-    detay = main_window.pages["detail"]
-    assert main_window.stack.currentWidget() is detay
-    assert detay.lblTitle.text() == "Cowboy Bebop"
+    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-bilgi h1')")
+    assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
 
 
 def test_kullanici_bilgisi_alinamayinca_liste_silinmiyor(qtbot, sahte_anilist):

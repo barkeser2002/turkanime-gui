@@ -115,6 +115,11 @@ class Kopru(QObject):
         try:
             sonuc = kayit.fn(**args)
         except Exception as exc:  # uç hatası sayfaya mesaj olarak gider
+            if getattr(exc, "sessiz", False):
+                # Beklenen durum (ör. sayfa başka animeye geçti): sayfa
+                # yanıtı zaten atacak, konsolu kirletmeye gerek yok.
+                self._yanitla(istek, False, {"mesaj": str(exc), "eski": True})
+                return
             from ...common.hatalar import insanlastir
             kisa, ayrinti = insanlastir(exc)
             print(f"[Web] {kayit.ad}: {ayrinti}")

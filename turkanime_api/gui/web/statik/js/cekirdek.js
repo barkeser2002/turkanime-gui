@@ -175,6 +175,13 @@
     });
   };
 
+  // Olaylarla akan işlerin (arama) istek numarası: sayfalar ve pencereler
+  // aynı olayları dinliyor, numara uygulama genelinde tekil olmalı.
+  var istekNo = 0;
+  TA.yeniIstek = function () {
+    return ++istekNo;
+  };
+
   TA.dinle = function (ad, fn) {
     if (!dinleyiciler.has(ad)) dinleyiciler.set(ad, []);
     dinleyiciler.get(ad).push(fn);

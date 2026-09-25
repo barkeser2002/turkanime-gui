@@ -28,11 +28,9 @@ from ...common.oynatma import yedekli_oynat
 from . import prefs
 from .anilist import AniListService
 from .discord import DiscordService
-from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
 from .fansub import FansubSecici
 from .pages.downloads import DURUM_IPTAL, DownloadManager, DownloadsPage
-from .pages.episodes import EpisodePage
 from .pages.library import LibraryPage
 from .pages.settings import SettingsPage
 from .pages.watchlist import WatchlistPage
@@ -44,6 +42,7 @@ from .workers import UiBridge, run_bg
 from ..web.gorunum import WebGorunum
 from ..web.kopru import Kopru
 from ..web.uclar_arama import AramaUclari
+from ..web.uclar_detay import DetayUclari
 from ..web.uclar_genel import GenelUclar
 from ..web.uclar_kesif import KesifUclari
 
@@ -77,6 +76,8 @@ NAV_ITEMS = [
 # Geçiş sayfa sayfa: bir sayfa taşındığında buraya eklenir, eski Qt sınıfı
 # geçiş bitince silinir.
 WEB_SAYFALARI = ("home", "trending", "season", "search")
+# Menüde olmayan web sayfaları (kartlardan açılıyor).
+WEB_ALT_SAYFALAR = ("detail",)
 
 
 def _resource_path(rel: str) -> str:
@@ -209,19 +210,10 @@ class MainWindow(QMainWindow):
             if self.stack.indexOf(page) < 0:      # web görünümü tek sefer
                 self.stack.addWidget(page)
 
-        # Detay ve bölüm listesi menüde yer almaz; keşif/arama sonucundan açılır.
-        detail = DetailPage()
-        detail.episodes_ready.connect(self._on_detail_episodes)
-        detail.back_requested.connect(self._on_detail_back)
-        self.pages["detail"] = detail
-        self.stack.addWidget(detail)
-
-        episodes = EpisodePage()
-        episodes.play_requested.connect(self._on_play)
-        episodes.download_requested.connect(self._on_download)
-        episodes.kuyrukta_mi = self._kuyrukta_mi
-        self.pages["episodes"] = episodes
-        self.stack.addWidget(episodes)
+        # Detay (künye + kaynak akordiyonlarında bölümler) menüde yer almaz;
+        # keşif/arama/kitaplık kartından açılır.
+        for key in WEB_ALT_SAYFALAR:
+            self.pages[key] = self.web
 
         body.addWidget(self.stack, 1)
 
@@ -240,7 +232,12 @@ class MainWindow(QMainWindow):
         self.kopru.bagla(GenelUclar(ac=self._web_ac))
         self.kopru.bagla(KesifUclari())
         self.arama = self.kopru.bagla(AramaUclari(self.kopru))
+        self.detay = self.kopru.bagla(DetayUclari(
+            self.kopru, oynat=self._on_play, indir=self._on_download,
+            kuyrukta=self._web_kuyrukta))
         self.web = WebGorunum(self.kopru)
+        # Detay sayfasındaki "Kuyrukta" rozetleri: iş eklendi/bitti/durdu.
+        self.downloads.state.connect(lambda *_a: self.kopru.yay("kuyruk_degisti"))
 
     def _web_ac(self, hedef: str, veri: Dict) -> None:
         """Web sayfasından gezinti isteği (GUI thread'i; `GenelUclar.ac`)."""
@@ -258,6 +255,8 @@ class MainWindow(QMainWindow):
             if sorgu:
                 self.txtSearch.setText(sorgu)
                 self._on_search()
+        elif hedef == "geri":
+            self._on_detail_back()
         elif hedef == "sonuc":
             kayit = veri.get("kayit") if isinstance(veri.get("kayit"), dict) else None
             self._on_anime_selected(str(veri.get("kaynak") or ""),
@@ -416,25 +415,23 @@ class MainWindow(QMainWindow):
             btn.setChecked(True)
 
     def _on_discover_selected(self, item) -> None:
-        """Keşif kartına tıklandı: kaydın tamamıyla detay sayfasını aç.
+        """Keşif/izleme listesi kartı: kaydın tamamıyla detay sayfasını aç.
 
-        Kaynak/slug verilmiyor: MyAnimeList/AniList kimliğinin TürkAnime
-        kaynaklarındaki karşılığı bilinmiyor. Kullanıcı detay sayfasında
-        "Bölümleri Getir"e basınca eşleştirme diyaloğu devreye girer.
+        Kaynağa bağlı değil: MyAnimeList/AniList kimliğinin Türkçe
+        kaynaklardaki karşılığı bilinmiyor; detay sayfası eşleşme arıyor
+        (yerel arşivde kendiliğinden, diğer kaynaklarda kullanıcı isteyince).
         """
-        page = self.pages.get("detail")
-        if isinstance(item, dict) and item and isinstance(page, DetailPage):
-            self._open_detail(lambda: page.show_anime(item))
+        if isinstance(item, dict) and item:
+            self._open_detail(self.detay.ac_kesif(item))
 
     def _on_kitaplik_selected(self, kayit) -> None:
-        """Kitaplık kartı: detayı kaynağa BAĞLI aç, bölümleri hemen getir.
+        """Kitaplık kartı: detayı kaynağa BAĞLI aç; bölümler hemen gelir.
 
         Keşif kartından farkı: kayıt kaynağın kendi kimliğini taşıyor, yani
-        eşleştirme (ve yanlış eşleşme riski) yok (bkz. `kitaplik_ac`).
+        eşleştirme (ve yanlış eşleşme riski) yok.
         """
-        page = self.pages.get("detail")
-        if isinstance(kayit, dict) and isinstance(page, DetailPage):
-            self._open_detail(lambda: page.kitaplik_ac(kayit))
+        if isinstance(kayit, dict) and kayit:
+            self._open_detail(self.detay.ac_kitaplik(kayit))
 
     def _on_anime_selected(self, source: str, slug: str, title: str,
                            kayit: object = None) -> None:
@@ -443,45 +440,24 @@ class MainWindow(QMainWindow):
         ``kayit`` arama kaydının kendisi (kapak adresi dahil); detay sayfası
         kartta görünen posteri tekrar göstermek için kullanıyor.
         """
-        page = self.pages.get("detail")
-        if isinstance(page, DetailPage):
-            ek = kayit if isinstance(kayit, dict) else None
-            self._open_detail(lambda: page.show_match(source, slug, title, kayit=ek))
+        ek = kayit if isinstance(kayit, dict) else None
+        self._open_detail(self.detay.ac_sonuc(source, slug, title, ek))
 
-    def _open_detail(self, populate) -> None:
-        """Detay sayfasına geç ve dönüş noktasını hatırla.
+    def _open_detail(self, rid: int) -> None:
+        """Detay sayfasına (``rid`` oturumuyla) geç, dönüş noktasını hatırla.
 
         Detaya hem keşiften hem aramadan gelinebiliyor; sabit bir "Geri" hedefi
         (ör. ana sayfa) kullanıcıyı aramasından koparırdı.
         """
         # Anahtar `_current_page`'den: web sayfalarının hepsi aynı widget,
         # widget'tan anahtar çıkarmak hep ilk web sayfasını ("home") verirdi.
-        if self._current_page not in ("detail", "episodes"):
+        if self._current_page != "detail":
             self._detail_origin = self._current_page
-        self.show_page("detail")
-        populate()
+        self.show_page("detail", {"rid": rid})
 
     def _on_detail_back(self) -> None:
         self.show_page(self._detail_origin)
         self._sync_nav(self._detail_origin)
-
-    def _on_detail_episodes(self, source: str, slug: str, title: str,
-                            episodes) -> None:
-        """Detay sayfası bölümleri çekti: listeyi olduğu gibi devral.
-
-        `EpisodePage.load` burada `episodes` ile çağrılır; parametresiz çağrı
-        aynı listeyi ikinci kez ağdan indirirdi.
-        """
-        page = self.pages.get("episodes")
-        detail = self.pages.get("detail")
-        # Kaynak başına kimlikler + kapak: kitaplık kaydı satırın KENDİ
-        # kaynağının kimliğiyle yazılsın (bkz. `EpisodePage._kimlik_damgala`).
-        baglam = (detail.kitaplik_baglami() if isinstance(detail, DetailPage)
-                  else {})
-        if isinstance(page, EpisodePage):
-            self.show_page("episodes")
-            page.load(source, slug, title, episodes=episodes,
-                      baglar=baglam.get("baglar"), kapak=baglam.get("kapak") or "")
 
     # ── Oynatma / indirme ───────────────────────────────────────────────────
     def _status(self, msg: str, timeout: int = 6000) -> None:
@@ -712,9 +688,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(mesaj, 8000)
 
     def _refresh_episode_history(self) -> None:
-        page = self.pages.get("episodes")
-        if isinstance(page, EpisodePage):
-            page.refresh_history()
+        """Oynatma/indirme bitti: detay sayfası rozetleri ve "Devam et"i
+        tazelesin (izlendi/indirildi/kaldığın yer)."""
+        self.kopru.yay("gecmis_degisti")
 
     def _on_download(self, entry) -> None:
         """İndirmeyi kuyruğa al; kullanıcı bulunduğu bölüm listesinde KALIR.
@@ -754,8 +730,15 @@ class MainWindow(QMainWindow):
             devam(True, None)
 
     def _kuyrukta_mi(self, entry) -> bool:
-        """`EpisodePage` toplu indirmesi için: bölümün bitmemiş işi var mı?"""
+        """Bölümün bitmemiş indirme işi var mı?"""
         return self.downloads.kuyruktaki_is(entry, self._download_dir()) is not None
+
+    def _web_kuyrukta(self, entry) -> bool:
+        """Detay sayfasının satır rozeti: kuyruk boşsa hedef yolu hiç hesaplama
+        (1000 bölümlük seride satır başına ayar okuması olurdu)."""
+        if not self.downloads.active_ids():
+            return False
+        return self._kuyrukta_mi(entry)
 
     def _indirme_sayacini_guncelle(self, *_args) -> None:
         """Menüdeki İndirilenler düğmesine süren iş sayısını yaz."""

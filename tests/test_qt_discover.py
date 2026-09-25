@@ -329,11 +329,12 @@ def test_card_click_opens_detail_page(main_window, web, fake_sources):
     web.bekle(f"{kartlar}.length === 1")
     web.js(f"{kartlar}[0].click()")
 
-    detail = main_window.pages["detail"]
-    web.qtbot.waitUntil(lambda: main_window.stack.currentWidget() is detail,
-                        timeout=5000)
-    assert detail.lblTitle.text() == "Cowboy Bebop"
-    assert [b.text() for b in detail.genre_badges] == ["Action"]
+    web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-bilgi h1')")
+    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
+    turler = web.js("Array.from(document.querySelectorAll('.etiket-blok .hap')).map(e => e.textContent)")
+    assert turler == ["Aksiyon"]
+    assert main_window.detay.oturum.anime["genres"] == ["Action"]
 
 
 def test_main_window_wires_all_discover_modes(main_window, web):

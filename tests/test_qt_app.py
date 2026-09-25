@@ -12,7 +12,9 @@ def test_window_builds_all_pages(main_window):
     for key, _label in NAV_ITEMS:
         assert key in main_window.pages, f"{key} sayfası kurulmadı"
     # Bölüm sayfası menüde yok ama stack'te olmalı (arama sonucundan açılır)
-    assert "episodes" in main_window.pages
+    # Detay (künye + bölümler) menüde yok ama web görünümünde bir rota.
+    assert main_window.pages["detail"] is main_window.web
+    assert "episodes" not in main_window.pages
     # Web'e taşınan sayfaların hepsi TEK görünüm: yığında bir kez duruyor.
     tekil = {id(sayfa) for sayfa in main_window.pages.values()}
     assert main_window.stack.count() == len(tekil)
@@ -143,13 +145,12 @@ def _giris(no: int):
 
 @pytest.fixture
 def indirme_penceresi(izole_ev, main_window, monkeypatch, tmp_path):
-    """Bölüm listesi açık pencere; indirme işleri başlamaz (bekliyor'da kalır)."""
+    """İndirme işleri başlamaz (bekliyor'da kalır)."""
     import turkanime_api.gui.qt.pages.downloads as dl_mod
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     monkeypatch.setattr(MainWindow, "_download_dir",
                         staticmethod(lambda: str(tmp_path / "indir")))
-    main_window.show_page("episodes")
     return main_window
 
 
@@ -157,12 +158,13 @@ def test_indir_bolum_listesinde_birakiyor_menude_sayac(indirme_penceresi, qtbot)
     """ESKİ HATA: "İndir" İndirilenler'e geçiyordu; bölüm listesinin menüde
     düğmesi ve "Geri"si olmadığından kullanıcı listeye dönemiyordu."""
     win = indirme_penceresi
-    liste = win.pages["episodes"]
+    win.show_page("detail")
+    onceki = win._current_page
     dugme = win._nav_buttons["downloads"]
 
     win._on_download(_giris(1))
 
-    assert win.stack.currentWidget() is liste
+    assert win._current_page == onceki
     qtbot.waitUntil(lambda: "(1)" in dugme.text(), timeout=2000)
     assert "sırasına alındı" in win.statusBar().currentMessage()
 
@@ -181,21 +183,29 @@ def test_ayni_bolum_ikinci_kez_indirilince_zaten_kuyrukta(indirme_penceresi):
     assert "zaten kuyrukta" in win.statusBar().currentMessage()
 
 
-def test_toplu_indirme_sayfada_kaliyor_tekrari_sayiyor(indirme_penceresi, qtbot):
+def test_toplu_indirme_sayfada_kaliyor_tekrari_sayiyor(indirme_penceresi, web,
+                                                      sahte_bolumler):
+    """Detay sayfasında seçilenleri indir: sayfada kalınır, ikinci basışta
+    kuyruktakiler sayılır ve yeniden eklenmez."""
     win = indirme_penceresi
-    liste = win.pages["episodes"]
-    liste.load("TürkAnime", "naruto-test", "Naruto Test",
-               episodes=[_giris(i) for i in (1, 2, 3)])
-    liste.btnAll.setChecked(True)
+    sahte_bolumler({"TürkAnime": [_giris(i) for i in (1, 2, 3)]})
+    win._on_anime_selected("TürkAnime", "naruto-test", "Naruto Test")
+    web.detay_bekle("TürkAnime", 3)
+    web.js("Array.from(document.querySelectorAll('.ak-arac button'))"
+           ".find(b => b.textContent === 'Tümü').click()")
+    indir = ("Array.from(document.querySelectorAll('.eylem-cubugu button'))"
+             ".find(b => b.textContent.includes('Seçilenleri İndir')).click()")
+    web.js(indir)
+    web.bekle("document.querySelector('#bildirimler').innerText"
+              ".includes('3 bölüm indirme sırasına alındı')")
+    assert win._current_page == "detail"
+    web.qtbot.waitUntil(lambda: "(3)" in win._nav_buttons["downloads"].text(), timeout=2000)
+    # Satırlar "Kuyrukta" rozetini alır.
+    web.bekle("document.querySelectorAll('.bolum-satiri .rozet .donen').length === 3")
 
-    liste._download_selected()
-
-    assert win.stack.currentWidget() is liste
-    assert liste.lblStatus.isVisible()
-    assert "3 bölüm indirme sırasına alındı" in liste.lblStatus.text()
-    qtbot.waitUntil(lambda: "(3)" in win._nav_buttons["downloads"].text(), timeout=2000)
-
-    liste._download_selected()
-
-    assert "3 bölüm zaten kuyrukta" in liste.lblStatus.text()
+    web.js(indir)
+    web.bekle("document.querySelector('#bildirimler').innerText"
+              ".includes('3 bölüm zaten kuyrukta')")
     assert len(win.downloads.active_ids()) == 3
+
+

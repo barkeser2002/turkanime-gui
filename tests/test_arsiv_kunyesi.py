@@ -242,7 +242,11 @@ def test_arsiv_disi_kaynakta_kunye_okunmuyor(qtbot, page, monkeypatch):
 
 # ── Kapak: arama kartından detaya ───────────────────────────────────────────
 def test_arama_kartinin_kapagi_detaya_tasiniyor(main_window, web, sahte_arama,
-                                                 kapak_istekleri):
+                                                 monkeypatch):
+    import turkanime_api.gui.qt.gorsel as gorsel_mod
+    istenen: list = []
+    monkeypatch.setattr(gorsel_mod, "gorsel_getir",
+                        lambda url, *a, **k: istenen.append(url) or None)
     sahte_arama(sonuclar={"AniList": [{"slug": "154587", "title": "Sousou no Frieren",
                                        "image": "https://img/frieren.jpg"}]})
     main_window.txtSearch.setText("frieren")
@@ -250,11 +254,12 @@ def test_arama_kartinin_kapagi_detaya_tasiniyor(main_window, web, sahte_arama,
     web.bekle("document.querySelectorAll('.sonuc-grubu .kart').length === 1")
     web.js("document.querySelector('.sonuc-grubu .kart').click()")
 
-    detay = main_window.pages["detail"]
-    web.qtbot.waitUntil(lambda: main_window.stack.currentWidget() is detay,
-                        timeout=5000)
-    assert detay._anime.get("coverImage") == {"large": "https://img/frieren.jpg"}
-    web.qtbot.waitUntil(lambda: kapak_istekleri == ["https://img/frieren.jpg"],
+    web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-poster')")
+    assert main_window.detay.oturum.anime.get("coverImage") == {
+        "large": "https://img/frieren.jpg"}
+    # Poster detayda da aynı adresten (önbellekli `ta://gorsel`) isteniyor.
+    web.bekle("!!document.querySelector('.detay-poster .bas-harf')")
+    web.qtbot.waitUntil(lambda: istenen.count("https://img/frieren.jpg") >= 2,
                         timeout=5000)
 
 

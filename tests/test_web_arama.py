@@ -9,7 +9,6 @@ import threading
 
 import pytest
 
-from turkanime_api.gui.qt.pages.detail import DetailPage
 from turkanime_api.gui.web.uclar_arama import (
     AramaUclari, kaynak_sirasi, sonuc_kartlari,
 )
@@ -111,22 +110,19 @@ def test_sonuc_yokken_sebepler_listeleniyor(main_window, web, sahte_arama):
 
 
 def test_karta_tiklamak_detayi_kaynaga_bagli_aciyor(main_window, web, sahte_arama,
-                                                     monkeypatch):
-    acilan = []
-    monkeypatch.setattr(DetailPage, "show_match",
-                        lambda self, *a, **k: acilan.append((a, k)))
+                                                     sahte_bolumler):
+    sahte_bolumler({"AnimeciX": [{"title": "1. Bölüm", "obj": object()}]})
     sahte_arama(sonuclar={"AnimeciX": [kayit("naruto", "Naruto", "https://x/n.jpg")]})
     ara(main_window, web, "naruto")
     web.bekle("document.querySelectorAll('.sonuc-grubu .kart').length === 1")
     web.js("document.querySelector('.sonuc-grubu .kart').click()")
-    web.qtbot.waitUntil(lambda: bool(acilan), timeout=5000)
-    (kaynak, slug, baslik), ek = acilan[0]
-    assert (kaynak, slug, baslik) == ("AnimeciX", "naruto", "Naruto")
-    assert ek["kayit"]["image"] == "https://x/n.jpg"
-    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    web.detay_bekle("AnimeciX", 1)
+    oturum = main_window.detay.oturum
+    assert oturum.baglar == {"AnimeciX": "naruto"}
+    assert oturum.anime["coverImage"] == {"large": "https://x/n.jpg"}
     # Detaydan "Geri" aramaya, sonuçlar yerinde.
-    main_window.pages["detail"].back_requested.emit()
-    assert main_window._current_page == "search"
+    web.js("document.querySelector('.geri-dugme').click()")
+    web.qtbot.waitUntil(lambda: main_window._current_page == "search", timeout=5000)
     web.bekle("TA.aktif === 'search'")
     assert web.js("document.querySelectorAll('.sonuc-grubu .kart').length") == 1
 

@@ -577,20 +577,6 @@ def test_eski_sonuc_yeni_animeyi_ezmiyor(detail):
 
 
 # ── Ana pencere kablolaması ─────────────────────────────────────────────────
-def test_ana_pencere_cok_kaynakli_yuku_devraliyor(main_window):
-    episodes = main_window.pages["episodes"]
-    main_window.pages["detail"].episodes_ready.emit(
-        "TürkAnime", "cowboy-bebop", "Cowboy Bebop", {
-            "TürkAnime": [ep("Cowboy Bebop 1. Bölüm")],
-            "AnimeciX": [ep("1. Bölüm")],
-        })
-
-    assert main_window.stack.currentWidget() is episodes
-    assert len(episodes.visible_rows()) == 1
-    assert set(episodes._rows[0].source_buttons) == {"TürkAnime", "AnimeciX"}
-    assert episodes.lblTitle.text() == "Cowboy Bebop — 2 kaynak"
-
-
 # ── Toplu seçim: aralık, izlenmemiş/indirilmemiş, Shift+tık ─────────────────
 def test_aralik_coz_saf():
     from turkanime_api.gui.qt.pages.episodes import aralik_coz

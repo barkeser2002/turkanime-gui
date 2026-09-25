@@ -399,6 +399,16 @@ class WebSurucu:
         self.qtbot.waitUntil(lambda: bool(sonuc), timeout=timeout)
         return json.loads(sonuc[0]) if isinstance(sonuc[0], str) and sonuc[0] else None
 
+    def satirlar(self, kaynak: str) -> str:
+        """Detay sayfasında kaynağın çizilmiş bölüm satırları (JS ifadesi)."""
+        return (f"document.querySelectorAll('.akordiyon[data-kaynak=\"{kaynak}\"] "
+                ".bolum-satiri[data-sira]')")
+
+    def detay_bekle(self, kaynak: str, adet: int = 1, timeout: int = 8000) -> None:
+        """Detay sayfası açık ve kaynağın en az ``adet`` bölüm satırı çizili."""
+        self.bekle("TA.aktif === 'detail'", timeout=timeout)
+        self.bekle(f"{self.satirlar(kaynak)}.length >= {adet}", timeout=timeout)
+
     def bekle(self, betik: str, timeout: int = 5000):
         import time
         son = time.monotonic() + timeout / 1000.0
@@ -442,6 +452,31 @@ def sahte_arama(monkeypatch):
                     sonuclar, hatalar={**hatalar, **yetismeyen})
 
         monkeypatch.setattr(adapters_mod, "SearchEngine", SahteMotor)
+        return cagrilar
+
+    return kur
+
+
+@pytest.fixture
+def sahte_bolumler(monkeypatch):
+    """`sources_bridge.fetch_episodes` sahtesi; ``(kaynak, kimlik)`` çağrıları kaydeder.
+
+    ``kur({kaynak: [kayıtlar] | callable(kimlik) | Exception})``. Detay
+    sayfasının `bolumler` ucu fonksiyonu çağrı anında modülden okuyor.
+    """
+    import turkanime_api.gui.qt.sources_bridge as sb
+
+    cagrilar: list = []
+
+    def kur(tablo):
+        def fetch(kaynak, kimlik, baslik):
+            cagrilar.append((kaynak, kimlik))
+            deger = tablo.get(kaynak, [])
+            if isinstance(deger, Exception):
+                raise deger
+            return list(deger(kimlik) if callable(deger) else deger)
+
+        monkeypatch.setattr(sb, "fetch_episodes", fetch)
         return cagrilar
 
     return kur

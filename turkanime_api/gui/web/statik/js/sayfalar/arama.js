@@ -11,7 +11,6 @@
 
   var TA = window.TA;
   var h = TA.h;
-  var istekSayaci = 0;
 
   function sonucAc(veri) {
     TA.ac("sonuc", { kaynak: veri.kaynak, slug: veri.slug, baslik: veri.baslik, kayit: veri.kayit });
@@ -82,7 +81,7 @@
       var self = this;
       this.sorgu = sorgu;
       this.girdi.value = sorgu;
-      this.istek = ++istekSayaci;
+      this.istek = TA.yeniIstek();
       this.kaynaklar = [];
       this.durumlar = {};
       this.filtre = "";

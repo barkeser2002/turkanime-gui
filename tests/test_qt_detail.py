@@ -471,42 +471,22 @@ def test_save_match_swallows_api_failure(monkeypatch):
 
 
 # ── Ana pencere kablolaması ─────────────────────────────────────────────────
-def test_search_result_opens_detail_then_episodes(qtbot, main_window, fake_fetch):
-    from turkanime_api.gui.qt.pages.detail import DetailPage as _DetailPage
-
-    fake_fetch(result=[{"title": "1. Bölüm", "obj": object()},
-                       {"title": "2. Bölüm", "obj": object()}])
-
-    detail = main_window.pages["detail"]
-    assert isinstance(detail, _DetailPage)
-
+def test_search_result_opens_detail_then_episodes(main_window, web, sahte_bolumler):
+    """Arama sonucu detayı kaynağa bağlı açar; bölümler aynı sayfada gelir."""
+    cagrilar = sahte_bolumler({"TürkAnime": [{"title": "1. Bölüm", "obj": object()},
+                                             {"title": "2. Bölüm", "obj": object()}]})
     # Arama sayfası web'de: sonuç kartı köprüden `ac("sonuc", ...)` gönderir.
     main_window._web_ac("sonuc", {
         "kaynak": "TürkAnime", "slug": "cowboy-bebop", "baslik": "Cowboy Bebop",
         "kayit": {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None}})
 
-    assert main_window.stack.currentWidget() is detail
-    assert detail.lblTitle.text() == "Cowboy Bebop"
-    assert detail.current_source() == "TürkAnime"
-
-    detail.load_episodes()
-    episodes = main_window.pages["episodes"]
-    qtbot.waitUntil(lambda: main_window.stack.currentWidget() is episodes,
-                    timeout=5000)
-    assert len(episodes.visible_rows()) == 2
+    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    web.detay_bekle("TürkAnime", 2)
+    assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
+    assert main_window.detay.oturum.baglar == {"TürkAnime": "cowboy-bebop"}
+    assert cagrilar == [("TürkAnime", "cowboy-bebop")]
     # Kaynak kanonik adla taşınıyor, başlıkta kayıttaki etiket görünüyor.
-    assert "Cowboy Bebop — TürkAnime (arşiv)" == episodes.lblTitle.text()
-
-
-def test_episode_page_does_not_refetch_when_given_list(main_window, fake_fetch):
-    """Devralınan liste ikinci kez ağdan çekilmemeli."""
-    calls = fake_fetch(result=[{"title": "1. Bölüm", "obj": object()}])
-    episodes = main_window.pages["episodes"]
-    episodes.load("TürkAnime", "cb", "Cowboy Bebop",
-                  episodes=[{"title": "1. Bölüm", "obj": object()}])
-
-    assert calls == []
-    assert len(episodes.visible_rows()) == 1
+    assert "TürkAnime (arşiv)" in web.js("document.querySelector('.ak-baslik').innerText")
 
 
 def test_detail_back_returns_to_origin(main_window):
@@ -515,7 +495,7 @@ def test_detail_back_returns_to_origin(main_window):
     main_window._web_ac("anime", {"kayit": make_anime()})
     assert main_window.stack.currentWidget() is main_window.pages["detail"]
 
-    main_window.pages["detail"].back_requested.emit()
+    main_window._web_ac("geri", {})          # sayfadaki "← Geri"
     assert main_window.stack.currentWidget() is main_window.pages["trending"]
     # Web sayfalarının hepsi aynı widget: dönüş ANAHTARI da doğru olmalı.
     assert main_window._current_page == "trending"
