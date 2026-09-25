@@ -589,3 +589,91 @@ def test_ana_pencere_cok_kaynakli_yuku_devraliyor(main_window):
     assert len(episodes.visible_rows()) == 1
     assert set(episodes._rows[0].source_buttons) == {"TürkAnime", "AnimeciX"}
     assert episodes.lblTitle.text() == "Cowboy Bebop — 2 kaynak"
+
+
+# ── Toplu seçim: aralık, izlenmemiş/indirilmemiş, Shift+tık ─────────────────
+def test_aralik_coz_saf():
+    from turkanime_api.gui.qt.pages.episodes import aralik_coz
+    assert aralik_coz("1-3, 5, 10-", range(1, 13)) == {1, 2, 3, 5, 10, 11, 12}
+    assert aralik_coz("-2 12", range(1, 13)) == {1, 2, 12}
+    assert aralik_coz("1 - 3", range(1, 13)) == {1, 2, 3}
+    # Yayınlanmamış numara sessizce atlanır.
+    assert aralik_coz("1-5", [1, 2, 4, 5]) == {1, 2, 4, 5}
+    sonuc = aralik_coz("1-2, abc, 9-7", range(1, 13))
+    assert sonuc == {1, 2}
+    assert sonuc.hatali == ["abc", "9-7"], "geçersiz parça istisna değil, dönüşte"
+
+
+def _secili_numaralar(page):
+    return sorted(e["number"] for e in page.selected_episodes())
+
+
+def test_aralik_cizilmemis_satirlari_da_seciyor(page):
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(40))
+    assert len(page._rows) == 30
+
+    assert page.select_range("1-12") == 12
+    assert _secili_numaralar(page) == list(range(1, 13))
+    assert page._rows[0].checked and not page._rows[12].checked
+
+    page.select_range("35-")
+    assert _secili_numaralar(page) == list(range(35, 41)), "seçim değişmeli, eklenmemeli"
+    page._load_more()
+    assert page._rows[36].checked, "sonradan çizilen satır seçimi göstermeli"
+
+
+def test_aralik_metin_kutusundan_enter(page, qtbot):
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(12))
+    page.txtAralik.setText("2-4")
+    qtbot.keyClick(page.txtAralik, Qt.Key.Key_Return)
+    assert _secili_numaralar(page) == [2, 3, 4]
+
+    page.txtAralik.setText("abc")
+    qtbot.keyClick(page.txtAralik, Qt.Key.Key_Return)
+    assert "anlaşılamadı" in page.lblStatus.text()
+
+
+class _Gecmis:
+    def __init__(self, izlendi=(), indirildi=()):
+        self.izlendi, self.indirildi = set(izlendi), set(indirildi)
+
+    def durum(self, obj):
+        return (obj in self.izlendi, obj in self.indirildi)
+
+
+def test_izlenmemisler_ve_indirilmemisler(page, monkeypatch):
+    from turkanime_api.gui.qt import prefs
+    bolumler = numbered(40)
+    objs = [b["obj"] for b in bolumler]
+    sahte = _Gecmis(izlendi=objs[:2], indirildi=objs[2:5])
+    monkeypatch.setattr(prefs.Gecmis, "yukle", classmethod(lambda cls: sahte))
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=bolumler)
+
+    assert page.select_unwatched() == 38
+    assert _secili_numaralar(page) == list(range(3, 41))
+
+    # Kuyruktaki bölüm "indirilmemiş" seçimine girmez.
+    page.kuyrukta_mi = lambda entry: entry.get("obj") is objs[39]
+    page.select_not_downloaded()
+    assert _secili_numaralar(page) == [1, 2] + list(range(6, 40))
+
+
+def test_shift_tik_araligi_seciyor(page, qtbot):
+    from PySide6.QtTest import QTest
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(12))
+    page.show()
+    satir3, satir7 = page._rows[2], page._rows[6]
+    QTest.mouseClick(satir3.chk, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(satir7.chk, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.ShiftModifier)
+    assert _secili_numaralar(page) == [3, 4, 5, 6, 7]
+    assert all(page._rows[i].checked for i in range(2, 7))
+
+    # Shift'le bırakmak aralığı bırakır.
+    QTest.mouseClick(page._rows[4].chk, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(satir3.chk, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.ShiftModifier)
+    assert _secili_numaralar(page) == [6, 7]
+    # Shift'siz tık tek satır.
+    QTest.mouseClick(page._rows[9].chk, Qt.MouseButton.LeftButton)
+    assert _secili_numaralar(page) == [6, 7, 10]

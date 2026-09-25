@@ -15,7 +15,8 @@ kaynak tarafında hiçbir değişiklik gerekmez.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import re
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -109,6 +110,60 @@ def episode_matches(episode: Dict[str, Any], needle: str) -> bool:
     return number.startswith(needle) if needle.isdigit() else needle in number
 
 
+class AralikSonucu(set):
+    """`aralik_coz`'un dönüşü: seçilen numaralar (set) + ``hatali`` parçalar.
+
+    Set alt sınıfı: çağıran sonucu doğrudan küme olarak kullanır; tanınmayan
+    parçalar ("abc", "5-2") istisna değil ``hatali``'da, kullanıcıya
+    "şunları anlayamadım" denebilsin diye.
+    """
+
+    def __init__(self, *args: Any, hatali: Optional[List[str]] = None):
+        super().__init__(*args)
+        self.hatali: List[str] = list(hatali or [])
+
+
+_ARALIK_PARCASI = re.compile(r"^(\d+)?\s*(-)?\s*(\d+)?$")
+
+
+def aralik_coz(metin: str, mevcut: Iterable[int]) -> AralikSonucu:
+    """"1-12, 15, 20-" → mevcut bölüm numaralarından seçilenler.
+
+    Sözdizimi: virgül/boşlukla ayrılmış parçalar; "N" tek bölüm, "A-B"
+    kapalı aralık, "A-" A'dan sona, "-B" baştan B'ye. Numara listede yoksa
+    (sayfalanmış seri, eksik bölüm) sessizce atlanır: kullanıcı "1-12" der,
+    3. bölüm hiç yayınlanmadıysa gerisi yine seçilmeli.
+
+    Filtre kutusu bunu yapamıyordu: numara eşleşmesi ÖNEK ("1" → 1, 10-19,
+    100…), 1-12'yi seçmek 12 tıklama demekti.
+    """
+    numaralar = sorted({int(n) for n in mevcut})
+    secilen: Set[int] = set()
+    hatali: List[str] = []
+    # "1 - 12" de yazılıyor: rakamlar arasındaki tireye yapışık boşluklar
+    # silinir, sonra virgül/boşlukla bölünür.
+    duz = re.sub(r"(\d)\s*-\s*(\d)", r"\1-\2", (metin or "").replace("–", "-"))
+    duz = re.sub(r"(\d)\s+-(?=[,;\s]|$)", r"\1-", duz)          # "20 -"
+    for parca in re.split(r"[,;\s]+", duz):
+        if not parca:
+            continue
+        eslesme = _ARALIK_PARCASI.match(parca)
+        if not eslesme or not (eslesme.group(1) or eslesme.group(3)):
+            hatali.append(parca)
+            continue
+        bas, tire, son = eslesme.groups()
+        if not tire:
+            alt = ust = int(bas or son)
+        else:
+            alt = int(bas) if bas else (numaralar[0] if numaralar else 0)
+            ust = int(son) if son else (numaralar[-1] if numaralar else alt)
+        if alt > ust:
+            hatali.append(parca)
+            continue
+        secilen.update(n for n in numaralar if alt <= n <= ust)
+    return AralikSonucu(secilen, hatali=hatali)
+
+
 def primary_entry(episode: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Bölümün "varsayılan" kaynak kaydı — ilk yüklenen kaynak kazanır."""
     for entry in (episode.get("sources") or {}).values():
@@ -125,6 +180,34 @@ def source_counts(episodes: Sequence[Dict[str, Any]]) -> Dict[str, int]:
             if entry:
                 counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+class _SecimKutusu(QCheckBox):
+    """Tıklamanın/tuşun Shift ile yapılıp yapılmadığını hatırlayan onay kutusu.
+
+    Değer olayın KENDİSİNDEN okunuyor, `QApplication.keyboardModifiers()`'tan
+    değil: o, olay kuyruğu işlenirken güncelleniyor ve sentetik (QTest) ya
+    da uzak masaüstü tıklamalarında Shift'i kaçırabiliyor. `toggled` sinyali
+    bırakma olayının içinde yayıldığı için yayın anında değer doğru.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.shift_basili = False
+
+    def mouseReleaseEvent(self, event) -> None:          # noqa: N802 (Qt adı)
+        self.shift_basili = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        try:
+            super().mouseReleaseEvent(event)
+        finally:
+            self.shift_basili = False
+
+    def keyReleaseEvent(self, event) -> None:            # noqa: N802 (Qt adı)
+        self.shift_basili = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        try:
+            super().keyReleaseEvent(event)
+        finally:
+            self.shift_basili = False
 
 
 # ── Kaynak seçim diyaloğu ───────────────────────────────────────────────────
@@ -179,6 +262,9 @@ class EpisodeRow(QFrame):
     play_requested = Signal(object)
     download_requested = Signal(object)
     toggled = Signal(object, bool)          # (bölüm anahtarı, seçili mi)
+    # Shift ile işaretlendi: sayfa son işaretlenen satırdan buraya kadar
+    # hepsini aynı duruma getirir (dosya yöneticilerindeki aralık seçimi).
+    aralik_toggled = Signal(object, bool)
 
     def __init__(self, episode: Dict[str, Any], multi: bool = False,
                  gecmis: Optional[Any] = None,
@@ -198,8 +284,8 @@ class EpisodeRow(QFrame):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(10)
 
-        self.chk = QCheckBox()
-        self.chk.toggled.connect(lambda state: self.toggled.emit(self.key, state))
+        self.chk = _SecimKutusu()
+        self.chk.toggled.connect(self._on_chk)
         layout.addWidget(self.chk)
 
         self.lblHistory = QLabel()
@@ -279,6 +365,12 @@ class EpisodeRow(QFrame):
         names = ", ".join(source_label(n) for n in sorted(self.sources)) or "kaynak yok"
         return f"{self.episode.get('title') or ''}\nKaynaklar: {names}"
 
+    def _on_chk(self, state: bool) -> None:
+        if self.chk.shift_basili:
+            self.aralik_toggled.emit(self.key, state)
+        else:
+            self.toggled.emit(self.key, state)
+
     # ── Geçmiş rozeti ───────────────────────────────────────────────────────
     def apply_history(self, gecmis: Optional[Any]) -> None:
         """İzlendi/indirildi rozetini tazele.
@@ -342,6 +434,14 @@ class EpisodeRow(QFrame):
     def set_checked(self, value: bool) -> None:
         self.chk.setChecked(value)
 
+    def sessiz_isaretle(self, value: bool) -> None:
+        """Seçimi sinyal yaymadan göster (sayfa kümeyi zaten güncelledi)."""
+        self.chk.blockSignals(True)
+        try:
+            self.chk.setChecked(value)
+        finally:
+            self.chk.blockSignals(False)
+
     def matches(self, needle: str) -> bool:
         return episode_matches(self.episode, needle)
 
@@ -361,6 +461,8 @@ class EpisodePage(QWidget):
         # Seçim satırda değil ANAHTARDA: yüklenmemiş sayfalardaki bölümler de
         # "Tümünü Seç" ile seçilebilmeli (eski GUI davranışı).
         self._selected: set = set()
+        # Shift aralığının başlangıcı: son işaretlenen/bırakılan satırın anahtarı.
+        self._son_anahtar: Optional[Tuple[int, int, int]] = None
         self._needle = ""
         self._shown = 0
         self._busy = False
@@ -434,6 +536,32 @@ class EpisodePage(QWidget):
         tools.addWidget(self.btnDlSel)
         layout.addLayout(tools)
 
+        # Toplu seçim: aralık + hızlı süzgeçler. 1-12'yi seçmek 12 tıklama,
+        # "izlemediklerim"i indirmek satır satır bakmak demekti.
+        secim = QHBoxLayout()
+        self.txtAralik = QLineEdit()
+        self.txtAralik.setPlaceholderText("Aralık seç: 1-12, 15, 20-")
+        self.txtAralik.setToolTip(
+            "Bölüm numaraları: “1-12” aralık, “20-” 20'den sona, “-5” baştan 5'e; "
+            "virgülle birleştirin. Enter seçer. Satırda Shift+tık da aralık seçer.")
+        self.txtAralik.returnPressed.connect(
+            lambda: self.select_range(self.txtAralik.text()))
+        secim.addWidget(self.txtAralik, 1)
+        self.btnAralik = QPushButton("Aralığı Seç")
+        self.btnAralik.clicked.connect(
+            lambda: self.select_range(self.txtAralik.text()))
+        secim.addWidget(self.btnAralik)
+        self.btnIzlenmemis = QPushButton("İzlenmemişler")
+        self.btnIzlenmemis.setToolTip("İzlendi işareti olmayan bölümleri seç.")
+        self.btnIzlenmemis.clicked.connect(self.select_unwatched)
+        secim.addWidget(self.btnIzlenmemis)
+        self.btnIndirilmemis = QPushButton("İndirilmemişler")
+        self.btnIndirilmemis.setToolTip(
+            "İndirilmemiş ve indirme kuyruğunda olmayan bölümleri seç.")
+        self.btnIndirilmemis.clicked.connect(self.select_not_downloaded)
+        secim.addWidget(self.btnIndirilmemis)
+        layout.addLayout(secim)
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -474,7 +602,9 @@ class EpisodePage(QWidget):
         # hâlde buton "Seçimi Kaldır" derken hiçbir satır seçili olmaz.
         self.btnAll.setChecked(False)
         self.txtFilter.clear()
+        self.txtAralik.clear()
         self._selected.clear()
+        self._son_anahtar = None
         self._needle = ""
         self._context = (source, slug, title)
         self._baglar = {str(k): str(v) for k, v in (baglar or {}).items() if v}
@@ -637,6 +767,7 @@ class EpisodePage(QWidget):
             row.play_requested.connect(self.play_requested.emit)
             row.download_requested.connect(self.download_requested.emit)
             row.toggled.connect(self._on_row_toggled)
+            row.aralik_toggled.connect(self._on_row_range_toggled)
             # Satır sonradan yüklendiyse seçim zaten anahtarda olabilir.
             if row.key in self._selected:
                 row.set_checked(True)
@@ -675,7 +806,105 @@ class EpisodePage(QWidget):
             self._selected.add(tuple(key))
         else:
             self._selected.discard(tuple(key))
+        self._son_anahtar = tuple(key)
         self._update_selection_label()
+
+    def _on_row_range_toggled(self, key, checked: bool) -> None:
+        """Shift+tık: son işaretlenen satırdan bu satıra kadar aynı duruma getir.
+
+        Aralık FİLTREDEN GEÇEN sırada: kullanıcı ekranda gördüğü iki satırın
+        arasını kastediyor. Önceki satır filtrede yoksa (ya da ilk tık Shift'li)
+        yalnızca bu satır değişir.
+        """
+        key = tuple(key)
+        sira = [_key_of(e) for e in self.filtered_episodes()]
+        if self._son_anahtar in sira and key in sira:
+            i, j = sorted((sira.index(self._son_anahtar), sira.index(key)))
+            aralik = sira[i:j + 1]
+        else:
+            aralik = [key]
+        for anahtar in aralik:
+            if checked:
+                self._selected.add(anahtar)
+            else:
+                self._selected.discard(anahtar)
+        self._son_anahtar = key
+        self._satirlari_esitle()
+
+    def _satirlari_esitle(self) -> None:
+        """Çizilmiş satırların kutularını seçim kümesine eşitle (sinyalsiz)."""
+        for row in self._rows:
+            row.sessiz_isaretle(row.key in self._selected)
+        self._update_selection_label()
+
+    def _secimi_kur(self, secilecek: Iterable[Dict[str, Any]], aciklama: str) -> int:
+        """Seçimi verilen bölümlerle DEĞİŞTİR; kaç bölüm seçildiğini söyle.
+
+        Ekleme değil değiştirme: "İzlenmemişler"e basan kullanıcı önceki elle
+        seçimin üstüne eklenmesini değil, tam o kümeyi bekliyor.
+        """
+        self._selected = {_key_of(e) for e in secilecek}
+        self._son_anahtar = None
+        self._satirlari_esitle()
+        adet = len(self.selected_episodes())
+        self.lblStatus.info(f"{adet} bölüm seçildi ({aciklama}).")
+        return adet
+
+    def select_range(self, metin: str) -> int:
+        """"1-12, 15, 20-" — filtreden geçen bölümlerde numarayla seç.
+
+        Ara bölümler (5.5) numaralarıyla birlikte gelir: "5" yazan 5.5'i de
+        alır; o bölümün numarası 5 ve çoğu kaynak onu ayrı numaralamıyor.
+        """
+        adaylar = self.filtered_episodes()
+        sonuc = aralik_coz(metin, (int(e.get("number") or 0) for e in adaylar))
+        if not (metin or "").strip() or (not sonuc and sonuc.hatali):
+            self.lblStatus.error("Aralık anlaşılamadı; örnek: 1-12, 15, 20-")
+            return 0
+        adet = self._secimi_kur(
+            [e for e in adaylar if int(e.get("number") or 0) in sonuc],
+            f"aralık {metin.strip()}")
+        if sonuc.hatali:
+            self.lblStatus.info(f"{adet} bölüm seçildi; anlaşılamayan: "
+                                + ", ".join(sonuc.hatali))
+        return adet
+
+    @staticmethod
+    def _gecmis_durumu(episode: Dict[str, Any], gecmis: Any) -> Tuple[bool, bool]:
+        """Bölümün (izlendi, indirildi) durumu — satırı çizilmemiş olsa da.
+
+        Satırdaki rozetle AYNI kural (bkz. `EpisodeRow.apply_history`):
+        herhangi bir kaynaktan izlendiyse izlenmiş sayılır.
+        """
+        izlendi = indirildi = False
+        for entry in (episode.get("sources") or {}).values():
+            watched, downloaded = gecmis.durum((entry or {}).get("obj"))
+            izlendi = izlendi or watched
+            indirildi = indirildi or downloaded
+        return izlendi, indirildi
+
+    def _gecmis_oku(self) -> Any:
+        # Rozetler kapalıyken `_gecmis` None; seçim yine geçmişe bakmalı.
+        return self._gecmis if self._gecmis is not None else prefs.Gecmis.yukle()
+
+    def select_unwatched(self) -> int:
+        gecmis = self._gecmis_oku()
+        return self._secimi_kur(
+            [e for e in self.filtered_episodes()
+             if not self._gecmis_durumu(e, gecmis)[0]], "izlenmemişler")
+
+    def select_not_downloaded(self) -> int:
+        """İndirilmemiş VE kuyrukta olmayanlar: "Seçilenleri İndir" zaten
+        kuyruktakileri atlıyor, seçili görünmeleri yanıltırdı."""
+        gecmis = self._gecmis_oku()
+        secilecek = []
+        for e in self.filtered_episodes():
+            if self._gecmis_durumu(e, gecmis)[1]:
+                continue
+            if any(self.kuyrukta_mi(k) for k in (e.get("sources") or {}).values() if k):
+                continue
+            secilecek.append(e)
+        return self._secimi_kur(secilecek, "indirilmemişler")
 
     def _update_selection_label(self) -> None:
         self.lblSelected.setText(f"{len(self.selected_episodes())} seçili")
@@ -773,5 +1002,6 @@ def _key_of(episode: Dict[str, Any]) -> Tuple[int, int, int]:
 
 
 __all__ = ["EpisodePage", "EpisodeRow", "SourceSelectDialog", "as_sources_data",
+           "aralik_coz", "AralikSonucu",
            "active_sources", "episode_matches", "primary_entry", "source_counts",
            "source_short", "source_color", "source_label"]
