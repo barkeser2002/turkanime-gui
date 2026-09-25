@@ -30,9 +30,11 @@ jobs:
   # Test kapısı — HER ŞEYDEN ÖNCE
   # ─────────────────────────────────────────────────────────────────────────
   # Bu iş eklenene kadar yayın akışında tek bir test koşmuyordu: etiket
-  # doğrudan GitHub Release'e ve PyPI'a gidiyordu. `main.yml` var ama GitHub'da
-  # devre dışı (`disabled_manually`), yani ona güvenilemez — kapı burada,
-  # yayın yolunun kendi üstünde olmalı.
+  # doğrudan GitHub Release'e ve PyPI'a gidiyordu. Push/PR'da koşan ayrı bir
+  # CI yok: eski `main.yml` GitHub'da elle kapatılmıştı (`disabled_manually`)
+  # ve bakımsız kalmıştı (`|| true`'lu lint, çıplak `pytest`); bakımcının
+  # kararıyla silindi. Commit'ler yerelde aynı kapıdan geçiyor, yayında da
+  # bu iş koşuyor — kapı yayın yolunun kendi üstünde.
   test:
     name: Test kapısı
     runs-on: ubuntu-latest
