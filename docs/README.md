@@ -168,6 +168,16 @@ turkanime-cli
 git clone https://github.com/barkeser2002/turkanime-gui.git
 ```
 
+> **Windows:** Çevrimdışı arşivde (`arsiv/`) tam yolu 260 karakteri aşan
+> dosyalar var; git'in uzun yol desteği kapalıysa klon "Filename too long" ile
+> yarım kalır. Klonlarken açın:
+> `git clone -c core.longpaths=true https://github.com/barkeser2002/turkanime-gui.git`
+> Arşive ihtiyacınız yoksa onu hiç yazmadan da klonlayabilirsiniz (uygulama
+> arşivi uzak aynalardan okur):
+> `git clone --no-checkout https://github.com/barkeser2002/turkanime-gui.git`,
+> sonra klasörde `git sparse-checkout set --no-cone '/*' '!/arsiv/'` ve
+> `git checkout main`.
+
 ```bash
 cd turkanime-gui
 ```
