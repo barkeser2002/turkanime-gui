@@ -23,11 +23,18 @@ packages = [
   { include = "turkanime_api" }
 ]
 
+# gereksinimler.json: araç listesinin gömülü yedeği. Upstream liste
+# indirilemezse (çevrimdışı, depo silindi) `requirements.gomulu_gereksinim_yolu`
+# buna düşüyor; wheel'e girmezse pip kullanıcısında yedek hiç yoktu ve kurulum
+# sihirbazı "liste alınamadı" diyordu. Wheel kökü site-packages'a açılıyor,
+# fonksiyonun üçüncü adayı (paketin üst dizini) orayı okuyor.
 include = [
     { path = "docs/TurkAnime.png", format = "sdist" },
     { path = "docs/TurkAnime.ico", format = "sdist" },
     { path = "docs/TurkAnime.png", format = "wheel" },
     { path = "docs/TurkAnime.ico", format = "wheel" },
+    { path = "gereksinimler.json", format = "sdist" },
+    { path = "gereksinimler.json", format = "wheel" },
 ]
 
 [tool.poetry.dependencies]

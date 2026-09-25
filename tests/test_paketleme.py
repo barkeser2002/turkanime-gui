@@ -180,6 +180,25 @@ def test_gomulu_dosya_pakete_konuyor():
     assert isinstance(veri, list) and veri
 
 
+def _bicimler(kayit) -> set:
+    bicim = kayit.get("format") or []
+    return {bicim} if isinstance(bicim, str) else set(bicim)
+
+
+def test_gomulu_dosya_wheel_e_de_konuyor():
+    """ESKİ HATA: yalnızca PyInstaller paketi dosyayı taşıyordu. PyPI wheel'inde
+    yoktu (ölçüldü: 67 girdi, gereksinimler.json yok); `pip install
+    turkanime-gui[gui]` kullanıcısında `gomulu_gereksinim_yolu()` None dönüyor,
+    çevrimdışıyken sihirbaz "liste alınamadı" diyordu."""
+    kayitlar = _toml_yukle(PYPROJECT)["tool"]["poetry"].get("include") or []
+    bicimler = set()
+    for kayit in kayitlar:
+        if isinstance(kayit, dict) and kayit.get("path") == "gereksinimler.json":
+            bicimler |= _bicimler(kayit)
+    assert "wheel" in bicimler, "gereksinimler.json wheel'e konmuyor"
+    assert "sdist" in bicimler, "sdist'ten kurulan wheel de dosyayı taşımalı"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3) release.yml — yt-dlp indirmesi
 # ─────────────────────────────────────────────────────────────────────────────
