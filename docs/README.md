@@ -12,7 +12,7 @@
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V10.1.0](V10.1.0.md) · [V10.0.0](V10.0.0.md)
+**Sürüm notları:** [V10.2.0](V10.2.0.md) · [V10.1.0](V10.1.0.md) · [V10.0.0](V10.0.0.md)
 
 TürkAnime GUI **tamamen arayüz odaklı** bir anime keşif, izleme ve indirme
 uygulaması. Arayüz **PySide6 + QtWebEngine** üzerine kurulu; V10.0.0 ile
@@ -21,16 +21,28 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 
 ## ✨ Öne Çıkan Özellikler
 
-- **7 kaynakta paralel arama:** TürkAnime (arşiv), AnimeciX, Anizle,
-  TRAnimeİzle, OpenAnime, Tranimaci ve AniList aynı anda aranır. Bunlardan
-  **6'sı video sunar**; AniList yalnızca meta veri ve kullanıcı listesi sağlar.
+- **13 kaynakta paralel arama:** TürkAnime (arşiv), AnimeciX, Anizle,
+  TRAnimeİzle, OpenAnime, Tranimaci, Animexe, AnimPow, Deokwave, Asya
+  Animeleri, Animeler.pw, One Pace TR ve AniList aynı anda aranır. Bunlardan
+  **12'si video sunar**; AniList yalnızca meta veri ve kullanıcı listesi sağlar.
   turkanime.tv kapandı: TürkAnime kaynağı artık sitenin statik arşivi ve
-  yerel kopyadan **ağsız** aranır.
+  yerel kopyadan **ağsız** aranır. Kaynak listesi tek yerde tutulur
+  (`turkanime_api/sources/kayit.py`).
+- **Artımlı arama:** Her kaynağın sonucu o kaynak bittiği an görünür; yeni
+  sorgu süren aramayı beklemez.
 - **Çevrimdışı TürkAnime arşivi:** Ayarlar'dan tek tıkla indirilir
   (~230 MB); sonra TürkAnime araması ve bölüm listeleri internetsiz çalışır
-  (bkz. [Çevrimdışı Arşiv](#-çevrimdışı-arşiv-türkanime)).
+  (bkz. [Çevrimdışı Arşiv](#-çevrimdışı-arşiv-türkanime)). Arşiv kaydında
+  detay sayfası Türkçe özeti, türü, stüdyoyu ve puanı gösterir.
 - **Alakaya göre sıralama:** Sonuçlar sorguya yakınlığa göre dizilir. "one piece"
-  aramasında ilk sıra One Piece olur — "Koisuru One Piece" değil.
+  aramasında ilk sıra One Piece olur — "Koisuru One Piece" değil. Otomatik
+  eşleşme eşiklidir (0,95): eşiği geçen aday yoksa kaynak bağlanmaz, eşleştirme
+  penceresi açılır.
+- **Yerel kitaplık:** AniList hesabı olmadan "Kitaplığım" → İzlemeye devam et,
+  Favoriler, Geçmiş.
+- **Oynatma:** Video oynatılamazsa sıradaki aday denenir ve bölüm "izlendi"
+  sayılmaz; kaldığın yerden devam, "Sıradaki" bölüm, bölüm bitince izleme
+  ilerlemesi kendiliğinden yazılır. İndirilmiş bölüm ağsız oynar.
 - **Gömülü Cloudflare atlatma:** Uygulamanın içindeki Chromium (QtWebEngine)
   ayrı süreçte challenge çözüyor; uzak bir FlareSolverr olmadan da çalışır.
   **Dikkat:** yine de kutudan çıktığı hâlde `flaresolverr_url` ayarı BOŞ
@@ -39,28 +51,40 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
   URL alanını boşaltın; zincir gömülü çözücüyle çalışmaya devam eder.
 - **Çok kaynaklı bölüm birleştirme:** Aynı anime birden çok kaynakta varsa
   bölümler `(sezon, bölüm)` anahtarıyla tek listede birleşir.
-- **Gelişmiş indirme sistemi:** Bölüm başına ilerleme çubukları, otomatik
-  yeniden deneme, tek tuşla iptal, renkli durum göstergesi.
+- **Gelişmiş indirme sistemi:** Bölüm başına ilerleme çubukları, başka adayla
+  yeniden deneme, tek tuşla iptal. Kuyruk diske yazılır ve açılışta geri
+  gelir; Duraklat/Devam et, "Tümünü Duraklat". Başarısız indirme "tamamlandı"
+  sayılmaz (dosya diskte doğrulanır), aynı bölüm iki kez kuyruğa girmez. Biten
+  satırda "Oynat" ve "Klasörü Aç"; kuyruk bitince masaüstü bildirimi.
 - **Tek tıkla indirme ve oynatma:** Bölümleri sıra bekletmeden indir, izlerken
-  otomatik kaydet.
+  kaydet ("İzlerken kaydet"). Toplu seçim aralıkla ("1-12, 20-"),
+  izlenmemişler, indirilmemişler ya da Shift+tık.
+- **Hata sebebi:** Oynatma, indirme ve arama hataları "çalışmıyor" yerine
+  sebebi söyler (çerez süresi, Cloudflare engeli, 403/404/429, zaman aşımı,
+  disk dolu…).
 - **AniList entegrasyonu:** OAuth2 ile hesabına bağlan, listelerini senkron tut.
   Gizli anahtar (client secret) gerekmez — bkz. [AniList Girişi](ANILIST_OAUTH.md).
 - **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur.
+  "Fansub'u kendim seçeyim" açıksa birden çok grup olan bölümde sorar; seçim
+  seri için hatırlanır.
 - **Kart tabanlı arayüz:** Hover efektli kartlar, batch rendering, poster
   galerileri.
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
-- **Testler:** 1.266 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Terminal sürümü tkinter istemez:** klasör seçici yoksa yol terminalden
+  sorulur; kayıtlı TRAnimeİzle çerezi ve OpenAnime jetonları CLI'da da yüklenir.
+- **Testler:** 1.936 otomatik test (pytest + pytest-qt), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 
 1. **Keşfet:** Jikan (MyAnimeList) trend ve sezon listeleri; Jikan erişilemezse
    AniList trendlerine düşülür.
-2. **Ara:** 7 kaynakta paralel arama; yavaş kaynak aramayı çökertmez, zaman
-   aşımına uğrayan kaynak boş döner.
+2. **Ara:** 13 kaynakta paralel arama; sonuçlar kaynak kaynak gelir, yavaş
+   kaynak aramayı çökertmez, zaman aşımına uğrayan kaynak adıyla yazılır.
 3. **İndir & Oynat:** mpv entegrasyonu sayesinde indirme ve izleme tek pencerede.
-4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, AniList'e yansır.
+4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, "Kitaplığım"da görünür
+   ve AniList'e bağlıysan oraya yansır.
 
 ## 📺 Ekran Görüntüleri
 
@@ -166,6 +190,9 @@ python -m turkanime_api.gui.qt
 3. **TRAnimeİzle** kullanmak istiyorsan Ayarlar → TRAnimeİzle Cookie →
    **"Tarayıcıdan Al"** düğmesine bas. Uygulama içindeki tarayıcı açılır, bot
    kontrolünü çözersin, çerez kaydedilir.
+   **OpenAnime** akışları 404 dönüyorsa Ayarlar → OpenAnime oturumu →
+   Token / Refresh Token alanlarına tarayıcındaki `openani.me` çerezlerini gir
+   (isteğe bağlı). Diğer kaynaklar giriş istemez.
 4. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden
    sunucu adresini gir (zorunlu değil).
 5. **Keşfet veya Ara sekmesinden** anime seç.
@@ -185,6 +212,11 @@ video bağlantıları arşivden okunur; videoların kendisi yine üçüncü part
 sunuculardan (ok.ru, Sibnet, Mail.ru, Google Drive…) gelir, yani izlemek ve
 indirmek için internet gerekir.
 
+Arşiv bu depoda [`arsiv/`](../arsiv/README.md) altında durur (GitLab'daki
+AnimeDepo'nun `790d9e8` commit'inin birebir kopyası). **Hazır paket ve pip
+kurulumu arşivi içermez;** internetsiz kullanmak için Ayarlar'dan indirin
+(aşağıda), indirmezseniz uzak aynalardan okunur.
+
 **Arşiv nereden okunur?** Sırayla, içinde okunabilir bir `dizin.json` olan
 ilk konum kullanılır; geçersiz klasör atlanır ve Ayarlar'da uyarı çıkar:
 
@@ -195,6 +227,9 @@ ilk konum kullanılır; geçersiz klasör atlanır ve Ayarlar'da uyarı çıkar:
 4. Uzak aynalar: varsa özel adres (`TURKANIME_ARSIV_URL`), sonra GitLab,
    olmazsa bu deponun GitHub kopyası. Gelen her dosya
    `<veri kökü>/arsiv_onbellek` altında saklanır; aynalar düşerse oradan okunur.
+   **GitHub aynası bu deponun `main` dalını okur**; arşiv `main`'e birleşene
+   kadar her dosyaya 404 döner ve o güne kadar tek uzak kaynak GitLab'dır.
+   Tek bir aynanın 404'ü "anime yok" sayılmaz, yalnızca bütün aynalarınki.
 
 "Veri kökü" `~/Turkanime` klasörü; uygulama bir git deposunun içinden
 çalıştırılıyorsa depo kökü (indirilenler bu yüzden `arsiv/` değil
@@ -236,9 +271,15 @@ işaretli oynatıcılar atlanır. Arşivde İngilizce adlar yok, romaji ile aray
 | **AnimeciX** | Dinamik video ID, geniş fansub seçenekleri |
 | **Anizle** | Geniş arşiv (`anizm.pro`). Site video.js/HLS'e geçtiği için bölüm başına sınırlı kaynak dönebiliyor |
 | **TRAnimeİzle** | Cookie tabanlı oturum — Ayarlar'dan gömülü tarayıcıyla çerez alınmalı |
-| **OpenAnime** | SvelteKit SSR JSON çıkarımı + CF bypass. Arama ve bölüm listesi çalışıyor; **stream uçları şu an 404 dönüyor** (bkz. [Bilinen Kısıtlar](#-bilinen-kısıtlar)) |
+| **OpenAnime** | SvelteKit SSR JSON çıkarımı + CF bypass. Arama ve bölüm listesi çalışıyor; **stream uçları jetonsuz 404 dönebiliyor** — Ayarlar → OpenAnime oturumu'na `openani.me` çerezleri (isteğe bağlı) (bkz. [Bilinen Kısıtlar](#-bilinen-kısıtlar)) |
 | **Tranimaci** | SHA-256 proof-of-work WAF + JS kapısı (QtWebEngine ile aşılır), multi-CDN mp4 |
 | **TürkAnime (arşiv)** | turkanime.tv kapandı; kaynak artık sitenin statik JSON arşivi (AnimeDepo). Önce yerel kopyadan okunur (indirilen tam arşiv ya da depodaki [`arsiv/`](../arsiv/README.md)), yoksa GitLab → GitHub aynalarından. Gerçek arama ucu yok; dizin üzerinde yerel arama yapılır (aksan/noktalamadan bağımsız, yazım hatasına toleranslı, "Şingeki" → Shingeki). Arşivde İngilizce adlar yok, romaji ile arayın. Eskiden ayrı listelenen "AnimeDepo" kaynağı bununla birleşti; eski ad hâlâ tanınır |
+| **Animexe** | `animexe.com`; fansub akışları, giriş gerekmez. Ücretli abonelik servisi **Anizium**'un aktarımları bilerek alınmaz; yalnızca onları taşıyan bölümlerde (canlı kontrolde One Piece) akış dönmez. Ölü CDN'ler önceden elenir |
+| **AnimPow** | `animpow.com`; Türk fansub gruplarını toplayan site, iki arka uç (şifreli eski API + QuadroGG HLS) birleştirilir. Türkçe adla arama QuadroGG'de çalışır ("iblis" → Demon Slayer) |
+| **Deokwave** | `deokwave.com`; ~3.100 başlık, bölüm başına çoğu zaman birden çok fansub, altyazısı gömülü MP4 (1080/720/480p). Art arda isteklerde site 1–3 dk engellediği için istekler seyreltilir |
+| **Asya Animeleri** | `asyaanimeleri.top`; donghua (Çin animasyonu) ağırlıklı, Japon anime listesi kısmi |
+| **Animeler.pw** | Eski animeler.me; anime + donghua, çok sayıda fansub ve oynatıcı. Akış listesi yavaş gelir (site 12–30 sn düşünüyor) |
+| **One Pace TR** | `onepacetr.net`; One Pace (One Piece'in dolgusuz kurgusu) Türkçe altyazılı, 35 ark / 443 bölüm. Google Drive ve Sibnet |
 
 ### Meta Veri ve Keşif
 | Servis | Rol |
@@ -269,8 +310,10 @@ Odnoklassniki  Dailymotion  Sibnet  VK  Vidmoly  YourUpload
 Sendvid  Myvi  Uqload
 ```
 > MP4upload listeden çıkarıldı: çözümlenmiş gibi görünüp oynatılamayan
-> bağlantılar üretiyordu. Diğer kaynaklar (Anizle, Tranimaci, OpenAnime)
-> doğrudan mp4/HLS bağlantısı döndürür, bu listeden geçmez.
+> bağlantılar üretiyordu. Anizle, Tranimaci ve OpenAnime doğrudan mp4/HLS
+> bağlantısı döndürür, bu listeden geçmez. Gömülü oynatıcı döndüren Asya
+> Animeleri ve One Pace TR aynı listeyle sıralar; AnimPow ve Animeler.pw kendi
+> sitelerinde ölçülen çalışma oranına göre sıralar.
 
 ## ⚠️ Bilinen Kısıtlar
 
@@ -280,7 +323,12 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 |-------|-----------|
 | **TürkAnime kapandı** | Kaynak artık sitenin arşivi: içerik sitenin kapanmadan önceki kaydı (dizinin tarihi Ayarlar'da görünür). Video kayıtlarının yaklaşık dörtte biri turkanime.tv'nin kendi oynatıcısına bağlıydı ve oynatılamıyor; arama yalnızca romaji adlarla bulur. |
 | **TRAnimeİzle çerez istiyor** | Çerez alınmadan bu kaynak bölüm döndürmez. Ayarlar → "Tarayıcıdan Al" ile bir kez alınır. |
-| **OpenAnime stream 404** | Arama ve bölüm listesi çalışıyor, ama CDN uçları `not_found` dönüyor. `api.openani.me` kimlik doğrulama ("Vanguard") istiyor. Uygulama bu durumda sessiz kalmaz, sebebi yazar. |
+| **TürkAnime arşivinin GitHub aynası** | Ayna bu deponun `main` dalını okur; arşiv `main`'e birleşene kadar 404 döner. O güne kadar uzak kaynak yalnızca GitLab; internetsiz kullanım için tam arşivi indirin. |
+| **OpenAnime stream 404** | Arama ve bölüm listesi çalışıyor, ama CDN uçları `not_found` dönüyor. `api.openani.me` kimlik doğrulama ("Vanguard") istiyor; Ayarlar → OpenAnime oturumu'na jeton girilebilir. Uygulama bu durumda sessiz kalmaz, sebebi yazar. |
+| **Animexe'de Anizium aktarımları yok** | Ücretli servisin aktarımları bilerek alınmıyor; bir başlıkta yalnızca onlar varsa Animexe akış döndürmez. |
+| **Animeler.pw yavaş** | Sitenin bölüm sayfası sunucuda 12–30 sn düşünüyor. Mugen HLS imzası isteği yapan IP'ye bağlı; çıkış IP'si değişen ağlarda 403 alınabilir. |
+| **Deokwave engeli** | Site art arda isteklerde 1–3 dk 403 veriyor; uygulama istekleri seyreltiyor, kaynak bu yüzden yavaş. |
+| **One Pace TR API anahtarı** | Anahtar sitenin JS paketinden çalışma anında okunuyor; site yapısını değiştirirse kaynak kırılır. |
 | **Sade pip kurulumunda 4 kademeli CF zinciri** | `cloudscraper` zorunlu, her kurulumda var; ama sade `pip install turkanime-gui` PySide6 kurmadığı için QtWebEngine kademesi yok. 5 kademe için `[gui]` ekstrası, hazır paket ya da `requirements-gui.txt`. |
 | **Anizle bölüm başına sınırlı kaynak** | Site video.js/HLS'e geçti; bazı bölümlerde tek stream dönebiliyor. |
 
@@ -336,8 +384,9 @@ python tests/adapters-test-all.py --skip-streams
 > Betik şu an **4 kaynağı** kapsıyor: `animecix`, `anizle`, `tranime`,
 > `animedepo` (TürkAnime arşivi). OpenAnime ve Tranimaci bu betikte yok.
 
-Gerçek ağa çıkan küçük bir duman testi de `pytest` içinde:
-`tests/test_ag_canli.py` (arşiv aynaları ve AniList). `network` işaretli,
+Gerçek ağa çıkan küçük duman testleri de `pytest` içinde:
+`tests/test_ag_canli.py` (arşiv aynaları ve AniList) ve altı yeni kaynağın
+birer uçtan uca testi (arama → bölümler → akışlar). `network` işaretli,
 varsayılan koşuda atlanır; ağ mandalını kaldırıp yalnızca onları koşmak için:
 
 ```bash
@@ -351,7 +400,8 @@ python -m pytest --network -m network
 | **Arama** | Alakaya göre sıralama, çok kaynaklı arama zaman aşımı, başlık eşleştirme |
 | **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, bağlanırken de işleyen iptal, eskiyi koruyan takas, disk hatasında yedeğe geçmeme, sembolik bağlı hedef), sıfırlamanın GUI'yi dondurmaması, okunamayan arşivin aramada, bölüm listesinde ve oynatmada söylenmesi ("yok" ile "ulaşılamadı" ayrı), Windows uzun yolları (MAX_PATH taklidiyle), eşitleme aracının yanlış hedefi reddetmesi, Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme, silinemeyen eski kopya uyarısı) |
 | **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; ad çakışması import anında hata; uzun bölüm slug'ları kesilmeden ayrık (geçmiş anahtarı, dosya adı); CLI yeniden denemede oynatılamayan videoyu atlıyor; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
-| **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi |
+| **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi; Animexe, AnimPow, Deokwave, Asya Animeleri, Animeler.pw ve One Pace TR için sitelerin gerçek yanıtlarından kırpılmış fikstürlerle ağsız testler |
+| **Oynatma ve indirme** | Sıradaki adaya geçme ve mpv çıkış kodları, kaldığın yer ve otomatik ilerleme, "İzlerken kaydet", yerel dosyadan oynatma, indirme bütünlüğü (gerçek yt-dlp ile yerel HTTP sunucusuna karşı 403/200), çift kuyruk engeli, kalıcı kuyruk ve duraklat/sürdür, hata sebepleri, yerel kitaplık |
 | **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası |
 | **Çekirdek** | Bölüm birleştirme ve ayrıştırma, indirme yolu güvenliği, atomik JSON yazımı, ağ izolasyonu |
 | **Yayın** | `release.yml` sürüm türetme, test kapısı, `version.json` şeması, PyPI sırrı |
