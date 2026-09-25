@@ -8,6 +8,12 @@ kaybolursa veri projeyle birlikte yaşamaya devam etsin diye depoya alındı.
 Dosyalar değiştirilmeden kopyalandı. Hangi commit'ten çekildiği
 [`KAYNAK.json`](KAYNAK.json) içinde yazıyor.
 
+Tek istisna dosya ADLARI: Windows'ta geçersiz karakterler (`<>:"|?*`, sondaki
+nokta/boşluk) `%XX` ile yazılıyor. Arşivde bir tane var:
+`One Piece Movie 6: Omatsuri….json` burada `One Piece Movie 6%3A Omatsuri….json`.
+Özgün adla depo Windows'ta klonlanamıyordu. İstemci özgün adla istenen dosyayı
+bu adla buluyor (`arsiv_paketi.disk_adi`); içerik aynı.
+
 ## Yapı
 
 ```

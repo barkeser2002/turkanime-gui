@@ -227,8 +227,8 @@ ilk konum kullanılır; geçersiz klasör atlanır ve Ayarlar'da uyarı çıkar:
 4. Uzak aynalar: varsa özel adres (`TURKANIME_ARSIV_URL`), sonra GitLab,
    olmazsa bu deponun GitHub kopyası. Gelen her dosya
    `<veri kökü>/arsiv_onbellek` altında saklanır; aynalar düşerse oradan okunur.
-   **GitHub aynası bu deponun `main` dalını okur**; arşiv `main`'e birleşene
-   kadar her dosyaya 404 döner ve o güne kadar tek uzak kaynak GitLab'dır.
+   **GitHub aynası bu deponun `main` dalını okur** (10.2.0 ile birleşti,
+   çalışıyor); GitLab düşerse yedek odur.
    Tek bir aynanın 404'ü "anime yok" sayılmaz, yalnızca bütün aynalarınki.
 
 "Veri kökü" `~/Turkanime` klasörü; uygulama bir git deposunun içinden
@@ -323,7 +323,7 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 |-------|-----------|
 | **TürkAnime kapandı** | Kaynak artık sitenin arşivi: içerik sitenin kapanmadan önceki kaydı (dizinin tarihi Ayarlar'da görünür). Video kayıtlarının yaklaşık dörtte biri turkanime.tv'nin kendi oynatıcısına bağlıydı ve oynatılamıyor; arama yalnızca romaji adlarla bulur. |
 | **TRAnimeİzle çerez istiyor** | Çerez alınmadan bu kaynak bölüm döndürmez. Ayarlar → "Tarayıcıdan Al" ile bir kez alınır. |
-| **TürkAnime arşivinin GitHub aynası** | Ayna bu deponun `main` dalını okur; arşiv `main`'e birleşene kadar 404 döner. O güne kadar uzak kaynak yalnızca GitLab; internetsiz kullanım için tam arşivi indirin. |
+| **TürkAnime arşivinde bir dosya adı** | `One Piece Movie 6: …` adındaki `:` Windows'ta geçersiz; aynada `%3A` ile duruyor (`:` → `%3A`). İstemci özgün adla da buluyor; içerik aynı. |
 | **OpenAnime stream 404** | Arama ve bölüm listesi çalışıyor, ama CDN uçları `not_found` dönüyor. `api.openani.me` kimlik doğrulama ("Vanguard") istiyor; Ayarlar → OpenAnime oturumu'na jeton girilebilir. Uygulama bu durumda sessiz kalmaz, sebebi yazar. |
 | **Animexe'de Anizium aktarımları yok** | Ücretli servisin aktarımları bilerek alınmıyor; bir başlıkta yalnızca onlar varsa Animexe akış döndürmez. |
 | **Animeler.pw yavaş** | Sitenin bölüm sayfası sunucuda 12–30 sn düşünüyor. Mugen HLS imzası isteği yapan IP'ye bağlı; çıkış IP'si değişen ağlarda 403 alınabilir. |

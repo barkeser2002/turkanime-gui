@@ -174,6 +174,42 @@ def goreli_parcalar(yol: str) -> Tuple[str, ...]:
     return parcalar
 
 
+# Windows'ta (NTFS) dosya adında bulunamayan karakterler.
+_WINDOWS_YASAK = '<>:"|?*'
+
+
+def disk_adi(parca: str) -> str:
+    """Bir yol bileşeninin HER işletim sisteminde yazılabilen adı.
+
+    Arşivde ``One Piece Movie 6: Omatsuri….json`` adlı bir bölüm dosyası var.
+    `:` Windows'ta geçersiz: depo Windows'ta klonlanamıyordu (yayın hattının
+    Windows derlemesi checkout'ta düştü) ve tam arşiv orada o dosyayı
+    açamıyordu. Yasak karakterler ``%XX`` olur (`:` → ``%3A``); sondaki nokta
+    ve boşluk da (Windows onları sessizce atar, ad değişir).
+
+    ``%`` KAÇIRILMIYOR: dönüşüm böylece idempotent — zaten dönüşmüş bir ad
+    (depodaki ayna, GitHub paketi) ikinci kez geçince aynı kalır. Arşivde
+    ``%`` içeren ad yok; olsaydı yalnızca teorik bir çakışma riski doğardı.
+    Sıradan adlar olduğu gibi kalır.
+    """
+    if not parca:
+        return parca
+    ad = "".join(f"%{ord(c):02X}" if c in _WINDOWS_YASAK or ord(c) < 32 else c
+                 for c in parca)
+    if ad[-1] in " .":
+        ad = ad[:-1] + f"%{ord(ad[-1]):02X}"
+    return ad
+
+
+def disk_goreli(yol: str) -> str:
+    """Göreli arşiv yolunun diskteki (her işletim sisteminde geçerli) biçimi.
+
+    Yerel kopyalar (depodaki `arsiv/`, indirilen tam arşiv, disk önbelleği) ve
+    GitHub aynası dosyaları bu adla tutar; GitLab (asıl kaynak) özgün adla.
+    """
+    return "/".join(disk_adi(p) for p in goreli_parcalar(yol))
+
+
 def guvenli_birlestir(kok: Path, yol: str) -> Path:
     """``kok`` altındaki dosya yolunu kur; dışarı çıkamayan yol garanti.
 
@@ -576,9 +612,9 @@ def _uye_yolu(uye: tarfile.TarInfo, ust_desen: str,
         raise GuvensizUye(f"aygıt üyesi reddedildi: {uye.name!r}")
     if not (uye.isdir() or uye.isfile()):
         raise GuvensizUye(f"desteklenmeyen üye türü: {uye.name!r}")
-    if os.name == "nt" and any(":" in p for p in goreli):
-        return None                      # NTFS'e yazılamaz (bkz. guvenli_birlestir)
-    return goreli
+    # Her işletim sisteminde aynı disk adı (bkz. `disk_adi`): eskiden `:`
+    # içeren üye Windows'ta atlanıyordu, o bölüm orada hiç açılamıyordu.
+    return tuple(disk_adi(p) for p in goreli)
 
 
 def _uyeyi_yaz(kaynak: Any, yol: Path, parca: int = 1 << 20) -> None:
