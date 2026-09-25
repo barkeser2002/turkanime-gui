@@ -17,7 +17,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QSystemTrayIcon,
+    QVBoxLayout, QWidget,
 )
 
 from ...common.oynatma import yedekli_oynat
@@ -26,7 +27,7 @@ from .anilist import AniListService
 from .discord import DiscordService
 from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
-from .pages.downloads import DownloadManager, DownloadsPage
+from .pages.downloads import DURUM_IPTAL, DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
 from .pages.library import LibraryPage
 from .pages.search import SearchPage
@@ -135,6 +136,9 @@ class MainWindow(QMainWindow):
         self._update_dialog: QWidget | None = None
         self._req_dialog: QWidget | None = None
         self._dl_titles: Dict[str, str] = {}
+        # Kuyruk boşalana kadar biten işlerin sayımı (bkz. `_toplu_indirme_bitti`).
+        self._toplu_indirme = {"ok": 0, "hata": 0}
+        self._tepsi: QSystemTrayIcon | None = None
         self.downloads.added.connect(self._on_download_added)
         self.downloads.progress.connect(self._on_download_progress)
         # Menüdeki "İndirilenler (N)": indirme artık sayfayı değiştirmiyor,
@@ -215,7 +219,11 @@ class MainWindow(QMainWindow):
             page.kitaplik_secildi.connect(self._on_kitaplik_selected)
             return page
         if key == "downloads":
-            return DownloadsPage(self.downloads)
+            page = DownloadsPage(self.downloads)
+            # Biten indirmenin "Oynat"ı normal oynatma yolundan geçer: yerel
+            # dosya orada ilk aday, geçmiş/kitaplık yazımı da aynı yerde.
+            page.oynat_istendi.connect(self._on_play)
+            return page
         if key == "watchlist":
             page = WatchlistPage(self.anilist)
             page.anime_selected.connect(self._on_discover_selected)
@@ -442,14 +450,24 @@ class MainWindow(QMainWindow):
         # adres `atla` ile geri veriliyor ve geçmiş yalnızca başarıda yazılıyor.
         try:
             tercih = prefs.oku()
+            # İndirilmiş bölüm ağa çıkmadan, diskten oynatılır. Yerel dosya İLK
+            # aday: bozuksa (mpv 2) yolu `atla`ya girer ve döngü kendiliğinden
+            # akışa geçer (bkz. `prefs.YerelVideo`).
+            yerel = prefs.yerel_dosya(bolum, tercih,
+                                      str((entry or {}).get("yerel_dosya") or ""))
 
             def bul(atla, callback):
+                if yerel and os.path.abspath(yerel) not in atla:
+                    return prefs.YerelVideo(yerel)
                 return bolum.best_video(by_res=tercih.max_res,
                                         early_subset=tercih.aday_sayisi,
                                         callback=callback, atla=atla)
 
             def oynat(video):
-                self._status(f"{title} — oynatıcı açılıyor…")
+                yerelden = isinstance(video, prefs.YerelVideo)
+                self._status(f"{title} — "
+                             + ("indirilmiş dosya açılıyor…" if yerelden
+                                else "oynatıcı açılıyor…"))
                 return prefs.oynat(video, tercih)
 
             sonuc = yedekli_oynat(
@@ -574,11 +592,48 @@ class MainWindow(QMainWindow):
     def _on_download_finished(self, task_id: str, ok: bool, mesaj: str) -> None:
         self._status(("İndirme: " if ok else "İndirme başarısız: ") + mesaj)
         self._dl_titles.pop(task_id, None)
+        # Toplu indirmenin özeti: iptal hata sayılmaz, kullanıcı kendisi kesti.
+        if ok:
+            self._toplu_indirme["ok"] += 1
+        elif self.downloads.durum(task_id) != DURUM_IPTAL:
+            self._toplu_indirme["hata"] += 1
         if not self.downloads.active_ids():
             self.discord.sayfa(self._current_page)
+            self._toplu_indirme_bitti()
         if ok:
             # Bölüm satırındaki ⬇ rozeti geçmişten okunuyor; liste açıksa tazele.
             self._refresh_episode_history()
+
+    def _toplu_indirme_bitti(self) -> None:
+        """Kuyruk boşaldı: pencere arka plandaysa masaüstü bildirimi.
+
+        Durum çubuğu mesajı 6 saniye duruyor; 30 bölümlük kuyruğu başlatıp
+        başka işe geçen kullanıcı indirmenin bittiğini hiç görmüyordu.
+        Pencere öndeyse bildirim yok: kullanıcı zaten bakıyor.
+        """
+        ok, hata = self._toplu_indirme["ok"], self._toplu_indirme["hata"]
+        self._toplu_indirme = {"ok": 0, "hata": 0}
+        if not (ok or hata):
+            return                      # hepsi iptal edildi
+        mesaj = f"{ok} bölüm indirildi" + (f", {hata} hata" if hata else "")
+        self.statusBar().showMessage(f"İndirmeler bitti: {mesaj}.", 10000)
+        if not self.isActiveWindow():
+            self._bildir("İndirmeler bitti", mesaj)
+
+    def _bildir(self, baslik: str, mesaj: str) -> None:
+        """Masaüstü bildirimi: sistem tepsisi varsa balon, yoksa görev çubuğu.
+
+        Tepsi simgesi ilk bildirimde kuruluyor; bildirimsiz oturumda tepside
+        boş yere simge durmasın.
+        """
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            if self._tepsi is None:
+                self._tepsi = QSystemTrayIcon(self.windowIcon(), self)
+                self._tepsi.setToolTip(APP_TITLE)
+                self._tepsi.show()
+            self._tepsi.showMessage(baslik, mesaj)
+        else:
+            QApplication.alert(self)
 
     @staticmethod
     def _download_dir() -> str:

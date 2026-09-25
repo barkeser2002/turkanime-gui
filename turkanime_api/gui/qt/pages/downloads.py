@@ -11,16 +11,20 @@ slot GUI thread'inde çalışır).
 from __future__ import annotations
 
 import os
+import re
 import threading
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
-from ....common.dosya_adi import bolum_hedefi, yarim_dosyalari_sil
+from ....common.dosya_adi import (
+    bolum_hedefi, oynatilabilir_dosya, yarim_dosyalari_sil,
+)
 from .. import prefs
 from ..widgets import StatusLabel
 from ..workers import run_bg, set_long_task_limit
@@ -45,6 +49,37 @@ DURUM_RENK = {
     DURUM_HATA: "#d63031",
     DURUM_IPTAL: "#e17055",
 }
+
+
+def _sade(metin: str) -> str:
+    return re.sub(r"[\W_]+", " ", metin.casefold()).strip()
+
+
+def satir_basligi(entry: Dict[str, Any]) -> str:
+    """İndirme satırının etiketi: ``"Seri — Bölüm"``.
+
+    Kaynakların bir kısmı bölüm başlığına seri adını koymuyor (Tranimaci
+    "3. Bölüm", OpenAnime "<sezon> - Bölüm N"); iki serinin aynı numaralı
+    bölümleri kuyrukta birbirinden ayırt edilemiyordu. Başlık adı zaten
+    içeriyorsa (arşiv: "Naruto 3. Bölüm") ikinci kez eklenmez.
+    """
+    bolum_adi = str((entry or {}).get("title") or "Bölüm")
+    seri = (str((entry or {}).get("seri_adi") or "")
+            or prefs.seri_adi((entry or {}).get("obj")))
+    if not seri or _sade(seri) in _sade(bolum_adi):
+        return bolum_adi
+    return f"{seri} — {bolum_adi}"
+
+
+def klasoru_ac(yol: str) -> bool:
+    """Klasörü sistemin dosya yöneticisinde aç (Windows/macOS/Linux ortak).
+
+    `QDesktopServices` platform farkını soğuruyor; `os.startfile`/`open`/
+    `xdg-open` dallanması burada ikinci kez yazılmasın.
+    """
+    if not yol:
+        return False
+    return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(yol))))
 
 
 class IndirmeIptal(Exception):
@@ -79,6 +114,9 @@ class _Is:
         # Çözülmüş disk hedefi: aynı bölümün ikinci kez kuyruğa girmesini
         # engelleyen anahtar (bkz. `DownloadManager.kuyruktaki_is`).
         self.hedef: Optional[str] = None
+        # Bitişte diskte doğrulanan dosya ("Oynat" onu açar) ve serinin klasörü.
+        self.dosya: Optional[str] = None
+        self.klasor: str = ""
         # Bitişi iki thread de yazabiliyor (iptal GUI'den, sonuç işçiden);
         # kilit olmadan aynı iş iki kez "bitti" diye raporlanabilir.
         self.kilit = threading.Lock()
@@ -159,9 +197,13 @@ class DownloadManager(QObject):
 
         self._seq += 1
         task_id = f"dl{self._seq}"
-        title = entry.get("title") or "Bölüm"
+        title = satir_basligi(entry)
         job = _Is(task_id, entry, title, output)
         job.hedef = self._hedef(bolum, output)
+        try:
+            job.klasor = os.path.dirname(bolum_hedefi(output, bolum))
+        except (ValueError, TypeError):
+            job.klasor = output
         self._jobs[task_id] = job
         self._yay("added", task_id, title)
         self._basla(job)
@@ -203,6 +245,21 @@ class DownloadManager(QObject):
     def active_ids(self) -> List[str]:
         return [tid for tid, job in self._jobs.items()
                 if job.durum not in BITMIS_DURUMLAR]
+
+    def dosya(self, task_id: str) -> Optional[str]:
+        """Tamamlanan işin diskteki dosyası (yoksa None)."""
+        job = self._jobs.get(task_id)
+        return job.dosya if job else None
+
+    def klasor(self, task_id: str) -> str:
+        """İşin seri klasörü (`<indirilenler>/<seri>`)."""
+        job = self._jobs.get(task_id)
+        return job.klasor if job else ""
+
+    def kayit(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """İşin bölüm kaydı (`entry`); "Oynat" bununla oynatma yoluna gider."""
+        job = self._jobs.get(task_id)
+        return job.entry if job else None
 
     # ── İç işleyiş ──────────────────────────────────────────────────────────
     def _basla(self, job: _Is) -> None:
@@ -318,6 +375,15 @@ class DownloadManager(QObject):
             # İndirme geçmişi burada yazılır; eski GUI'de yazılıyordu, Qt'de
             # hiç çağrılmıyordu (bölüm satırındaki ⬇ rozeti bu kayda bakıyor).
             prefs.gecmis_kaydet(bolum, "indirildi")
+            # Yol kaydedilir: "Oynat" kullanıcı sonradan indirme klasörünü
+            # değiştirse de bu dosyayı bulsun. Kayda da iliştiriliyor; bölüm
+            # listesindeki ▶ aynı kayıtla oynatıyor.
+            try:
+                job.dosya = oynatilabilir_dosya(bolum_hedefi(job.output, bolum))
+            except (ValueError, TypeError):
+                job.dosya = None
+            if job.dosya:
+                job.entry["yerel_dosya"] = job.dosya
             self._bitir(job, True, DURUM_TAMAMLANDI)
             return
 
@@ -358,6 +424,8 @@ class DownloadRow(QFrame):
 
     cancel_requested = Signal(str)
     retry_requested = Signal(str)
+    play_requested = Signal(str)
+    folder_requested = Signal(str)
 
     def __init__(self, task_id: str, title: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -390,6 +458,19 @@ class DownloadRow(QFrame):
             lambda: self.retry_requested.emit(self.task_id))
         self.btnRetry.setVisible(False)
         top.addWidget(self.btnRetry)
+
+        # Yalnızca TAMAMLANAN işte: indirilen bölüm uygulamadan, ağsız izlenebilsin.
+        self.btnPlay = QPushButton("Oynat")
+        self.btnPlay.setObjectName("Primary")
+        self.btnPlay.clicked.connect(lambda: self.play_requested.emit(self.task_id))
+        self.btnPlay.setVisible(False)
+        top.addWidget(self.btnPlay)
+
+        self.btnFolder = QPushButton("Klasörü Aç")
+        self.btnFolder.clicked.connect(
+            lambda: self.folder_requested.emit(self.task_id))
+        self.btnFolder.setVisible(False)
+        top.addWidget(self.btnFolder)
         layout.addLayout(top)
 
         self.bar = QProgressBar()
@@ -409,6 +490,8 @@ class DownloadRow(QFrame):
         self.is_ok = durum == DURUM_TAMAMLANDI
         self.btnCancel.setVisible(not self.is_finished)
         self.btnRetry.setVisible(durum in (DURUM_HATA, DURUM_IPTAL))
+        self.btnPlay.setVisible(self.is_ok)
+        self.btnFolder.setVisible(self.is_ok)
         if durum == DURUM_BEKLIYOR:
             # Yeniden denemede eski hata metni/rengi kalmasın.
             self.bar.setValue(0)
@@ -425,6 +508,10 @@ class DownloadRow(QFrame):
 
 class DownloadsPage(QWidget):
     """Aktif ve tamamlanmış indirmeleri listeler."""
+
+    # Biten satırın "Oynat"ı: bölüm kaydı ana pencerenin oynatma yoluna gider
+    # (yerel dosya orada ilk aday; geçmiş ve kitaplık da orada yazılıyor).
+    oynat_istendi = Signal(object)
 
     def __init__(self, manager: DownloadManager, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -456,6 +543,10 @@ class DownloadsPage(QWidget):
         self.btnClear = QPushButton("Tamamlananları Temizle")
         self.btnClear.clicked.connect(self._clear_finished)
         head.addWidget(self.btnClear)
+        self.btnOpenDir = QPushButton("İndirme klasörünü aç")
+        self.btnOpenDir.clicked.connect(
+            lambda: self._klasor_ac_yol(prefs.indirme_dizini()))
+        head.addWidget(self.btnOpenDir)
         layout.addLayout(head)
 
         self.scroll = QScrollArea()
@@ -476,6 +567,9 @@ class DownloadsPage(QWidget):
         row = DownloadRow(task_id, title)
         row.cancel_requested.connect(self.manager.cancel)
         row.retry_requested.connect(self.manager.retry)
+        row.play_requested.connect(self._oynat)
+        row.folder_requested.connect(
+            lambda tid: self._klasor_ac_yol(self.manager.klasor(tid)))
         self._rows[task_id] = row
         self._list.addWidget(row)
         self._refresh_status()
@@ -496,6 +590,18 @@ class DownloadsPage(QWidget):
         if row is not None:
             row.set_done(ok, message)
         self._refresh_status()
+
+    def _oynat(self, task_id: str) -> None:
+        kayit = self.manager.kayit(task_id)
+        if kayit:
+            self.oynat_istendi.emit(kayit)
+
+    def _klasor_ac_yol(self, yol: str) -> None:
+        if not (yol and os.path.isdir(yol)):
+            self.lblStatus.error("Klasör bulunamadı (taşınmış ya da silinmiş olabilir).")
+            return
+        if not klasoru_ac(yol):
+            self.lblStatus.error(f"Klasör açılamadı: {yol}")
 
     # ── Yardımcılar ─────────────────────────────────────────────────────────
     def _refresh_status(self) -> None:
@@ -529,5 +635,6 @@ class DownloadsPage(QWidget):
 
 
 __all__ = ["DownloadsPage", "DownloadManager", "DownloadRow", "IndirmeIptal",
+           "satir_basligi", "klasoru_ac",
            "DURUM_BEKLIYOR", "DURUM_INDIRILIYOR", "DURUM_TAMAMLANDI",
            "DURUM_HATA", "DURUM_IPTAL", "BITMIS_DURUMLAR", "MAX_DENEME"]

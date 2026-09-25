@@ -187,9 +187,51 @@ def _kabul_ediyor(fn: Callable, isim: str) -> bool:
     return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
+class YerelVideo:
+    """İndirme klasöründeki dosya, `best_video` adayı gibi davranan kılıkta.
+
+    Yedekli oynatma döngüsü (`common.oynatma.yedekli_oynat`) aday nesnesi
+    bekliyor; yerel dosyayı İLK aday yapmak şunu sağlıyor: dosya bozuksa
+    (mpv 2 ile döner) adresi `atla`ya girer ve döngü kendiliğinden akışa
+    geçer. Ayrı bir "yerel mi, akış mı" dalı bu yedeği ikinci kez yazardı.
+    """
+
+    player = "YEREL"
+
+    def __init__(self, yol: str):
+        self.url = os.path.abspath(yol)
+        self.is_working = True
+
+
+def yerel_dosya(bolum, tercih: Optional[Tercihler] = None,
+                kayitli: str = "") -> Optional[str]:
+    """Bölümün indirilmiş dosyası (oynatılabilir, tamamlanmış) ya da None.
+
+    Önce indirme bittiğinde kaydedilen yol (``kayitli``; kullanıcı klasör
+    ayarını sonradan değiştirmiş olabilir), sonra ayarlı klasördeki hedef.
+    Geçmişteki "indirildi" kaydına bakılmıyor: dosya silinmiş ya da taşınmış
+    olabilir, diskte ne varsa o.
+    """
+    from ...common.dosya_adi import bolum_hedefi, oynatilabilir_dosya
+    if kayitli:
+        try:
+            if os.path.isfile(kayitli) and os.path.getsize(kayitli) > 0:
+                return kayitli
+        except OSError:
+            pass
+    try:
+        return oynatilabilir_dosya(bolum_hedefi(indirme_dizini(tercih), bolum))
+    except (ValueError, TypeError, OSError):
+        return None
+
+
 def oynat(video, tercih: Optional[Tercihler] = None):
     """`video.oynat()`'ı kullanıcının ayarlarıyla çağır."""
     tercih = tercih or oku()
+    if isinstance(video, YerelVideo):
+        from ...common import mpv_oynatici
+        return mpv_oynatici.yerel_oynat(video.url,
+                                        dakika_hatirla=tercih.dakika_hatirla)
     kwargs: Dict[str, Any] = {}
     if _kabul_ediyor(video.oynat, "dakika_hatirla"):
         kwargs["dakika_hatirla"] = tercih.dakika_hatirla
@@ -427,6 +469,7 @@ class Gecmis:
 __all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
            "kaynak_kimliklerini_uygula",
            "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
-           "seri_adi", "kitaplik_kimligi", "kitapliga_yaz",
+           "seri_adi", "kitaplik_kimligi", "kitapliga_yaz", "YerelVideo",
+           "yerel_dosya",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

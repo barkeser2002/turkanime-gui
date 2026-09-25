@@ -167,6 +167,34 @@ def indirilen_dosya(hedef: str) -> Optional[str]:
     return None
 
 
+# Bölümle aynı adı taşıyan ama video olmayan yan dosyalar: yt-dlp bilgi
+# dosyası, altyazı, küçük resim. Yerel oynatmada bunlardan birini mpv'ye
+# vermek boş bir pencere demek.
+YAN_DOSYA_SONEKLERI = (".info.json", ".json", ".vtt", ".srt", ".ass", ".ssa",
+                       ".jpg", ".jpeg", ".png", ".webp", ".description")
+
+
+def oynatilabilir_dosya(hedef: str) -> Optional[str]:
+    """Hedefin oynatılabilir, TAMAMLANMIŞ ve boş olmayan video dosyası.
+
+    `indirilen_dosya`'dan katı: yan dosyaları ve sıfır baytlık artıkları da
+    eler. Geçmişteki "indirildi" kaydına güvenilmiyor (kullanıcı dosyayı
+    silmiş/taşımış olabilir); diskte ne varsa o. Birden çok aday varsa en
+    büyüğü: yarıda bırakılmış bir kayıt tam dosyanın önüne geçmesin.
+    """
+    en_iyi, en_buyuk = None, 0
+    for uzanti, yol in _hedefin_dosyalari(hedef):
+        if _yarim_mi(uzanti) or uzanti.lower().endswith(YAN_DOSYA_SONEKLERI):
+            continue
+        try:
+            boyut = os.path.getsize(yol) if os.path.isfile(yol) else 0
+        except OSError:
+            continue
+        if boyut > en_buyuk:
+            en_iyi, en_buyuk = yol, boyut
+    return en_iyi
+
+
 def yarim_dosyalari_sil(hedef: str) -> int:
     """Hedefin yarım indirme dosyalarını sil; silinen sayısını döndür.
 
@@ -187,5 +215,6 @@ def yarim_dosyalari_sil(hedef: str) -> int:
 
 
 __all__ = ["guvenli_ad", "guvenli_alt_yol", "alt_yolda_mi",
-           "bolum_hedefi", "indirilen_dosya", "yarim_dosyalari_sil",
+           "bolum_hedefi", "indirilen_dosya", "oynatilabilir_dosya",
+           "yarim_dosyalari_sil",
            "YASAK_KARAKTERLER", "AYRILMIS_ADLAR", "UZUNLUK_SINIRI"]
