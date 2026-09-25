@@ -92,6 +92,16 @@ def dosyalari_listele(kok: Path, korunanlar: Iterable[str] = KORUNANLAR,
     return sonuc
 
 
+def _disk_adlariyla(dosyalar: Dict[str, Path]) -> Dict[str, Path]:
+    """{özgün göreli yol: yol} → {disk adıyla göreli yol: yol}.
+
+    Neden: arşivde ``One Piece Movie 6: ….json`` var; `:` Windows'ta geçersiz
+    ve depo o dosya yüzünden Windows'ta klonlanamıyordu (yayın hattının
+    Windows derlemesi checkout'ta düştü). Ayna o adı ``%3A`` ile tutuyor.
+    """
+    return {paket.disk_goreli(goreli): yol for goreli, yol in dosyalar.items()}
+
+
 def _ayni_mi(a: Path, b: Path) -> bool:
     try:
         if a.stat().st_size != b.stat().st_size:
@@ -110,7 +120,11 @@ def ayna_plani(kaynak: Path, hedef: Path,
     gösterirdi.
     """
     korunanlar = set(korunanlar)
-    k = dosyalari_listele(kaynak, korunanlar)
+    # Kaynak (GitLab klonu) özgün adları taşıyor; ayna disk adlarını
+    # (`paket.disk_adi`: Windows'ta geçersiz karakterler %XX). Karşılaştırma
+    # disk adıyla yapılır, yoksa `:`'li dosya her turda silinip yeniden
+    # eklenirdi.
+    k = _disk_adlariyla(dosyalari_listele(kaynak, korunanlar))
     h = dosyalari_listele(hedef, korunanlar)
     return AynaPlani(
         eklenen=sorted(set(k) - set(h)),
@@ -148,8 +162,11 @@ def plani_uygula(plan: AynaPlani, kaynak: Path, hedef: Path) -> None:
             pass
     if plan.silinen:
         _bos_klasorleri_sil(hedef)
+    # Plandaki yollar disk adlı; kaynakta dosya özgün adıyla duruyor.
+    kaynaktakiler = _disk_adlariyla(dosyalari_listele(kaynak))
     for goreli in list(plan.eklenen) + list(plan.degisen):
-        veri = paket.guvenli_birlestir(kaynak, goreli).read_bytes()
+        kaynak_yolu = kaynaktakiler.get(goreli) or paket.guvenli_birlestir(kaynak, goreli)
+        veri = Path(kaynak_yolu).read_bytes()
         paket.atomik_bayt_yaz(paket.guvenli_birlestir(hedef, goreli), veri)
 
 

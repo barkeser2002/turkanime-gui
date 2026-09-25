@@ -64,7 +64,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 try:
     from curl_cffi import requests as _requests  # type: ignore
@@ -383,6 +383,35 @@ def _goreli(path: str) -> str:
     return "/".join(paket.goreli_parcalar(str(path).lstrip("/")))
 
 
+def _yerel_yol(kok: Path, goreli: str) -> Path:
+    """Yerel arşivde dosyanın yolu: önce disk adı, yoksa özgün ad.
+
+    Yerel kopyalar Windows'ta geçersiz karakter taşıyan adları ``%XX`` ile
+    tutuyor (`paket.disk_adi`: ``Movie 6: …`` → ``Movie 6%3A …``). Bu
+    sürümden ÖNCE Linux/macOS'ta indirilmiş bir tam arşivde ise ad özgün
+    hâliyle duruyor; onu da bulmak için Windows dışında özgün ada düşülür
+    (Windows'ta `:`'li ad zaten yazılamamıştı).
+    """
+    disk = paket.guvenli_birlestir(kok, paket.disk_goreli(goreli))
+    if os.name == "nt" or os.path.exists(paket.disk_yolu(disk)):
+        return disk
+    ozgun = paket.guvenli_birlestir(kok, goreli)
+    return ozgun if os.path.exists(paket.disk_yolu(ozgun)) else disk
+
+
+def _uzak_url(taban: str, goreli: str) -> str:
+    """Aynadaki dosyanın adresi.
+
+    GitHub aynası bu deponun `arsiv/` klasörü: adları disk biçiminde
+    (`paket.disk_adi`). GitLab ve özel adresler özgün adları taşıyor. Yol
+    her iki durumda kodlanıyor: ``:`` → ``%3A``, disk adındaki ``%`` →
+    ``%25`` (yoksa sunucu ``%3A``'yı `:` diye çözer ve dosyayı bulamaz).
+    """
+    taban = taban.rstrip("/")
+    yol = paket.disk_goreli(goreli) if taban == GITHUB_AYNA_URL.rstrip("/") else goreli
+    return f"{taban}/{quote(yol, safe='/')}"
+
+
 def _yerelden_oku(kok: Path, goreli: str) -> Any:
     """Yerel arşivden oku. Dosya yoksa `FileNotFoundError` ("arşivde yok").
 
@@ -395,7 +424,7 @@ def _yerelden_oku(kok: Path, goreli: str) -> Any:
     arşivde her dosya "yok" olur ve her anime "bölümü yok" görünürdü. Kök
     kaybolduysa bu bir OKUMA hatasıdır (`ArsivHatasi`), "yok" değil.
     """
-    yol = paket.guvenli_birlestir(kok, goreli)
+    yol = _yerel_yol(kok, goreli)
     try:
         with open(paket.disk_yolu(yol), encoding="utf-8") as fp:
             veri = json.load(fp)
@@ -420,7 +449,7 @@ def _onbellege_yaz(goreli: str, veri: Any) -> None:
     giremez.
     """
     try:
-        yol = paket.guvenli_birlestir(onbellek_dizini(), goreli)
+        yol = paket.guvenli_birlestir(onbellek_dizini(), paket.disk_goreli(goreli))
         paket.atomik_bayt_yaz(yol, json.dumps(veri, ensure_ascii=False).encode("utf-8"))
     except (OSError, ValueError, TypeError):
         pass
@@ -428,7 +457,7 @@ def _onbellege_yaz(goreli: str, veri: Any) -> None:
 
 def _onbellekten_oku(goreli: str) -> Any:
     try:
-        yol = paket.guvenli_birlestir(onbellek_dizini(), goreli)
+        yol = paket.guvenli_birlestir(onbellek_dizini(), paket.disk_goreli(goreli))
         with open(paket.disk_yolu(yol), encoding="utf-8") as fp:
             return json.load(fp)
     except (OSError, ValueError):
@@ -465,7 +494,7 @@ def _uzaktan_getir(goreli: str, atla: Optional[str] = None) -> Any:
     `get_anime_episodes`): BÜTÜN aynalar 404 dediyse `ArsivdeYok`; en az
     birine ulaşılamadıysa (bağlantı, zaman aşımı, 429/5xx, bozuk yanıt) o
     aynanın hatası. Tek bir 404 yetmez: GitLab'a ulaşılamazken GitHub
-    aynası 404 derse (o ayna bugün her dosyaya 404 dönüyor) dosyanın
+    aynası 404 derse (ayna geride kalmış olabilir) dosyanın
     gerçekten olmadığı bilinmiyor — asıl haber GitLab'ın hatası.
     """
     son_hata: Optional[BaseException] = None   # 404 DIŞINDAKİ son hata
@@ -477,7 +506,7 @@ def _uzaktan_getir(goreli: str, atla: Optional[str] = None) -> Any:
         try:
             if oturum is None:
                 oturum = _session()
-            yanit = oturum.get(f"{taban}/{goreli}", timeout=HTTP_TIMEOUT)
+            yanit = oturum.get(_uzak_url(taban, goreli), timeout=HTTP_TIMEOUT)
             if getattr(yanit, "status_code", None) in _YOK_KODLARI:
                 yok_diyen += 1
                 continue
@@ -528,7 +557,7 @@ def _kosullu_getir(path: str) -> Tuple[Any, bool]:
         imza = _yerel_imzalar.get(goreli)
         if imza is not None:
             try:
-                st = os.stat(paket.disk_yolu(paket.guvenli_birlestir(konum.dizin, goreli)))
+                st = os.stat(paket.disk_yolu(_yerel_yol(konum.dizin, goreli)))
                 if (st.st_mtime_ns, st.st_size) == imza:
                     return None, True
             except OSError:
@@ -540,7 +569,7 @@ def _kosullu_getir(path: str) -> Tuple[Any, bool]:
         return fetch_json(goreli), False
     taban, etag = kayit
     try:
-        yanit = _session().get(f"{taban}/{goreli}", timeout=HTTP_TIMEOUT,
+        yanit = _session().get(_uzak_url(taban, goreli), timeout=HTTP_TIMEOUT,
                                headers={"If-None-Match": etag})
         if yanit.status_code == 304:
             return None, True
