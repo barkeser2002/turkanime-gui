@@ -60,6 +60,7 @@ tranime_debug.html
 # (bkz. turkanime_api/sources/animedepo.py)
 /cevrimdisi_arsiv/
 /arsiv_onbellek/
+/gorsel_onbellek/
 # tam_arsiv_indir'in geçici/eski kopyaları (kesilen indirmeden kalabilir)
 /.cevrimdisi_arsiv-indirme-*/
 /.cevrimdisi_arsiv-eski-*/

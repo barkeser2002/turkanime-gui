@@ -19,7 +19,7 @@ from __future__ import annotations
 import traceback
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal, Slot
 
 
 class WorkerSignals(QObject):
@@ -149,6 +149,17 @@ VARSAYILAN_UZUN_IS = 3
 # biten mpv'nin thread'i havuza dönerken yeni isteğin beklememesi için.
 ES_ZAMANLI_OYNATMA = 2
 
+# Kapak görselleri için AYRI, küçük havuz (bkz. `gorsel.py`).
+#
+# Neden: keşif/arama/izleme listesi her yüklemede 12-24 poster isteği açıyor
+# ve her biri 10 sn'ye kadar bekleyebiliyor. Bunlar global havuzdayken
+# ardından başlatılan arama ve bölüm yükleme, posterlerin ARKASINDA kuyruğa
+# giriyordu (ölçüldü, 4 çekirdek: arama motoru 4.5 sn sonra başladı). Poster
+# bir süs; kullanıcının asıl isteğini bekletmemeli. Sınır küçük tutuluyor:
+# yavaş bir görsel sunucusuna aynı anda onlarca bağlantı açmanın faydası yok.
+_gorsel_pool: QThreadPool | None = None
+ES_ZAMANLI_GORSEL = 4
+
 
 def long_task_pool() -> QThreadPool:
     """İndirme gibi uzun işler için ayrılmış havuz."""
@@ -166,6 +177,18 @@ def playback_pool() -> QThreadPool:
         _play_pool = QThreadPool()
         _play_pool.setMaxThreadCount(ES_ZAMANLI_OYNATMA)
     return _play_pool
+
+
+def gorsel_havuzu() -> QThreadPool:
+    """Kapak görselleri için ayrılmış, düşük öncelikli havuz."""
+    global _gorsel_pool
+    if _gorsel_pool is None:
+        _gorsel_pool = QThreadPool()
+        _gorsel_pool.setMaxThreadCount(ES_ZAMANLI_GORSEL)
+        # İşletim sistemi de önceliği bilsin: tek çekirdekte bile arayüz ve
+        # arama thread'leri posterlerin önüne geçsin.
+        _gorsel_pool.setThreadPriority(QThread.Priority.LowPriority)
+    return _gorsel_pool
 
 
 def set_long_task_limit(sayi: int | None) -> int:
@@ -187,17 +210,22 @@ def set_long_task_limit(sayi: int | None) -> int:
 
 
 def run_bg(fn: Callable[..., Any], *args, signals: WorkerSignals | None = None,
-           long_running: bool = False, playback: bool = False, **kwargs) -> None:
+           long_running: bool = False, playback: bool = False,
+           gorsel: bool = False, **kwargs) -> None:
     """`fn`'i arka planda çalıştır (eski `threading.Thread(daemon=True)` yerine).
 
     `long_running=True` verilirse iş, kısa UI görevlerini aç bırakmamak için
     indirme havuzuna gönderilir. `playback=True` ise oynatmaya ayrılmış havuza:
     mpv, kullanıcının indirme kuyruğu yüzünden beklemek zorunda kalmamalı.
+    `gorsel=True` kapak indirmesini ayrı görsel havuzuna yollar: posterler
+    arama/bölüm yükleme işlerinin önünü tıkamasın.
 
     Hata olursa `signals.error` yayılır; sinyal verilmemişse traceback basılır.
     """
     if playback:
         pool = playback_pool()
+    elif gorsel:
+        pool = gorsel_havuzu()
     elif long_running:
         pool = long_task_pool()
     else:
@@ -214,7 +242,8 @@ def shutdown_pools(msecs: int = 3000) -> bool:
     (ör. yarım kalmış bir indirme) bitene kadar askıda kalır.
     """
     tamam = True
-    for pool in (QThreadPool.globalInstance(), _long_pool, _play_pool):
+    for pool in (QThreadPool.globalInstance(), _long_pool, _play_pool,
+                 _gorsel_pool):
         if pool is None:
             continue
         pool.clear()                      # henüz başlamamışları at
@@ -250,5 +279,6 @@ class UiBridge(QObject):
 
 
 __all__ = ["WorkerSignals", "run_bg", "UiBridge", "long_task_pool",
-           "playback_pool", "set_long_task_limit", "shutdown_pools",
-           "VARSAYILAN_UZUN_IS", "ES_ZAMANLI_OYNATMA"]
+           "playback_pool", "gorsel_havuzu", "set_long_task_limit",
+           "shutdown_pools", "VARSAYILAN_UZUN_IS", "ES_ZAMANLI_OYNATMA",
+           "ES_ZAMANLI_GORSEL"]

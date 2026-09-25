@@ -35,6 +35,7 @@ from ..sources_bridge import (
     METADATA_ONLY, UnsupportedSource, fetch_episodes, supported_sources,
 )
 from ..theme import ACCENT, BG_ELEV, BG_ELEV_2, BORDER, TEXT_MUTED, score_color
+from ..gorsel import gorsel_getir
 from ..widgets import StatusLabel
 from ..workers import WorkerSignals, run_bg
 from .discover import anime_title, cover_url, score_of
@@ -636,15 +637,11 @@ class DetailPage(QWidget):
     def _load_cover(self, rid: int) -> None:
         url = cover_url(self._anime)
         if url:
-            run_bg(self._fetch_cover, rid, url)
+            run_bg(self._fetch_cover, rid, url, gorsel=True)
 
     def _fetch_cover(self, rid: int, url: str) -> None:
-        """Arka plan: görseli indir, baytları UI thread'ine taşı."""
-        try:
-            import requests
-            data = requests.get(url, timeout=10).content
-        except Exception:
-            return
+        """Arka plan: görseli (önbellekten ya da ağdan) al, UI thread'ine taşı."""
+        data = gorsel_getir(url)
         if data:
             self.cover_ready.emit(rid, data)
 

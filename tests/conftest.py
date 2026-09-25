@@ -202,6 +202,24 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku, tmp_path_factory)
     animedepo.sifirla()
 
 
+@pytest.fixture(autouse=True)
+def _gorsel_onbellek_yalitimi(monkeypatch, tmp_path_factory):
+    """Kapak önbelleği test başına boş ve geçici klasörde.
+
+    Disk önbelleğinin kökü `veri_koku()`: pytest depodan çalışınca DEPO KÖKÜ.
+    Yalıtılmasa testlerin sahte PNG'leri depoya yazılır; bellek önbelleği de
+    testler arasında taşınıp "0 istek" iddialarını önceki testin indirdiğiyle
+    geçirirdi.
+    """
+    from turkanime_api.gui.qt import gorsel
+
+    kok = tmp_path_factory.mktemp("gorsel_onbellek")
+    monkeypatch.setattr(gorsel, "onbellek_dizini", lambda: kok)
+    gorsel.bellegi_temizle()
+    yield
+    gorsel.bellegi_temizle()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _cevresel_taban(pytestconfig):
     """Ağ uçlarının OTURUM BOYU tabanını sahteye çek.

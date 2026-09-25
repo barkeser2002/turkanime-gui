@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..theme import TEXT_MUTED, score_color
+from ..gorsel import gorsel_getir
 from ..widgets import AnimeCard, StatusLabel
 from ..workers import WorkerSignals, run_bg
 from ._grid import CardGrid
@@ -341,7 +342,7 @@ class DiscoverPage(QWidget):
 
         # Görseller kartlar yerleştikten SONRA, arka planda indirilir.
         for card, url in pending_thumbs:
-            run_bg(self._fetch_thumb, card, url)
+            run_bg(self._fetch_thumb, card, url, gorsel=True)
 
     def _make_card(self, item: Dict[str, Any]) -> AnimeCard:
         """Tek bir anime sözlüğünden kart üret (rozet = puan)."""
@@ -387,11 +388,9 @@ class DiscoverPage(QWidget):
         Widget'a burada DOKUNULMAZ; yalnızca sinyal yayılır (kart bu arada
         silinmiş olabilir, o yüzden slot tarafında da kontrol var).
         """
-        try:
-            import requests
-            data = requests.get(url, timeout=10).content
-        except Exception:
-            return
+        # Tek yol `gorsel_getir`: bellek/disk önbelleği, durum kodu ve
+        # görsel imzası denetimi orada (bkz. `gorsel.py`).
+        data = gorsel_getir(url)
         if data:
             self.thumb_ready.emit(card, data)
 
