@@ -297,6 +297,14 @@ def test_test_isi_pyyaml_kuruyor():
     )
 
 
+def test_test_isi_flask_kuruyor():
+    """flask/flask-cors kurulmazsa `test_sunucu_api.py` sessizce atlanır
+    (`pytest.importorskip`) ve sunucunun `/search` doğrulaması hiç sınanmaz."""
+    kurulumlar = " ".join(s.lower() for s in _komut_satirlari("test")
+                          if "pip install" in s).split()
+    assert "flask" in kurulumlar and "flask-cors" in kurulumlar, kurulumlar
+
+
 def test_qt_testleri_offscreen_kosuyor():
     """Runner'da ekran yok; `QT_QPA_PLATFORM` verilmezse Qt testleri çöker."""
     adimlar = _workflow()["jobs"]["test"]["steps"]

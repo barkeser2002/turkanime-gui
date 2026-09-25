@@ -37,9 +37,10 @@ DB:
 """
 from __future__ import annotations
 
+import logging
+import math
 import os
 import sys
-import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -312,6 +313,9 @@ def list_sources():
     ])
 
 
+THRESHOLD_HATASI = "threshold 0..1 arası sayı olmalı"
+
+
 @app.route("/search")
 def universal_search():
     """Tüm kaynaklarda (veya tek kaynakta) multi-dil arama yap.
@@ -328,7 +332,18 @@ def universal_search():
 
     only = request.args.get("source", "").strip().lower()
     fuzzy = request.args.get("fuzzy", "false").lower() in ("1", "true", "yes")
-    threshold = float(request.args.get("threshold", "0.95"))
+    # `float()` doğrudan çağrılınca "abc" ya da boş değer ValueError fırlatıp
+    # 500 dönüyordu; 1.5, -1, nan, inf ise sessizce kabul ediliyordu (eşik
+    # anlamsızlaşıp ya hiçbir sonuç "exact" olmuyor ya da hepsi oluyordu).
+    # İstemci hatası 400 ile söylenir. `request.args.get(type=float)`
+    # kullanılmadı: o bozuk değeri sessizce varsayılana çevirirdi.
+    ham = request.args.get("threshold", "0.95")
+    try:
+        threshold = float(ham)
+    except ValueError:
+        return jsonify({"error": THRESHOLD_HATASI}), 400
+    if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        return jsonify({"error": THRESHOLD_HATASI}), 400
 
     targets = [only] if only and only in SOURCES else list(SOURCES.keys())
     by_source: Dict[str, Any] = {}

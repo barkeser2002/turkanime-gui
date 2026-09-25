@@ -74,7 +74,9 @@ jobs:
           # PyYAML: test_release_workflow.py bu dosyayı ayrıştırıyor. Hiçbir
           # requirements dosyasında yok — kurulmazsa o 15 test SESSİZCE
           # atlanır (pytest.importorskip), yani kapı yalancı yeşil verir.
-          pip install PySide6 pytest pytest-qt PyYAML pylint rapidfuzz
+          # flask/flask-cors: test_sunucu_api.py sunucunun uçlarını sınıyor;
+          # PyYAML ile aynı gerekçe — kurulmazsa testler sessizce atlanır.
+          pip install PySide6 pytest pytest-qt PyYAML pylint rapidfuzz flask flask-cors
 
       - name: pytest (ağ testleri hariç)
         env:
