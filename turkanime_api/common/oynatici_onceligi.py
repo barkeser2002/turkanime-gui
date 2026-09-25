@@ -28,10 +28,8 @@ DESTEKLENEN_OYNATICILAR: Tuple[str, ...] = (
     "SIBNET",
     "VK",
     "VIDMOLY",
-    "YOURUPLOAD",
     "SENDVID",
     "MYVI",
-    "UQLOAD",
 )
 
 # Denenebilir ama en sona bırakılanlar — bilinen false-positive ya da ölü:
@@ -40,9 +38,15 @@ DESTEKLENEN_OYNATICILAR: Tuple[str, ...] = (
 # - CLONE: adresler short.icu kısaltıcısına gidiyor; video barındırıcısı değil,
 #   yönlendirmenin sonunda ne olduğu belirsiz.
 # - STREAMSB: servis kapandı.
+# - YOURUPLOAD, UQLOAD: yt-dlp bu konakları "KnownPiracy" listesinde tutuyor
+#   ve baştan reddediyor (yt-dlp 2026.08.19); mpv de yt-dlp'den geçtiği için
+#   oynamıyorlar. Eskiden "desteklenenler"deydiler ve ilk 8 adayın yerini
+#   yiyorlardı. Adresle yakalama `sources.adapter.ytdlp_reddeder`'de; ad
+#   burada, çünkü uqload.io/.to gibi aynalar o düzenli ifadeye takılmıyor.
 # Tamamen atılmıyorlar: bazı bölümlerin tek kaydı bunlar; hiç yoktan iyidir.
 # Önde durmamaları yeter: `best_video` yalnızca ilk birkaç adayı yokluyor.
-SONA_BIRAKILANLAR: Tuple[str, ...] = ("MP4UPLOAD", "CLONE", "STREAMSB")
+SONA_BIRAKILANLAR: Tuple[str, ...] = ("MP4UPLOAD", "CLONE", "STREAMSB",
+                                      "YOURUPLOAD", "UQLOAD")
 
 # Arşivde aynı servisin farklı adla geçtiği kayıtlar. Adres konaklarına bakılarak
 # eşlendi (arsiv/ taraması): "OK.RU" kayıtları ok.ru/odnoklassniki.ru'ya,

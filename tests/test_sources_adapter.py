@@ -199,3 +199,55 @@ def test_best_video_hicbiri_calismazsa_durumu_bildiriyor(calisanlar):
 
     assert vid is None
     assert durumlar[-1] == "hiçbiri çalışmıyor"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# yt-dlp'nin baştan reddettiği konaklar bütçeyi yemesin
+# ─────────────────────────────────────────────────────────────────────────────
+# ESKİ HATA: uqload/yourupload/dood/filemoon adresleri yt-dlp'nin KnownPiracy
+# listesinde; hiç oynamıyorlar ama `best_video`'nun ilk 8 adayına giriyorlardı.
+# Arşivde 71.137 bölümün %37'sinde ilk 8'den en az biri böyleydi.
+
+REDDEDILENLER = [
+    "https://uqload.com/embed-a1.html", "https://www.yourupload.com/embed/a2",
+    "https://dood.watch/e/a3", "https://filemoon.sx/e/a4",
+    "https://uqload.com/embed-b1.html", "https://www.yourupload.com/embed/b2",
+    "https://dood.watch/e/b3", "https://filemoon.sx/e/b4",
+]
+
+
+def test_reddedilen_konaklar_sona_itiliyor(calisanlar):
+    normal = "https://video.sibnet.ru/shell.php?videoid=1"
+    akislar = [{"url": u, "label": "1080p"} for u in REDDEDILENLER]
+    akislar.append({"url": normal, "label": "480p"})
+    denenen = calisanlar(normal)
+
+    vid = bolum(stream_provider=lambda _u: akislar).best_video(early_subset=8)
+
+    assert vid is not None and vid.url == normal
+    assert denenen == [normal], f"reddedilen adres yoklandı: {denenen}"
+
+
+def test_reddedilmeyenlerin_sirasi_korunuyor(calisanlar):
+    """Kararlı sıralama: çözünürlük ve kaynağın CDN sırası bozulmamalı."""
+    akislar = _akislar()
+    akislar.insert(1, {"url": REDDEDILENLER[0], "label": "1080p"})
+    denenen = calisanlar()
+
+    bolum(stream_provider=lambda _u: akislar).best_video()
+
+    assert denenen == [s["url"] for s in _akislar()] + [REDDEDILENLER[0]]
+
+
+def test_ytdlp_reddeder_saf_adres_kontrolu():
+    assert all(adapter_mod.ytdlp_reddeder(u) for u in REDDEDILENLER)
+    assert not adapter_mod.ytdlp_reddeder("https://video.sibnet.ru/shell.php?videoid=1")
+    assert not adapter_mod.ytdlp_reddeder(None)
+
+
+def test_uqload_ve_yourupload_oncelikte_sona():
+    """Ad ile de: uqload.io gibi aynalar yt-dlp'nin düzenli ifadesine takılmıyor."""
+    from turkanime_api.common.oynatici_onceligi import oncelik_anahtari
+    for ad in ("UQLOAD", "YOURUPLOAD"):
+        assert oncelik_anahtari(ad) > oncelik_anahtari("SIBNET")
+        assert oncelik_anahtari(ad) > oncelik_anahtari("BILINMEYEN")

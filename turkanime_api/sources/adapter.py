@@ -14,9 +14,33 @@ import unicodedata
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+try:
+    from yt_dlp.extractor.unsupported import KnownPiracyIE
+except ImportError:                      # eski/yeni yt-dlp'de yer değişirse
+    KnownPiracyIE = None
+
 from .animecix import _video_streams
 from ..common.dosya_adi import bolum_hedefi, indirilen_dosya
 from ..common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
+
+
+def ytdlp_reddeder(url: Optional[str]) -> bool:
+    """yt-dlp bu adresi baştan reddediyor mu (KnownPiracy listesi)?
+
+    yt-dlp uqload.com, yourupload.com, dood.*, filemoon.sx, wolfstream.tv…
+    için çıkarıcı çalıştırmıyor, "desteklenmiyor" deyip çıkıyor; mpv'nin
+    ytdl_hook'u da yt-dlp'den geçtiği için bu adaylar hiç oynamıyor. Ölçüm
+    (yt-dlp 2026.08.19, yerel arşiv): 71.137 bölümün 26.563'ünde (%37) ilk
+    8 adaydan en az biri böyle; `best_video` yalnızca ilk birkaç adayı
+    yokladığı için bu adaylar çalışacak olanların yerini yiyordu.
+    `suitable` saf bir adres düzenli ifadesi: ağa çıkmıyor.
+    """
+    if not url or KnownPiracyIE is None:
+        return False
+    try:
+        return bool(KnownPiracyIE.suitable(url))
+    except Exception:
+        return False
 
 
 # Başlıktan ÜRETİLEN slug'ın üst sınırı. Kaynağın kendi verdiği slug'a
@@ -475,6 +499,10 @@ class AdapterBolum:
         if by_res:
             adaylar.sort(key=lambda s: parse_res(s.get("label") or "0p"),
                          reverse=True)
+        # yt-dlp'nin baştan reddettiği konaklar (uqload, yourupload, dood,
+        # filemoon…) bütçeyi yemesin: sona. Kararlı sıralama; diğerlerinin
+        # sırası (çözünürlük, kaynağın CDN sırası) korunur.
+        adaylar.sort(key=lambda s: ytdlp_reddeder(s.get("url")))
         # `early_subset` ile aynı bütçe: her CDN'i denemek yt-dlp zaman aşımları
         # yüzünden dakikalara mal olabilir.
         adaylar = adaylar[:max(1, int(early_subset or 1))]
