@@ -56,7 +56,7 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 |--------|------------|
 | TürkAnime (arşiv) | Site kapandı; kayıtlar statik arşivden okunur: [gitlab.com/AnimeDepo/animedepo](https://gitlab.com/AnimeDepo/animedepo) · yedek ayna: [github.com/barkeser2002/turkanime-gui](https://github.com/barkeser2002/turkanime-gui) (`arsiv/`; raw.githubusercontent.com ve codeload.github.com üzerinden) |
 | AnimeciX | [animecix.tv](https://animecix.tv) · API: [mangacix.net](https://mangacix.net) |
-| Anizle | [anizm.pro](https://anizm.pro) · API: [anizle.org](https://anizle.org) · oynatıcı: [anizmplayer.com](https://anizmplayer.com) |
+| Anizle | [anizle.co](https://anizle.co) · aynalar: [anizm.com.tr](https://anizm.com.tr), [puffytr.com](https://puffytr.com), [anizm.pro](https://anizm.pro) · oynatıcı: [anizmplayer.com](https://anizmplayer.com) |
 | TRAnimeİzle | [www.tranimeizle.io](https://www.tranimeizle.io) |
 | OpenAnime | [openani.me](https://openani.me) |
 | Tranimaci | [tranimaci.com](https://tranimaci.com) |
