@@ -14,6 +14,7 @@ from rich import print as rprint
 import questionary as qa
 
 from ..common import requirements as gereksinim   # modül olarak: testler sahteleyebilsin
+from ..common import kimlikler
 from ..common.cf_qt_solver import SOLVER_FLAG
 from ..common.oynatma import yedekli_oynat
 from ..sources import kayit
@@ -463,6 +464,16 @@ def main():
         rprint(f"[yellow]!) Şu araçlar bulunamadı: {', '.join(eksikler)}[/yellow]")
         rprint("[yellow]   Kurulum için: https://github.com/barkeser2002/"
                "turkanime-gui/wiki[/yellow]")
+
+    # Kayıtlı kaynak kimlikleri (TRAnimeİzle çerezi, OpenAnime jetonları).
+    # Eskiden yalnızca Qt açılışta yüklüyordu; CLI'da çerez diskte dururken
+    # `tranime.SESSION_COOKIE` None kalıyor, arama hiç istek atmadan boş
+    # dönüyor ve kullanıcıya "çerezi Qt uygulamasından alın" deniyordu.
+    # Ortak gövde Qt'siz modülde: CLI PySide6'ya bağlanmasın.
+    try:
+        kimlikler.kaynak_kimliklerini_uygula(Dosyalar().ayarlar)
+    except Exception as e:
+        log_error(e)
 
     # Script kapanışında
     def kapat():

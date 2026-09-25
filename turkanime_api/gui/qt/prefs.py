@@ -116,24 +116,19 @@ def kaynak_kimliklerini_uygula(tercih: Optional[Tercihler] = None) -> bool:
     CDN uçlarında kullanıcıya "Ayarlar'dan token'ını girin" diyordu ama ne alan
     ne de aktarım vardı.
 
-    Boş değer de bilerek gönderiliyor: "Temizle" dendiğinde süreç içindeki eski
-    çerezin de düşmesi gerekir, yoksa yalnızca disk temizlenirdi.
+    Gövde Qt'siz `common.kimlikler`'de: CLI de aynı aktarımı yapıyor ve
+    `gui.qt`'yi (PySide6) import edemez. Burası yalnızca `Tercihler`'i
+    ayar adlarına geri çeviriyor.
 
     Hata yutulur ve `False` döner: kimlik yükleyememek açılışı engellememeli.
     """
+    from ...common.kimlikler import kaynak_kimliklerini_uygula as _uygula
     tercih = tercih or oku()
-    tamam = True
-    try:
-        from ...sources.tranime import set_session_cookie
-        set_session_cookie(tercih.tranime_cookie)
-    except Exception:
-        tamam = False
-    try:
-        from ...sources.openani import set_openani_tokens
-        set_openani_tokens(tercih.openani_token, tercih.openani_refresh)
-    except Exception:
-        tamam = False
-    return tamam
+    return _uygula({
+        "tranime_cookie": tercih.tranime_cookie,
+        "openani_token": tercih.openani_token,
+        "openani_refresh_token": tercih.openani_refresh,
+    })
 
 
 def ayar_yaz(**degerler: Any) -> bool:
