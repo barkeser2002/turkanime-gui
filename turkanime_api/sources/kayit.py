@@ -337,6 +337,35 @@ def _animeler() -> KaynakUclari:
     return KaynakUclari(search_animeler, get_anime_episodes, get_episode_streams)
 
 
+def _onepacetr() -> KaynakUclari:
+    # Kapak görseli ark listesi yanıtında geliyor; `zengin_ara` ek istek atmıyor.
+    from .onepacetr import (
+        get_anime_episodes, get_episode_streams, search_onepacetr, zengin_ara,
+    )
+    return KaynakUclari(search_onepacetr, get_anime_episodes, get_episode_streams,
+                        zengin_ara=zengin_ara)
+
+
+def _onepacetr_adresi(bolum_id: str) -> str:
+    # "wano/hasir-sapkali-luffy-1" → ark sayfası + bölüm parçası (sitenin
+    # /bolum/<n> adresi kayan bir sıra numarası, kimlik olamaz). Adresi modül
+    # kuruyor; tembel import: kayıt modülü hafif kalmalı.
+    from .onepacetr import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
+def _onepacetr_bolum_slugu(bolum_id: str) -> str:
+    """"wano/hasir-sapkali-luffy-1" → "one-pace-wano-hasir-sapkali-luffy-1".
+
+    Başlıktan üretilen slug arama sonucunun adını içerir: aynı bölüm "One
+    Pace" (bütün seri) ve "One Pace 35: Wano" (ark) girişlerinden iki farklı
+    izleme geçmişi anahtarı ve indirme dosyası alırdı. Kimlikten türetmek
+    ikisini birleştirir; site başlıktaki bir yazım hatasını düzeltse de
+    anahtar kaymaz.
+    """
+    return "one-pace-" + str(bolum_id).replace("/", "-")
+
+
 def _arsiv_bolum_slugu(bolum_id: str) -> str:
     """"anime_slug/bolum_slug" → "bolum_slug" (turkanime.tv'nin kendi slug'ı).
 
@@ -440,6 +469,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("Animeler", "Animeler.pw", "AN", "#00cec9", "ANIMELER", _animeler,
            modul="animeler", cli_kodu="animeler", bolum_adresi=_animeler_adresi,
            bolum_slugu=_animeler_bolum_slugu, taranabilir=True),
+    Kaynak("One Pace TR", "One Pace TR", "OP", "#fdcb6e", "ONEPACETR", _onepacetr,
+           modul="onepacetr", cli_kodu="onepacetr", bolum_adresi=_onepacetr_adresi,
+           bolum_slugu=_onepacetr_bolum_slugu, taranabilir=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").
