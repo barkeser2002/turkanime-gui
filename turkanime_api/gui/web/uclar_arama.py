@@ -91,20 +91,22 @@ class AramaUclari:
         self.son_istek = 0
 
     @uc()
-    def ara(self, sorgu: str, istek: Optional[int] = None) -> Dict[str, Any]:
+    def ara(self, sorgu: str, istek: Optional[int] = None,
+            kaynak: str = "") -> Dict[str, Any]:
         """Aramayı başlat. ``istek`` numarasını sayfa veriyor: olaylar yanıttan
-        önce gelse bile sayfa hangi aramaya ait olduklarını biliyor."""
+        önce gelse bile sayfa hangi aramaya ait olduklarını biliyor.
+        ``kaynak`` verilirse yalnızca o kaynakta aranır (üst çubuktaki seçim)."""
         sorgu = " ".join(str(sorgu or "").split())
         if not sorgu:
             raise ValueError("arama metni boş")
         istek = self.son_istek = int(istek) if istek is not None else next(self._sayac)
         from ..qt.workers import run_bg
-        run_bg(self._ara, istek, sorgu)
+        run_bg(self._ara, istek, sorgu, str(kaynak or ""))
         return {"istek": istek, "sorgu": sorgu}
 
-    def _ara(self, istek: int, sorgu: str) -> None:
+    def _ara(self, istek: int, sorgu: str, kaynak: str = "") -> None:
         """Arka plan: bütün kaynaklarda paralel ara, bittikçe olay yay."""
-        from ...common.adapters import SearchEngine
+        from ...common.adapters import SearchEngine, arama_motoru
         from ...common.hatalar import sebep_metni
 
         yay = self._kopru.yay
@@ -119,7 +121,7 @@ class AramaUclari:
             })
 
         try:
-            motor = SearchEngine()
+            motor = arama_motoru([kaynak]) if kaynak else SearchEngine()
             adlar = sorted(getattr(motor, "adapters", None) or [], key=kaynak_sirasi)
             yay("arama_kaynaklar", {"istek": istek, "sorgu": sorgu,
                                     "kaynaklar": [kaynak_bilgisi(a) for a in adlar]})

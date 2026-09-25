@@ -249,7 +249,7 @@ def test_tumunu_gor_trend_sayfasina_geciyor(sahte_kesif, main_window, web):
     web.bekle("document.querySelectorAll('[data-sayfa=home] .serit .baglanti').length === 2")
     web.js("document.querySelectorAll('[data-sayfa=home] .serit .baglanti')[0].click()")
     web.qtbot.waitUntil(lambda: main_window._current_page == "trending", timeout=5000)
-    assert main_window._nav_buttons["trending"].isChecked()
+    web.bekle("document.querySelector('.menu-ogesi[data-git=trending]').classList.contains('aktif')")
     web.bekle("TA.aktif === 'trending'")
     web.bekle("document.querySelectorAll('[data-sayfa=trending] .izgara .kart:not(.iskelet-kart)').length === 6")
 
@@ -260,7 +260,7 @@ def test_hero_aramasi_arama_sayfasini_aciyor(main_window, web, sahte_arama):
            "f.querySelector('input').value = '  frieren '; f.requestSubmit()")
     web.qtbot.waitUntil(lambda: sorgular == ["frieren"], timeout=5000)
     assert main_window._current_page == "search"
-    assert main_window.txtSearch.text() == "frieren"
+    web.bekle("document.querySelector('.ust-ara input').value === 'frieren'")
 
 
 def test_bos_keşif_bos_durum_gosteriyor(main_window, web):
@@ -296,3 +296,15 @@ def test_statik_disi_yol_404(main_window, web):
         "(window._d === undefined && fetch('ta://uygulama/../ayarlar.json')"
         ".then(r => window._d = r.status, () => window._d = 'hata'), window._d)")
     assert durum in ("hata", 404)
+
+
+def test_kitaplik_tarih_metni():
+    from turkanime_api.gui.web.uclar_kitaplik import tarih_metni
+    simdi = 1_800_000_000
+    assert tarih_metni(simdi - 20, simdi) == "az önce"
+    assert tarih_metni(simdi - 300, simdi) == "5 dk önce"
+    assert tarih_metni(simdi - 3 * 3600, simdi) == "3 sa önce"
+    assert tarih_metni(simdi - 30 * 3600, simdi) == "dün"
+    assert tarih_metni(simdi - 4 * 86400, simdi) == "4 gün önce"
+    assert tarih_metni(simdi - 30 * 86400, simdi).count(".") == 2
+    assert tarih_metni("bozuk", simdi) == ""

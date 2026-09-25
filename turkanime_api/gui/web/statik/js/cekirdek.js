@@ -84,7 +84,8 @@
     film: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 4.5v15M17 4.5v15M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4"/>',
     dis: '<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/>',
     kapat: '<path d="M6 6l12 12M18 6 6 18"/>',
-    arti: '<path d="M12 5v14M5 12h14"/>'
+    arti: '<path d="M12 5v14M5 12h14"/>',
+    goz: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>'
   };
 
   TA.ikon = function (ad, sinif) {

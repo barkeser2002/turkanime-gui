@@ -426,8 +426,8 @@ def test_kapanista_suren_indirme_iptal_ediliyor(qtbot, main_window, monkeypatch,
     kadar kapanmaz (bkz. `MainWindow.closeEvent`)."""
     sahte = SahteIndirme(konumlar.indirilen)
     monkeypatch.setattr(animedepo, "tam_arsiv_indir", sahte)
-    sf = main_window.pages["settings"]
-    sf.btnArsivIndir.click()
+    # Ayarlar web'de: "Tüm arşivi indir" köprüden `arsiv_indir` ucunu çağırıyor.
+    main_window.ayarlar_uclari.arsiv_indir()
     assert sahte.basladi.wait(BEKLE / 1000)
 
     main_window.close()

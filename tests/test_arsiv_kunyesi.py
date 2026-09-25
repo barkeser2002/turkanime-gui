@@ -249,8 +249,7 @@ def test_arama_kartinin_kapagi_detaya_tasiniyor(main_window, web, sahte_arama,
                         lambda url, *a, **k: istenen.append(url) or None)
     sahte_arama(sonuclar={"AniList": [{"slug": "154587", "title": "Sousou no Frieren",
                                        "image": "https://img/frieren.jpg"}]})
-    main_window.txtSearch.setText("frieren")
-    main_window._on_search()
+    main_window.ara("frieren")
     web.bekle("document.querySelectorAll('.sonuc-grubu .kart').length === 1")
     web.js("document.querySelector('.sonuc-grubu .kart').click()")
 

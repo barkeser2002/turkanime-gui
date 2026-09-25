@@ -38,6 +38,10 @@
         renk ? { style: { "--renk": renk } } : null, veri.rozet));
     }
     if (secenek.sira) poster.appendChild(h("span.kart-sira", null, String(secenek.sira)));
+    if (veri.ilerleme != null) {
+      poster.appendChild(h("div.ilerleme", null,
+        h("i", { style: { width: Math.round(veri.ilerleme * 100) + "%" } })));
+    }
     poster.appendChild(h("div.kart-ortu", null, h("span.oynat-dairesi", null, TA.ikon("oynat"))));
 
     var kart = h("article.kart", {
@@ -123,5 +127,39 @@
         if (alt) alt.textContent = metin;
       }
     };
+  };
+})();
+
+/* Onay penceresi: Promise<bool>. Esc/dışarı tık = hayır. */
+(function () {
+  "use strict";
+
+  var TA = window.TA;
+  var h = TA.h;
+
+  TA.onayla = function (s) {
+    return new Promise(function (coz) {
+      var ortu;
+      function kapat(deger) {
+        ortu.remove();
+        document.removeEventListener("keydown", tus);
+        coz(deger);
+      }
+      function tus(e) {
+        if (e.key === "Escape") kapat(false);
+      }
+      var evet = h("button.dugme." + (s.tehlikeli ? "tehlike" : "birincil"), { onclick: function () { kapat(true); } }, s.evet || "Tamam");
+      var pencere = h("div.modal.onay-penceresi", { role: "alertdialog", "aria-modal": "true", "aria-label": s.baslik },
+        h("h3", null, s.baslik),
+        h("p.soluk", null, s.metin),
+        h("div.dugme-satiri.sag", null,
+          h("button.dugme.hayalet", { onclick: function () { kapat(false); } }, s.hayir || "Vazgeç"),
+          evet));
+      ortu = h("div.modal-ortu", { onclick: function (e) { if (e.target === ortu) kapat(false); } }, pencere);
+      document.body.appendChild(ortu);
+      document.addEventListener("keydown", tus);
+      // Tehlikeli eylemde odak "Vazgeç"te: yanlışlıkla Enter silmesin.
+      (s.tehlikeli ? pencere.querySelector(".dugme.hayalet") : evet).focus();
+    });
   };
 })();

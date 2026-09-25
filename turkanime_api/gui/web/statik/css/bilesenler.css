@@ -741,3 +741,36 @@
   height: 14px;
   color: var(--kirmizi);
 }
+
+.dugme.tehlike {
+  background: #e5484d;
+  color: #fff;
+}
+
+.dugme.tehlike:hover {
+  background: #f2555a;
+}
+
+.dugme-satiri {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dugme-satiri.sag {
+  justify-content: flex-end;
+}
+
+.onay-penceresi {
+  width: min(480px, 100%);
+}
+
+.onay-penceresi h3 {
+  font-size: 18px;
+}
+
+.onay-penceresi p {
+  line-height: 1.6;
+  word-break: break-word;
+}

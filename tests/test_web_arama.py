@@ -21,8 +21,7 @@ def kayit(slug, baslik=None, resim=None):
 
 
 def ara(main_window, web, sorgu):
-    main_window.txtSearch.setText(sorgu)
-    main_window._on_search()
+    main_window.ara(sorgu)
     web.bekle("TA.aktif === 'search'")
 
 

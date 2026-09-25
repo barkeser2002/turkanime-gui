@@ -46,7 +46,7 @@
           onsubmit: function (e) {
             e.preventDefault();
             var sorgu = self.girdi.value.trim();
-            if (sorgu) TA.ac("arama", { sorgu: sorgu });
+            if (sorgu) TA.ac("arama", { sorgu: sorgu, kaynak: self.kaynakFiltresi || "" });
           }
         }, TA.ikon("ara"), this.girdi, this.dugme),
         this.cipler,
@@ -62,8 +62,8 @@
     },
 
     goster: function (p) {
-      if (p.sorgu && p.sorgu !== this.sorgu) {
-        this.baslat(p.sorgu);
+      if (p.sorgu && (p.sorgu !== this.sorgu || (p.kaynak || "") !== this.kaynakFiltresi)) {
+        this.baslat(p.sorgu, p.kaynak || "");
       } else if (!this.sorgu) {
         this.girdi.focus();
       }
@@ -77,9 +77,10 @@
       }));
     },
 
-    baslat: function (sorgu) {
+    baslat: function (sorgu, kaynak) {
       var self = this;
       this.sorgu = sorgu;
+      this.kaynakFiltresi = kaynak || "";
       this.girdi.value = sorgu;
       this.istek = TA.yeniIstek();
       this.kaynaklar = [];
@@ -93,7 +94,7 @@
       TA.bosalt(this.uyari);
       this.ozetYaz();
       var istek = this.istek;
-      TA.cagir("ara", { sorgu: sorgu, istek: istek }).catch(function (e) {
+      TA.cagir("ara", { sorgu: sorgu, istek: istek, kaynak: this.kaynakFiltresi }).catch(function (e) {
         if (istek !== self.istek) return;
         self.suruyor = false;
         self.dugme.disabled = false;
@@ -169,6 +170,7 @@
         metin = toplam ? "“" + this.sorgu + "” için " + toplam + " sonuç · " + kaynakli + " kaynakta"
                        : "“" + this.sorgu + "” için sonuç bulunamadı";
       }
+      if (this.kaynakFiltresi) metin += " · yalnızca " + TA.kaynakEtiketi(this.kaynakFiltresi);
       this.ozet.textContent = metin;
       this.uyariYaz(toplam);
       if (!this.suruyor) {

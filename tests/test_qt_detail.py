@@ -480,7 +480,7 @@ def test_search_result_opens_detail_then_episodes(main_window, web, sahte_boluml
         "kaynak": "TürkAnime", "slug": "cowboy-bebop", "baslik": "Cowboy Bebop",
         "kayit": {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None}})
 
-    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    assert main_window._current_page == "detail"
     web.detay_bekle("TürkAnime", 2)
     assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
     assert main_window.detay.oturum.baglar == {"TürkAnime": "cowboy-bebop"}
@@ -493,10 +493,8 @@ def test_detail_back_returns_to_origin(main_window):
     main_window.show_page("trending")
     # Trend web sayfası: kart tıklaması köprüden `ac("anime", ...)` olarak gelir.
     main_window._web_ac("anime", {"kayit": make_anime()})
-    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    assert main_window._current_page == "detail"
 
     main_window._web_ac("geri", {})          # sayfadaki "← Geri"
-    assert main_window.stack.currentWidget() is main_window.pages["trending"]
-    # Web sayfalarının hepsi aynı widget: dönüş ANAHTARI da doğru olmalı.
     assert main_window._current_page == "trending"
     assert main_window.web.rota == "trending"

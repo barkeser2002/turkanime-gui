@@ -355,28 +355,29 @@ def test_giris_yokken_yonlendirme_gosteriliyor(qtbot, sahte_anilist):
     assert ist.cagrilar == [], "giriş yokken ağ ucuna hiç gidilmemeli"
 
 
-def test_ayarlara_yonlendirme_butonu(qtbot, main_window, sahte_anilist):
+def test_ayarlara_yonlendirme_butonu(qtbot, main_window, web, sahte_anilist):
+    """Girişsiz liste sayfası nereye gidileceğini söylüyor ve götürüyor."""
     sahte_anilist(token=None)
-    page = main_window.pages["watchlist"]
     main_window.show_page("watchlist")
-    page._apply_auth_state()
-
-    qtbot.mouseClick(page.btnGoSettings, Qt.MouseButton.LeftButton)
-    assert main_window.stack.currentWidget() is main_window.pages["settings"]
+    web.bekle("document.querySelector('.giris-paneli').innerText.includes('AniList girişi gerekli')")
+    web.js("document.querySelector('.giris-paneli button').click()")
+    qtbot.waitUntil(lambda: main_window._current_page == "settings", timeout=5000)
+    web.bekle("TA.aktif === 'settings'")
+    # Üst çubuktaki dişli seçili görünüyor.
+    web.bekle("document.querySelector('.ust-ayar').classList.contains('aktif')")
 
 
 def test_kart_tiklamasi_detay_sayfasini_aciyor(qtbot, main_window, web, sahte_anilist):
     ist = sahte_anilist()
     ist.listeler["CURRENT"] = lists(entry(title="Cowboy Bebop"))
 
-    page = main_window.pages["watchlist"]
     main_window.show_page("watchlist")
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+    kartlar = "document.querySelectorAll('[data-sayfa=watchlist] .izgara .kart:not(.iskelet-kart)')"
+    web.bekle(f"{kartlar}.length === 1")
+    web.js(f"{kartlar}[0].click()")
+    qtbot.waitUntil(lambda: main_window._current_page == "detail", timeout=5000)
 
-    qtbot.mouseClick(page.cards()[0], Qt.MouseButton.LeftButton)
-
-    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    assert main_window._current_page == "detail"
     web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-bilgi h1')")
     assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
 
@@ -629,7 +630,8 @@ def test_oauth_basarisi_headeri_guncelliyor(qtbot, main_window, sahte_anilist,
     ist.access_token = "yeni-jeton"
     threading.Thread(target=sunucular[0].on_success, daemon=True).start()
 
-    qtbot.waitUntil(lambda: main_window.lblAniList.text() == "kullanici",
+    qtbot.waitUntil(lambda: getattr(main_window, "anilist_kullanici", {}).get("ad")
+                    == "kullanici",
                     timeout=5000)
 
 

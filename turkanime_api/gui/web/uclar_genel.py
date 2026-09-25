@@ -12,10 +12,17 @@ HEDEFLER = ("sayfa", "anime", "kitaplik", "arama", "sonuc", "geri")
 
 
 class GenelUclar:
-    """``ac``, ``disari_ac``, ``kaynaklar``."""
+    """``ac``, ``disari_ac``, ``kaynaklar``, ``kabuk_durumu``."""
 
-    def __init__(self, ac: Callable[[str, Dict[str, Any]], Any]):
+    def __init__(self, ac: Callable[[str, Dict[str, Any]], Any],
+                 kabuk: Callable[[], Dict[str, Any]] = lambda: {}):
         self._ac = ac
+        self._kabuk = kabuk
+
+    @uc()
+    def kabuk_durumu(self) -> Dict[str, Any]:
+        """Üst/alt çubuğun ilk hâli: sürüm, AniList kullanıcısı, indirme sayısı."""
+        return self._kabuk()
 
     @uc()
     def ac(self, hedef: str, veri: Dict[str, Any] = None) -> bool:

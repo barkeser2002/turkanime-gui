@@ -169,13 +169,19 @@ def test_acilista_geri_yuklenen_isler_sayfada(qtbot, sahte_kaynak, monkeypatch,
     win = MainWindow()
     qtbot.addWidget(win)
     try:
-        sayfa = win.pages["downloads"]
-        assert isinstance(sayfa, DownloadsPage)
-        (satir,) = sayfa._rows.values()
-        assert satir.durum == DURUM_DURAKLATILDI
-        assert satir.btnResume.isVisibleTo(satir) and not satir.btnPause.isVisibleTo(satir)
-        assert sayfa.btnResumeAll.isVisibleTo(sayfa)
+        win.show()
+        # İndirilenler web sayfasında: satır tablosu köprü ucunda tutuluyor.
+        (satir,) = win.indirme_uclari.indirmeler()["satirlar"]
+        assert satir["durum"] == DURUM_DURAKLATILDI
         assert "geri yüklendi" in win.statusBar().currentMessage()
+        from conftest import WebSurucu
+        web = WebSurucu(qtbot, win.web).hazir()
+        win.show_page("downloads")
+        web.bekle("document.querySelectorAll('.indirme-satiri').length === 1")
+        eylemler = web.js("Array.from(document.querySelectorAll('.indirme-eylem button'))"
+                          ".map(b => b.textContent)")
+        assert "Devam et" in eylemler and "Duraklat" not in eylemler
+        assert "Tümünü Sürdür" in web.js("document.querySelector('[data-sayfa=downloads] .sayfa-eylem').innerText")
     finally:
         win._kapanis_onayi = lambda _adet: True
         win.close()

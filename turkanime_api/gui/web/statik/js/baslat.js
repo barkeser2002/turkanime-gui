@@ -14,6 +14,7 @@
   });
 
   TA.baglan().then(function () {
+    if (TA.kabuk !== "qt") TA.kabukKur();
     // Kaynak etiketleri/renkleri (hap ve akordiyon başlıkları için).
     TA.cagir("kaynaklar").then(function (liste) {
       liste.forEach(function (k) { TA.kaynakBilgileri[k.ad] = k; });

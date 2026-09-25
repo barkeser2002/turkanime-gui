@@ -11,7 +11,6 @@ from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.common import kutuphane
 from turkanime_api.gui.qt.pages import detail as detail_mod
 from turkanime_api.gui.qt.pages.detail import FAVORI_EKLE, FAVORI_VAR, DetailPage
-from turkanime_api.gui.qt.pages.library import LibraryPage
 from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 
 
@@ -176,17 +175,29 @@ def iki_seri(izole_ev):
     return izole_ev
 
 
-def test_kitaplik_sayfasi_listeler(iki_seri, qtbot):
-    page = LibraryPage()
-    qtbot.addWidget(page)
-    page.show()
-    qtbot.waitUntil(lambda: len(page.kartlar("devam")) == 2, timeout=5000)
-    assert [k.payload["kimlik"] for k in page.kartlar("devam")] == ["07-ghost", "1234"]
-    assert page.kartlar("favori") == []
-    assert not page.lblBosFavori.isHidden(), "boş favori sekmesi açıklama göstermeli"
-    assert page.lblBosDevam.isHidden()
-    assert page.lstGecmis.count() == 2
-    assert "07-Ghost — 5. Bölüm" in page.lstGecmis.item(0).text()
+def test_kitaplik_sayfasi_listeler(iki_seri, main_window, web, sahte_bolumler):
+    sahte_bolumler({})
+    main_window.show_page("library")
+    kartlar = "document.querySelectorAll('[data-sayfa=library] .izgara .kart')"
+    web.bekle(f"{kartlar}.length === 2")
+    assert web.js(f"Array.from({kartlar}).map(k => k.querySelector('.kart-baslik').textContent)") == [
+        "07-Ghost", "Naruto"]
+    assert "5. Bölüm" in web.js(f"{kartlar}[0].querySelector('.kart-alt').textContent")
+    sayilar = web.js("Array.from(document.querySelectorAll('.sekme')).map(s => s.innerText.replace(/\\s+/g, ' '))")
+    assert sayilar == ["İzlemeye Devam Et 2", "Favoriler 0", "Geçmiş 2"]
+    assert "2 seri izleniyor • 0 favori" in web.js(
+        "document.querySelector('[data-sayfa=library] .sayfa-baslik p').textContent")
+
+    web.js("document.querySelector('.sekme[data-sekme=favori]').click()")
+    web.bekle("document.querySelector('.kitaplik-govde').innerText.includes('Favori yok')")
+
+    web.js("document.querySelector('.sekme[data-sekme=gecmis]').click()")
+    web.bekle("document.querySelectorAll('.gecmis-satiri').length === 2")
+    ilk = web.js("document.querySelector('.gecmis-satiri').innerText")
+    assert "07-Ghost" in ilk and "5. Bölüm" in ilk and "TürkAnime (arşiv)" in ilk
+    web.js("document.querySelector('.gecmis-satiri').click()")
+    web.qtbot.waitUntil(lambda: main_window._current_page == "detail", timeout=5000)
+    assert main_window.detay.oturum.baglar == {"TürkAnime": "07-ghost"}
 
 
 def test_kart_detayi_bagli_acip_bolumleri_getiriyor(
@@ -202,12 +213,12 @@ def test_kart_detayi_bagli_acip_bolumleri_getiriyor(
         {"title": "07-Ghost 1. Bölüm", "obj": Bolum("07-ghost", "07-ghost-1")}]})
 
     main_window.show_page("library")
-    page = main_window.pages["library"]
-    qtbot.waitUntil(lambda: len(page.kartlar("devam")) == 2, timeout=5000)
-    page.kartlar("devam")[0].clicked.emit(page.kartlar("devam")[0].payload)
+    kartlar = "document.querySelectorAll('[data-sayfa=library] .izgara .kart')"
+    web.bekle(f"{kartlar}.length === 2")
+    web.js(f"{kartlar}[0].click()")
 
-    assert main_window.detay.oturum.baglar == {"TürkAnime": "07-ghost"}
     web.detay_bekle("TürkAnime", 1)
+    assert main_window.detay.oturum.baglar == {"TürkAnime": "07-ghost"}
     assert istenen == [("TürkAnime", "07-ghost")]
     assert main_window.detay.oturum.bolumler["TürkAnime"][0]["kimlik"] == "07-ghost"
 
@@ -245,8 +256,18 @@ def test_bos_kitaplikta_serit_gizli(izole_ev, main_window, web):
     assert web.js("document.getElementById('devam').hidden") is True
 
 
-def test_menude_kitaplik_ve_bilinmeyen_anahtar_korumasi(main_window):
-    assert isinstance(main_window.pages["library"], LibraryPage)
-    assert main_window._nav_buttons["library"].text() == "Kitaplığım"
-    with pytest.raises(ValueError):
-        main_window._make_page("yok-boyle", "Yok")
+def test_menude_kitaplik_ve_bilinmeyen_anahtar_korumasi(main_window, web):
+    """Her sayfa anahtarının web'de bir rotası var; bilinmeyen anahtar yok sayılır."""
+    from turkanime_api.gui.qt.app import NAV_ITEMS
+    assert main_window.pages["library"] is main_window.web
+    assert web.js("document.querySelector('.menu-ogesi[data-git=library]').textContent") \
+        == "Kitaplığım"
+    for key, _etiket in NAV_ITEMS:
+        assert web.js(f"TA.git({key!r})") is True, f"{key} rotası kayıtlı değil"
+    main_window.show_page("home")
+    main_window.show_page("yok-boyle")
+    assert main_window._current_page == "home"
+    main_window._web_ac("sayfa", {"ad": "yok-boyle"})
+    assert main_window._current_page == "home"
+
+

@@ -330,7 +330,7 @@ def test_card_click_opens_detail_page(main_window, web, fake_sources):
     web.js(f"{kartlar}[0].click()")
 
     web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-bilgi h1')")
-    assert main_window.stack.currentWidget() is main_window.pages["detail"]
+    assert main_window._current_page == "detail"
     assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
     turler = web.js("Array.from(document.querySelectorAll('.etiket-blok .hap')).map(e => e.textContent)")
     assert turler == ["Aksiyon"]
