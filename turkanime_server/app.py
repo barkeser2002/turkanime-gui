@@ -2,47 +2,83 @@
 TurkAnime API Server
 ====================
 
-Tüm anime kaynaklarını (animecix, anizle, tranime, openani, tranimaci) tek
-HTTP API arkasında birleştiren Flask uygulaması. Kullanıcının anime-kaynak
-eşleştirmelerini ve bölüm izleme/indirme durumunu MySQL'de tutar.
+Kaynak kaydındaki (`turkanime_api/sources/kayit.py`) taranabilir kaynakları
+tek HTTP API arkasında birleştiren Flask uygulaması. Kullanıcının
+anime-kaynak eşleştirmelerini MySQL'de tutar.
+
+Kaynak tablosu KAYITTAN TÜRETİLİR (`kayit.tarayici_kaynaklari()`, sunucu
+tarayıcısıyla aynı liste); burada elle yazılmış ikinci bir liste yok. Arşiv
+kaynağı (TürkAnime) listede değil: imaj `arsiv/` taşımıyor.
 
 Endpoints
 ---------
 
 Genel:
-    GET  /health                       — sağlık kontrolü
-    GET  /sources                      — desteklenen kaynakların listesi
+    GET  /health                       — sağlık: veritabanını gerçekten yoklar
+                                          (erişilemiyorsa 503 "degraded")
+    GET  /health/live                  — canlılık: süreç ayakta mı (hep 200)
+    GET  /sources                      — yüklenen kaynaklar ve uçları
     GET  /search?q=&source=&fuzzy=     — tüm veya tek kaynakta multi-dil arama
                                           (fuzzy=true → %95 altı adayları da döndür)
 
-Kaynak başına (animecix, anizle, tranime, openani, tranimaci):
+Kaynak başına (`/sources`'taki anahtarlar: animecix, anizle, tranime,
+openani, tranimaci; kayıttaki etiket de olur: "TRAnimeİzle"):
     GET  /{source}/search?q=
-    GET  /{source}/episodes/{slug}
-    GET  /{source}/streams/{episode_slug}
+    GET  /{source}/episodes/{kimlik}
+    GET  /{source}/streams/{bolum_kimligi}
+
+    AnimeciX bölüm kimliği bir embed YOLU; içinde "?" ya da "&" varsa istemci
+    yüzde-kodlamalı (%3F, %26).
 
 DB:
-    GET   /anime-matches?limit=
-    POST  /anime-matches                 {source, anime_id, anime_title}
+    GET   /anime-matches?limit=          (limit en çok 500)
+    POST  /anime-matches                 {source, anime_id, anime_title, aliases?}
     GET   /anime-matches/search?q=
     POST  /user/episode-status           {user_id, episode_id, watched, downloaded}
     GET   /user/{user_id}/episode-status
 
-Çevre değişkenleri:
-    PORT          — varsayılan 34665
-    DEBUG         — "true" yaparsanız debug modu
-    DB_HOST       — varsayılan ip.bariskeser.com
-    DB_USER       — varsayılan turkanime-gui
-    DB_PASSWORD   — varsayılan boş
-    DB_NAME       — varsayılan turkanime-gui
+    `/user/...` uçları ESKİ: yalnızca v9.4.3 ve öncesi (CustomTkinter)
+    istemciler çağırıyor, v10 istemcisi hiç kullanmıyor. Eski kurulumlar
+    bozulmasın diye duruyor; tablo da silinmiyor.
+
+Yazma uçları (iki POST):
+    - Hız sınırı: istemci adresi başına dakikada API_YAZMA_SINIRI istek
+      (aşılınca 429).
+    - `/user/episode-status`: API_YAZMA_ANAHTARI ayarlıysa `X-API-Key`
+      başlığı onunla eşleşmeli (401). `/anime-matches` BİLEREK anahtarsız:
+      masaüstü istemcisi eşleşmeyi anahtarsız gönderiyor. Onu kayıtta olmayan
+      kaynak adı ve şema sınırlarını aşan alan reddi (400) koruyor.
+
+Çevre değişkenleri (örnek: `.env.example`):
+    PORT               — varsayılan 34665
+    DEBUG              — "true" yaparsanız debug modu (yalnızca `python app.py`)
+    DB_HOST, DB_USER, DB_NAME — ZORUNLU, varsayılan yok. Eksikse sunucu
+                         açılmaz (`_bootstrap`), DB uçları 503 döner.
+    DB_PASSWORD        — varsayılan boş
+    CORS_ORIGINS       — virgülle ayrılmış izinli kökenler. Boşsa CORS başlığı
+                         hiç verilmez (masaüstü istemcisi CORS'a bakmaz).
+    API_YAZMA_ANAHTARI — isteğe bağlı; ayarlıysa `/user/episode-status` ister.
+    API_YAZMA_SINIRI   — dakikada yazma isteği (varsayılan 30, 0 = kapalı).
+    TRUST_PROXY        — "1": istemci adresini `CF-Connecting-IP`'den al
+                         (Cloudflare arkasında `remote_addr` kenar sunucusudur).
+                         Vekil yokken AÇMAYIN: başlığı herkes yazabilir.
+
+Üretimde gunicorn çalıştırır (`gunicorn.conf.py`); `python app.py` yerel
+geliştirme içindir.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import math
 import os
 import sys
+import threading
+import time
+from collections import deque
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from functools import wraps
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 # Repo kökünü sys.path'a ekle ki turkanime_api modülü import edilebilsin
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +88,8 @@ if _ROOT not in sys.path:
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+from turkanime_api.sources import kayit
 
 try:
     import mysql.connector
@@ -73,84 +111,35 @@ log = logging.getLogger("turkanime-api")
 # ─────────────────────────────────────────────────────────────────────────────
 # Source adapter registry
 # ─────────────────────────────────────────────────────────────────────────────
-def _safe_import():
-    """Adapter modüllerini güvenle yükle — biri patlasa diğerleri çalışsın."""
-    registry: Dict[str, Dict[str, Any]] = {}
+def kaynak_tablosu() -> Dict[str, Dict[str, Any]]:
+    """Kaynak tablosunu kayıttan türet — biri patlasa diğerleri çalışsın.
 
-    try:
-        from turkanime_api.sources.animecix import search_animecix
-        registry["animecix"] = {
-            "search": search_animecix,
-            "episodes": None,   # CixAnime ile yapılıyor — özel akış
-            "streams": None,
+    Eskiden burada beş kaynak elle import ediliyordu (`_safe_import`). Kayda
+    eklenen kaynak API'de görünmüyordu ve AnimeciX, istemcide bölüm/akış
+    uçları çalışırken burada "bölüm listesi desteklemiyor" (405) diyordu.
+    Artık liste ve uçlar `kayit.tarayici_kaynaklari()`'ndan geliyor; sunucu
+    tarayıcısı (`crawler/kaynaklar.py`) da aynı listeyi kullanıyor.
+
+    Anahtar modül adı ("tranime", "openani"): eski URL'ler aynen çalışıyor.
+    """
+    tablo: Dict[str, Dict[str, Any]] = {}
+    for kaynak in kayit.tarayici_kaynaklari():
+        try:
+            uclar = kaynak.uclar()
+        except Exception as e:  # bir modülün import hatası API'yi düşürmesin
+            log.warning("%s yüklenemedi: %s", kaynak.ad, e)
+            continue
+        tablo[kaynak.modul] = {
+            "search": (lambda q, _k=kaynak: _k.ara(q, limit=20)),
+            "episodes": uclar.bolumler,
+            "streams": uclar.akislar,
+            "kaynak": kaynak,
         }
-    except Exception as e:
-        log.warning("animecix yüklenemedi: %s", e)
-
-    try:
-        from turkanime_api.sources.anizle import (
-            search_anizle, get_anime_episodes, get_episode_streams,
-        )
-        registry["anizle"] = {
-            "search": search_anizle,
-            "episodes": get_anime_episodes,
-            "streams": get_episode_streams,
-        }
-    except Exception as e:
-        log.warning("anizle yüklenemedi: %s", e)
-
-    try:
-        from turkanime_api.sources.tranime import (
-            search_tranime, get_anime_episodes as ge,
-            get_episode_details,
-        )
-        def _tranime_streams(ep_slug):
-            d = get_episode_details(ep_slug)
-            if not d:
-                return []
-            streams = []
-            for s in d.get_sources():
-                iframe = s.get_iframe()
-                if iframe:
-                    streams.append({"url": iframe, "label": s.name, "type": "iframe"})
-            return streams
-        registry["tranime"] = {
-            "search": search_tranime,
-            "episodes": lambda slug: [(e.slug, e.title) for e in ge(slug) or []],
-            "streams": _tranime_streams,
-        }
-    except Exception as e:
-        log.warning("tranime yüklenemedi: %s", e)
-
-    try:
-        from turkanime_api.sources.openani import (
-            search_openani, get_anime_episodes, get_episode_streams,
-        )
-        registry["openani"] = {
-            "search": search_openani,
-            "episodes": get_anime_episodes,
-            "streams": get_episode_streams,
-        }
-    except Exception as e:
-        log.warning("openani yüklenemedi: %s", e)
-
-    try:
-        from turkanime_api.sources.tranimaci import (
-            search_tranimaci, get_anime_episodes, get_episode_streams,
-        )
-        registry["tranimaci"] = {
-            "search": search_tranimaci,
-            "episodes": get_anime_episodes,
-            "streams": get_episode_streams,
-        }
-    except Exception as e:
-        log.warning("tranimaci yüklenemedi: %s", e)
-
-    log.info("Yüklenen kaynaklar: %s", ", ".join(registry.keys()))
-    return registry
+    log.info("Yüklenen kaynaklar: %s", ", ".join(tablo))
+    return tablo
 
 
-SOURCES = _safe_import()
+SOURCES = kaynak_tablosu()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Title matching utilities
@@ -174,26 +163,157 @@ except Exception as e:
 # Flask app
 # ─────────────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-CORS(app)
 
+
+def cors_kokenleri(ham: str) -> List[str]:
+    """`CORS_ORIGINS` değerinden izinli kökenler ("a, b" → ["a", "b"])."""
+    return [x.strip() for x in (ham or "").split(",") if x.strip()]
+
+
+# Eskiden `CORS(app)`: her kökene her yöntem açıktı, yabancı bir sayfa
+# ziyaretçinin tarayıcısından yazma uçlarına istek atabiliyordu. Tarayıcıda
+# çalışan bir istemcimiz yok (masaüstü uygulaması CORS'a bakmaz), yani boş
+# liste güvenli varsayılan: hiçbir CORS başlığı verilmez.
+CORS_KOKENLERI = cors_kokenleri(os.environ.get("CORS_ORIGINS", ""))
+if CORS_KOKENLERI:
+    CORS(app, origins=CORS_KOKENLERI)
+
+# Varsayılan YOK: eskiden işletmecinin gerçek sunucusu varsayılandı, yani
+# ayarsız bir kopya başkasının veritabanına bağlanmaya çalışıyordu.
 DB_CONFIG = {
-    "host": os.environ.get("DB_HOST", "ip.bariskeser.com"),
-    "user": os.environ.get("DB_USER", "turkanime-gui"),
+    "host": os.environ.get("DB_HOST", ""),
+    "user": os.environ.get("DB_USER", ""),
     "password": os.environ.get("DB_PASSWORD", ""),
-    "database": os.environ.get("DB_NAME", "turkanime-gui"),
+    "database": os.environ.get("DB_NAME", ""),
     "charset": "utf8mb4",
     "collation": "utf8mb4_unicode_ci",
+    # /health veritabanını yokluyor; HEALTHCHECK 10 sn'de kesiyor.
+    "connection_timeout": 3,
 }
+_DB_ORTAM_ADLARI = {"host": "DB_HOST", "user": "DB_USER", "database": "DB_NAME"}
+_db_eksik_uyarildi = False
+
+
+def db_eksikleri() -> List[str]:
+    """Boş bırakılmış zorunlu DB değişkenleri (ortam adıyla)."""
+    return [ad for alan, ad in _DB_ORTAM_ADLARI.items() if not DB_CONFIG.get(alan)]
 
 
 def _db():
+    global _db_eksik_uyarildi
     if not _HAS_MYSQL:
+        return None
+    eksik = db_eksikleri()
+    if eksik:
+        if not _db_eksik_uyarildi:
+            log.error("Veritabanı ayarlanmamış (%s boş); DB uçları 503 döner.",
+                      ", ".join(eksik))
+            _db_eksik_uyarildi = True
         return None
     try:
         return mysql.connector.connect(**DB_CONFIG)
     except MySQLError as e:
         log.warning("DB bağlantı hatası: %s", e)
         return None
+
+
+def _kapat(conn) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Yazma uçlarının korunması: hız sınırı + isteğe bağlı anahtar
+# ─────────────────────────────────────────────────────────────────────────────
+class HizSiniri:
+    """Kayan pencere: anahtar başına ``pencere`` saniyede en çok ``sinir`` istek.
+
+    Süreç içi bellekte tutulur. gunicorn'da her işçinin kendi sayacı var,
+    yani gerçek tavan işçi sayısı × ``sinir``. Flask-Limiter + Redis gibi ağır
+    bir bağımlılık yerine bilinçli seçim; kesin bir tavan gerekiyorsa önündeki
+    vekilde (Cloudflare kuralı) uygulanmalı.
+    """
+
+    AZAMI_ANAHTAR = 10_000
+
+    def __init__(self, sinir: int, pencere: float = 60.0,
+                 saat: Callable[[], float] = time.monotonic):
+        self.sinir = sinir
+        self.pencere = pencere
+        self._saat = saat
+        self._kayitlar: Dict[str, Deque[float]] = {}
+        self._kilit = threading.Lock()
+
+    def izin_ver(self, anahtar: str) -> bool:
+        if self.sinir <= 0:
+            return True
+        simdi = self._saat()
+        with self._kilit:
+            if len(self._kayitlar) > self.AZAMI_ANAHTAR:
+                self._bayatlari_at(simdi)
+            kuyruk = self._kayitlar.setdefault(anahtar, deque())
+            while kuyruk and simdi - kuyruk[0] >= self.pencere:
+                kuyruk.popleft()
+            if len(kuyruk) >= self.sinir:
+                return False
+            kuyruk.append(simdi)
+            return True
+
+    def _bayatlari_at(self, simdi: float) -> None:
+        """Penceresi tamamen geçmiş adresleri unut (bellek sınırsız büyümesin)."""
+        for anahtar in [a for a, k in self._kayitlar.items()
+                        if not k or simdi - k[-1] >= self.pencere]:
+            del self._kayitlar[anahtar]
+
+
+def _tamsayi_ortam(ad: str, varsayilan: int) -> int:
+    try:
+        return int(os.environ.get(ad, "") or varsayilan)
+    except ValueError:
+        log.warning("%s tamsayı değil; varsayılan %d kullanılıyor", ad, varsayilan)
+        return varsayilan
+
+
+YAZMA_ANAHTARI = os.environ.get("API_YAZMA_ANAHTARI", "")
+VEKIL_GUVENILIR = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+yazma_siniri = HizSiniri(_tamsayi_ortam("API_YAZMA_SINIRI", 30))
+
+
+def istemci_adresi() -> str:
+    """Hız sınırının anahtarı. Vekil başlığına yalnızca TRUST_PROXY ile güvenilir."""
+    if VEKIL_GUVENILIR:
+        cf = request.headers.get("CF-Connecting-IP", "").strip()
+        if cf:
+            return cf
+    return request.remote_addr or "?"
+
+
+def _anahtar_gecerli() -> bool:
+    if not YAZMA_ANAHTARI:
+        return True
+    verilen = request.headers.get("X-API-Key", "")
+    return hmac.compare_digest(verilen.encode("utf-8"), YAZMA_ANAHTARI.encode("utf-8"))
+
+
+def yazma_korumasi(anahtar_ister: bool = False):
+    """POST uçlarına hız sınırı (429) ve istenirse anahtar denetimi (401).
+
+    Sınır anahtardan ÖNCE sayılır: yanlış anahtarla sınırsız deneme yapılamasın.
+    """
+    def sar(fn):
+        @wraps(fn)
+        def ic(*args, **kwargs):
+            if not yazma_siniri.izin_ver(istemci_adresi()):
+                yanit = jsonify({"error": "Çok fazla istek; bir dakika sonra deneyin"})
+                yanit.headers["Retry-After"] = str(int(yazma_siniri.pencere))
+                return yanit, 429
+            if anahtar_ister and not _anahtar_gecerli():
+                return jsonify({"error": "Geçersiz ya da eksik X-API-Key"}), 401
+            return fn(*args, **kwargs)
+        return ic
+    return sar
 
 
 def _ensure_schema():
@@ -286,18 +406,55 @@ def _annotate_episodes(eps: List[Dict[str, str]]) -> List[Dict[str, Any]]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Generic endpoints
 # ─────────────────────────────────────────────────────────────────────────────
+def db_durumu() -> str:
+    """Veritabanını gerçekten yokla: "ok" ya da okunur bir sebep.
+
+    Hata metni bilerek yalnızca sınıf adı: MySQL mesajı sunucu adını ve
+    kullanıcı adını taşıyabiliyor, /health ise herkese açık.
+    """
+    if not _HAS_MYSQL:
+        return "sürücü yok"
+    eksik = db_eksikleri()
+    if eksik:
+        return "ayarlanmamış: " + ", ".join(eksik)
+    conn = _db()
+    if not conn:
+        return "erişilemiyor"
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        return "ok"
+    except Exception as e:
+        return f"erişilemiyor: {type(e).__name__}"
+    finally:
+        _kapat(conn)
+
+
 @app.route("/health")
 def health():
+    # Eskiden sabit "healthy" dönüyordu: veritabanı düşse de, hiç ayarlanmasa
+    # da. Artık yalnızca DB yanıt verirse 200; değilse aynı gövde 503 ile.
+    db = db_durumu()
+    saglam = db == "ok"
     return jsonify({
-        "status": "healthy",
+        "status": "healthy" if saglam else "degraded",
         "timestamp": datetime.utcnow().isoformat() + "Z",
+        "db": db,
         "sources": list(SOURCES.keys()),
         "features": {
             "title_match": _HAS_MATCH,
             "episode_parser": _HAS_PARSER,
             "mysql": _HAS_MYSQL,
         },
-    })
+    }), (200 if saglam else 503)
+
+
+@app.route("/health/live")
+def health_live():
+    """Canlılık: süreç istek karşılıyor mu. Konteyner HEALTHCHECK'i buna bakar;
+    DB kesintisi API konteynerini "unhealthy" yapıp yeniden başlatmamalı."""
+    return jsonify({"status": "alive"})
 
 
 @app.route("/sources")
@@ -305,12 +462,24 @@ def list_sources():
     return jsonify([
         {
             "key": k,
+            "name": v["kaynak"].ad if v.get("kaynak") else k,
             "has_search": v.get("search") is not None,
             "has_episodes": v.get("episodes") is not None,
             "has_streams": v.get("streams") is not None,
         }
         for k, v in SOURCES.items()
     ])
+
+
+def kaynak_anahtari(ad: str) -> Optional[str]:
+    """URL'deki kaynak adını tablo anahtarına çevir; bilinmiyorsa None.
+
+    Kayıttaki her ad kabul edilir: modül ("tranime"), kanonik ad ya da etiket
+    ("TRAnimeİzle", büyük/küçük harf ve aksandan bağımsız).
+    """
+    kaynak = kayit.bul(ad)
+    anahtar = kaynak.modul if kaynak is not None and kaynak.modul else ad.lower()
+    return anahtar if anahtar in SOURCES else None
 
 
 THRESHOLD_HATASI = "threshold 0..1 arası sayı olmalı"
@@ -330,7 +499,7 @@ def universal_search():
     if not q:
         return jsonify({"error": "q gerekli"}), 400
 
-    only = request.args.get("source", "").strip().lower()
+    only = request.args.get("source", "").strip()
     fuzzy = request.args.get("fuzzy", "false").lower() in ("1", "true", "yes")
     # `float()` doğrudan çağrılınca "abc" ya da boş değer ValueError fırlatıp
     # 500 dönüyordu; 1.5, -1, nan, inf ise sessizce kabul ediliyordu (eşik
@@ -345,7 +514,8 @@ def universal_search():
     if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
         return jsonify({"error": THRESHOLD_HATASI}), 400
 
-    targets = [only] if only and only in SOURCES else list(SOURCES.keys())
+    secilen = kaynak_anahtari(only) if only else None
+    targets = [secilen] if secilen else list(SOURCES.keys())
     by_source: Dict[str, Any] = {}
 
     for src in targets:
@@ -397,8 +567,8 @@ def _mr_to_dict(mr) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route("/<source>/search")
 def source_search(source: str):
-    src = source.lower()
-    if src not in SOURCES:
+    src = kaynak_anahtari(source)
+    if src is None:
         return jsonify({"error": f"Bilinmeyen kaynak: {source}"}), 404
     q = request.args.get("q", "").strip()
     if not q:
@@ -415,12 +585,18 @@ def source_search(source: str):
 
 @app.route("/<source>/episodes/<path:slug>")
 def source_episodes(source: str, slug: str):
-    src = source.lower()
-    if src not in SOURCES:
+    src = kaynak_anahtari(source)
+    if src is None:
         return jsonify({"error": f"Bilinmeyen kaynak: {source}"}), 404
     fn = SOURCES[src].get("episodes")
     if not fn:
         return jsonify({"error": f"{src} bölüm listesi desteklemiyor"}), 405
+    # Kimliği bu kaynakta açılamayacaksa (AnimeciX sayısal ister) siteye hiç
+    # gitmeden söyle: istemcideki mesajın aynısı.
+    kaynak = SOURCES[src].get("kaynak")
+    hata = kaynak.kimlik_denetle(slug) if kaynak is not None else None
+    if hata:
+        return jsonify({"error": hata}), 400
     try:
         eps = _norm_results(fn(slug))
         return jsonify(_annotate_episodes(eps))
@@ -431,8 +607,8 @@ def source_episodes(source: str, slug: str):
 
 @app.route("/<source>/streams/<path:episode_slug>")
 def source_streams(source: str, episode_slug: str):
-    src = source.lower()
-    if src not in SOURCES:
+    src = kaynak_anahtari(source)
+    if src is None:
         return jsonify({"error": f"Bilinmeyen kaynak: {source}"}), 404
     fn = SOURCES[src].get("streams")
     if not fn:
@@ -450,7 +626,7 @@ def source_streams(source: str, episode_slug: str):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route("/anime-matches", methods=["GET"])
 def get_anime_matches():
-    limit = request.args.get("limit", 100, type=int)
+    limit = max(1, min(request.args.get("limit", 100, type=int), AZAMI_LIMIT))
     conn = _db()
     if not conn:
         return jsonify({"error": "Veritabanı bağlantı hatası"}), 503
@@ -467,20 +643,52 @@ def get_anime_matches():
         except Exception: pass
 
 
+AZAMI_LIMIT = 500
+# Şemadaki sütun genişlikleri (`_ensure_schema`); aliases TEXT ama sınırsız
+# değil: istemci birkaç başlık gönderiyor, fazlası kötüye kullanım.
+ALAN_SINIRLARI = {"anime_id": 150, "anime_title": 500, "aliases": 2000}
+DB_HATASI = "Veritabanı hatası"
+
+
+def _metin_alani(data: Dict[str, Any], ad: str) -> Optional[str]:
+    """JSON alanını metne çevir; metin/sayı değilse ya da boşsa None."""
+    deger = data.get(ad)
+    if isinstance(deger, bool) or not isinstance(deger, (str, int)):
+        return None
+    return str(deger).strip() or None
+
+
 @app.route("/anime-matches", methods=["POST"])
+@yazma_korumasi()
 def save_anime_match():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON nesnesi bekleniyor"}), 400
+    alanlar: Dict[str, str] = {}
     for f in ("source", "anime_id", "anime_title"):
-        if not data.get(f):
+        deger = _metin_alani(data, f)
+        if deger is None:
             return jsonify({"error": f"{f} gerekli"}), 400
+        alanlar[f] = deger
+    # Kayıtta olmayan kaynak adı reddedilir; eski ad ("AnimeDepo") kanonik
+    # adla yazılır ki aynı eşleşme iki adla birikmesin.
+    kaynak = kayit.bul(alanlar["source"])
+    if kaynak is None:
+        return jsonify({"error": f"Bilinmeyen kaynak: {alanlar['source']}"}), 400
+    aliases = data.get("aliases") or ""
+    if isinstance(aliases, list) and all(isinstance(a, str) for a in aliases):
+        aliases = "|".join(aliases)
+    if not isinstance(aliases, str):
+        return jsonify({"error": "aliases metin ya da metin listesi olmalı"}), 400
+    alanlar["aliases"] = aliases
+    for ad, sinir in ALAN_SINIRLARI.items():
+        if len(alanlar[ad]) > sinir:
+            return jsonify({"error": f"{ad} en çok {sinir} karakter olabilir"}), 400
     conn = _db()
     if not conn:
         return jsonify({"error": "Veritabanı bağlantı hatası"}), 503
     try:
         cur = conn.cursor()
-        aliases = data.get("aliases") or ""
-        if isinstance(aliases, list):
-            aliases = "|".join(aliases)
         cur.execute("""
             INSERT INTO anime_matches (source, anime_id, anime_title, aliases)
             VALUES (%s, %s, %s, %s)
@@ -488,14 +696,15 @@ def save_anime_match():
                 anime_title = VALUES(anime_title),
                 aliases = VALUES(aliases),
                 updated_at = CURRENT_TIMESTAMP
-        """, (data["source"], data["anime_id"], data["anime_title"], aliases))
+        """, (kaynak.ad, alanlar["anime_id"], alanlar["anime_title"], aliases))
         conn.commit()
         return jsonify({"success": True})
-    except MySQLError as e:
-        return jsonify({"error": str(e)}), 500
+    except MySQLError:
+        # `str(e)` sunucu/kullanıcı adını ve şemayı dışarı sızdırıyordu.
+        log.exception("anime-matches yazılamadı")
+        return jsonify({"error": DB_HATASI}), 500
     finally:
-        try: conn.close()
-        except Exception: pass
+        _kapat(conn)
 
 
 @app.route("/anime-matches/search")
@@ -524,11 +733,26 @@ def search_anime_matches():
 # ─────────────────────────────────────────────────────────────────────────────
 # User episode status (DB)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ESKİ UÇLAR: yalnızca v9.4.3 ve öncesi istemciler çağırıyor (v10 kullanmıyor).
+# Silinmedi: eski kurulumların hata yutan istemcisi 404'ü sessizce yerdi.
+# Tablo da DROP edilmiyor. API_YAZMA_ANAHTARI ayarlanırsa yazma anahtar ister.
 @app.route("/user/episode-status", methods=["POST"])
+@yazma_korumasi(anahtar_ister=True)
 def save_user_episode_status():
     data = request.get_json(silent=True) or {}
-    if not data.get("user_id") or not data.get("episode_id"):
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON nesnesi bekleniyor"}), 400
+    user_id = _metin_alani(data, "user_id")
+    episode_id = _metin_alani(data, "episode_id")
+    if not user_id or not episode_id:
         return jsonify({"error": "user_id ve episode_id gerekli"}), 400
+    if len(user_id) > 64 or len(episode_id) > 500:
+        return jsonify({"error": "user_id en çok 64, episode_id en çok 500 karakter"}), 400
+    try:
+        konum = int(data.get("position_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "position_seconds tamsayı olmalı"}), 400
     conn = _db()
     if not conn:
         return jsonify({"error": "Veritabanı bağlantı hatası"}), 503
@@ -544,18 +768,18 @@ def save_user_episode_status():
                 position_seconds = VALUES(position_seconds),
                 updated_at = CURRENT_TIMESTAMP
         """, (
-            data["user_id"], data["episode_id"],
+            user_id, episode_id,
             bool(data.get("watched", False)),
             bool(data.get("downloaded", False)),
-            int(data.get("position_seconds", 0) or 0),
+            konum,
         ))
         conn.commit()
         return jsonify({"success": True})
-    except MySQLError as e:
-        return jsonify({"error": str(e)}), 500
+    except MySQLError:
+        log.exception("user_episode_status yazılamadı")
+        return jsonify({"error": DB_HATASI}), 500
     finally:
-        try: conn.close()
-        except Exception: pass
+        _kapat(conn)
 
 
 @app.route("/user/<user_id>/episode-status")
@@ -587,6 +811,14 @@ def get_user_episode_status(user_id: str):
 # Boot
 # ─────────────────────────────────────────────────────────────────────────────
 def _bootstrap():
+    """Açılış: DB ayarı eksikse sunucu hiç kalkmasın, varsa şemayı kur.
+
+    gunicorn bunu ana süreçte bir kez çağırır (`gunicorn.conf.py` →
+    `on_starting`); `python app.py` de aşağıda çağırır.
+    """
+    eksik = db_eksikleri()
+    if eksik:
+        raise SystemExit(f"{', '.join(eksik)} zorunlu (bkz. .env.example)")
     _ensure_schema()
 
 

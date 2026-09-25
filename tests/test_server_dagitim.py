@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
 
+import pytest
+
 KOK = Path(__file__).resolve().parents[1]
 SUNUCU = KOK / "turkanime_server"
 
@@ -126,6 +128,7 @@ def test_kaynak_kodu_build_contextte_kaliyor():
     for gerekli in ("turkanime_server/requirements.txt",
                     "turkanime_server/Dockerfile",
                     "turkanime_server/app.py",
+                    "turkanime_server/gunicorn.conf.py",
                     "turkanime_server/crawler/tarayici.py",
                     "turkanime_server/yayinci/yayinci.py",
                     "turkanime_server/.env.example",
@@ -353,3 +356,101 @@ def test_dockerfile_git_ikilisini_kuruyor():
     kurulum = ham.split("apt-get install", 1)[1].split("rm -rf", 1)[0]
     assert re.search(r"^\s*git\s*\\?$", kurulum, re.M), \
         "Dockerfile git kurmuyor — yayıncı `git` ikilisine muhtaç"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Konteyner çalışma biçimi: kullanıcı, WSGI sunucusu, healthcheck, sırlar
+# ─────────────────────────────────────────────────────────────────────────────
+def _dockerfile_komutlari() -> List[Tuple[str, str]]:
+    """Dockerfile talimatları (`\\` ile bölünmüş satırlar birleşik)."""
+    ham = (SUNUCU / "Dockerfile").read_text(encoding="utf-8")
+    ham = re.sub(r"\\\n", " ", ham)
+    out: List[Tuple[str, str]] = []
+    for satir in ham.splitlines():
+        satir = satir.strip()
+        if not satir or satir.startswith("#"):
+            continue
+        komut, _, arguman = satir.partition(" ")
+        out.append((komut.upper(), arguman.strip()))
+    return out
+
+
+def test_dockerfile_root_olmayan_kullaniciyla_calisiyor():
+    """Üç servis (API, tarayıcı, yayıncı) bu imajla çalışıyor; eskiden hepsi root'tu."""
+    komutlar = _dockerfile_komutlari()
+    kullanicilar = [(i, a) for i, (k, a) in enumerate(komutlar) if k == "USER"]
+    assert kullanicilar, "Dockerfile'da USER yok — süreçler root olarak çalışır"
+    son_i, son = kullanicilar[-1]
+    kullanici = son.split(":")[0]
+    assert kullanici not in ("root", "0"), f"son USER root: {son}"
+    cmd_i = max(i for i, (k, _) in enumerate(komutlar) if k == "CMD")
+    assert son_i < cmd_i, "USER, CMD'den önce gelmeli"
+    kurulum = " ".join(a for k, a in komutlar if k == "RUN")
+    assert re.search(rf"chown\s+{re.escape(kullanici)}\S*\s+/veri", kurulum), \
+        "/veri yeni kullanıcıya verilmeli; yoksa tarayıcı arşivi yazamaz"
+    assert "--create-home" in kurulum, "yayıncının ssh'ı ~/.ssh/known_hosts yazıyor"
+
+
+def test_dockerfile_gunicorn_ile_calisiyor():
+    """`python app.py` Werkzeug'un geliştirme sunucusunu açıyordu."""
+    cmd = [a for k, a in _dockerfile_komutlari() if k == "CMD"][-1]
+    assert "gunicorn" in cmd and "app.py" not in cmd, cmd
+    assert "gunicorn" in _requirements()
+
+
+def test_gunicorn_acilista_bootstrap_cagiriyor():
+    """gunicorn `app`'i import ediyor; `__main__` bloğu (şema kurulumu) hiç koşmaz."""
+    agac = ast.parse((SUNUCU / "gunicorn.conf.py").read_text(encoding="utf-8"))
+    kanca = next((d for d in agac.body
+                  if isinstance(d, ast.FunctionDef) and d.name == "on_starting"), None)
+    assert kanca is not None, "gunicorn.conf.py on_starting tanımlamıyor"
+    cagrilar = {c.func.id for c in ast.walk(kanca)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "_bootstrap" in cagrilar
+
+
+def _compose() -> dict:
+    yaml = pytest.importorskip("yaml")
+    return yaml.safe_load((SUNUCU / "docker-compose.yml").read_text(encoding="utf-8"))
+
+
+def test_tek_atimlik_servislerde_healthcheck_kapali():
+    """Tarayıcı/yayıncı HTTP dinlemiyor; imajın HEALTHCHECK'i onları "unhealthy" yapardı."""
+    servisler = _compose()["services"]
+    for ad in ("turkanime-crawler", "turkanime-yayinci"):
+        assert servisler[ad].get("healthcheck", {}).get("disable") is True, ad
+    assert servisler["turkanime-api"]["healthcheck"]["test"], "API'nin healthcheck'i kalmalı"
+
+
+def test_konteyner_healthchecki_canlilik_ucuna_bakiyor():
+    """/health DB'yi de yokluyor; DB kesintisi API konteynerini yeniden başlatmamalı."""
+    hc = [a for k, a in _dockerfile_komutlari() if k == "HEALTHCHECK"][-1]
+    assert "/health/live" in hc, hc
+    test = " ".join(_compose()["services"]["turkanime-api"]["healthcheck"]["test"])
+    assert "/health/live" in test, test
+
+
+def test_isletmecinin_db_adresi_varsayilan_degil():
+    """Ayarsız bir kopya işletmecinin gerçek veritabanına bağlanmaya çalışıyordu."""
+    for dosya in ("app.py", "docker-compose.yml"):
+        assert "ip.bariskeser.com" not in (SUNUCU / dosya).read_text(encoding="utf-8"), dosya
+
+
+def test_env_ornegi_sunucu_degiskenlerini_belgeliyor():
+    ornek = (SUNUCU / ".env.example").read_text(encoding="utf-8")
+    for ad in ("DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME", "CORS_ORIGINS",
+               "API_YAZMA_ANAHTARI", "API_YAZMA_SINIRI", "TRUST_PROXY", "WORKERS"):
+        assert re.search(rf"^#?{ad}=", ornek, re.M), f".env.example {ad} belgelemiyor"
+
+
+def test_app_okudugu_her_ortam_degiskeni_belgeli():
+    """app.py'nin okuduğu her ortam değişkeni modül belgesinde geçmeli."""
+    agac = ast.parse((SUNUCU / "app.py").read_text(encoding="utf-8"))
+    okunan = {d.args[0].value for d in ast.walk(agac)
+              if isinstance(d, ast.Call) and d.args
+              and isinstance(d.args[0], ast.Constant) and isinstance(d.args[0].value, str)
+              and ("environ" in ast.unparse(d.func)
+                   or ast.unparse(d.func) == "_tamsayi_ortam")}
+    belge = ast.get_docstring(agac) or ""
+    eksik = sorted(ad for ad in okunan if ad not in belge)
+    assert okunan and not eksik, f"app.py belgesinde yok: {eksik}"

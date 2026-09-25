@@ -25,7 +25,6 @@ import json
 import os
 import threading
 import time
-import uuid
 
 # yt-dlp, mpv gibi gereksinimlerin indirme linklerinin bulunduğu dosya.
 DL_URL="https://raw.githubusercontent.com/KebabLord/turkanime-indirici/master/gereksinimler.json"
@@ -213,18 +212,12 @@ class Dosyalar:
                 self.set_ayar(ayar_list={**eksikler, **goc})
             if goc:
                 self.ayar_sil(*ESKI_AYAR_ADLARI)
-            # User ID kontrolü - eğer yoksa oluştur
-            if not ayarlar.get('user_id'):
-                user_id = str(uuid.uuid4())
-                self.set_ayar('user_id', user_id)
-                print(f"Yeni kullanıcı kimliği oluşturuldu: {user_id}")
+            # Eskiden burada bir 'user_id' UUID'si üretilip basılıyordu; onu
+            # okuyan bölüm durumu senkronu v10'da yok (bkz. common/db.py).
+            # Üretilmiyor; eski kurulumlardaki değer olduğu gibi bırakılıyor.
         else:
             atomik_json_yaz(self.ayar_path, {})
             self.set_ayar(ayar_list=default_ayarlar)
-            # İlk çalıştırmada user_id oluştur
-            user_id = str(uuid.uuid4())
-            self.set_ayar('user_id', user_id)
-            print(f"İlk çalıştırma - kullanıcı kimliği oluşturuldu: {user_id}")
         if not path.isfile(self.gecmis_path):
             atomik_json_yaz(self.gecmis_path, dict(VARSAYILAN_GECMIS))
 

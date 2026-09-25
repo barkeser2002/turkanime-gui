@@ -79,6 +79,18 @@ def test_sunucu_modulu_indirme_yiginini_cekmiyor(modul):
     )
 
 
+def test_api_sunucusu_indirme_yiginini_cekmiyor():
+    """app.py kaynak tablosunu kayıttan kurarken her kaynağın uçlarını yüklüyor.
+
+    Listede değil çünkü flask/flask_cors ister; kuruluysa (CI kuruyor) burada
+    sınanıyor. Uçlardan biri yt-dlp'ye uzanırsa API imajı ImportError verir.
+    """
+    pytest.importorskip("flask")
+    pytest.importorskip("flask_cors")
+    sizinti = _yuklu_paketler("turkanime_server.app")
+    assert not sizinti, f"turkanime_server.app şunları sürükledi: {sorted(sizinti)}"
+
+
 @pytest.mark.parametrize("modul", ISTEMCI_MODULLERI)
 def test_kaynak_adaptorleri_indirme_yiginini_cekmiyor(modul):
     """Kaynak adaptörleri arama/bölüm için yt-dlp'ye ihtiyaç duymamalı."""

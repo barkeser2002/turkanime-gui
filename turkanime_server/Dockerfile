@@ -29,7 +29,18 @@ RUN apt-get update \
 COPY turkanime_server/requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-# Tüm projeyi kopyala — turkanime_api modülü relative import'larıyla beraber gerekli
+# Root olmayan kullanıcı. Üç servis de (API, tarayıcı, yayıncı) bu imajla
+# çalışıyor; eskiden hepsi root'tu. HOME gerekli: yayıncının ssh'ı
+# `StrictHostKeyChecking=accept-new` ile ~/.ssh/known_hosts yazıyor.
+# /veri önceden sahiplendiriliyor: YENİ bir adlandırılmış birim bu sahipliği
+# devralır. Root'a ait ESKİ bir birim için tek seferlik düzeltme
+# docker-compose.yml'deki notta.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin app \
+    && mkdir -p /veri \
+    && chown app:app /veri
+
+# Tüm projeyi kopyala — turkanime_api modülü relative import'larıyla beraber gerekli.
+# Kod bilerek root'a ait kalıyor (--chown yok): süreç kendi kodunu değiştiremesin.
 COPY turkanime_api /app/turkanime_api
 COPY turkanime_server /app/turkanime_server
 
@@ -38,7 +49,14 @@ WORKDIR /app/turkanime_server
 
 EXPOSE 34665
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -fsS "http://localhost:${PORT}/health" || exit 1
+USER app
 
-CMD ["python", "app.py"]
+# /health/live: süreç ayakta mı. /health veritabanını da yokluyor; DB kesintisi
+# konteyneri "unhealthy" yapıp yeniden başlatmamalı (yeniden başlatmak DB'yi
+# düzeltmez). Tarayıcı/yayıncı servisleri compose'ta healthcheck'i kapatıyor.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -fsS "http://localhost:${PORT}/health/live" || exit 1
+
+# Üretim sunucusu gunicorn (`gunicorn.conf.py`); `python app.py` Werkzeug'un
+# geliştirme sunucusunu açar, yalnızca yerel geliştirme için.
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

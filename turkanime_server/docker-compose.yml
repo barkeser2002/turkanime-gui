@@ -8,16 +8,26 @@ services:
     container_name: turkanime-api
     ports:
       - "34665:34665"
+    # Değerler `.env`'den gelir (bkz. .env.example). DB_* için varsayılan YOK:
+    # eksikse API açılmaz. `${DB_HOST:?}` kullanılmadı: compose dosyanın
+    # tamamını yorumluyor, tarayıcı/yayıncı profili de hata verirdi.
     environment:
       PORT: "34665"
       DEBUG: "false"
-      DB_HOST: "${DB_HOST:-ip.bariskeser.com}"
-      DB_USER: "${DB_USER:-turkanime-gui}"
+      DB_HOST: "${DB_HOST:-}"
+      DB_USER: "${DB_USER:-}"
       DB_PASSWORD: "${DB_PASSWORD:-}"
-      DB_NAME: "${DB_NAME:-turkanime-gui}"
+      DB_NAME: "${DB_NAME:-}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      API_YAZMA_ANAHTARI: "${API_YAZMA_ANAHTARI:-}"
+      API_YAZMA_SINIRI: "${API_YAZMA_SINIRI:-30}"
+      TRUST_PROXY: "${TRUST_PROXY:-}"
+      WORKERS: "${WORKERS:-2}"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:34665/health"]
+      # Canlılık ucu: DB kesintisi konteyneri yeniden başlatmasın (/health
+      # DB'yi de yokluyor ve o durumda 503 döner).
+      test: ["CMD", "curl", "-fsS", "http://localhost:34665/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -44,6 +54,10 @@ services:
     volumes:
       - turkanime-arsiv:/veri
     restart: "no"
+    # İmajın HEALTHCHECK'i API'nin /health/live ucunu yokluyor; bu tek atımlık
+    # konteynerde orayı dinleyen yok, saatler süren tarama "unhealthy" görünürdü.
+    healthcheck:
+      disable: true
     profiles: ["crawler"]
     networks:
       - turkanime-net
@@ -84,10 +98,16 @@ services:
       # TURKANIME_ARSIV_SSH_ANAHTAR=/sirlar/arsiv_ed25519 verin.
       #- ./sirlar:/sirlar:ro
     restart: "no"
+    healthcheck:
+      disable: true            # tarayıcıdaki gerekçe: HTTP dinlemiyor
     profiles: ["yayin"]
     networks:
       - turkanime-net
 
+# İmaj root olmayan `app` kullanıcısıyla (uid 10001) çalışıyor. Yeni birim bu
+# sahipliği imajdan devralır. Eski sürümlerin root olarak yazdığı bir birim
+# için tek seferlik düzeltme:
+#   docker run --rm -v turkanime-arsiv:/veri alpine chown -R 10001:10001 /veri
 volumes:
   turkanime-arsiv:
 
