@@ -92,11 +92,11 @@ def prepare_qt_env() -> None:
 
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
 
-    # Bazı sanal/başsız ortamlarda GPU yok; WebEngine'i yumuşak başlat.
-    os.environ.setdefault(
-        "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--disable-gpu-compositing --disable-features=UseChromeOSDirectVideoDecoder",
-    )
+    # Chromium'un GPU süreci kapalı: GPU'suz ortamda sayfa kapanırken çöküyordu
+    # (ölçüm ve gerekçe: common/chromium.py). CF çözücü alt-süreci de aynısını
+    # kullanıyor.
+    from ...common.chromium import bayraklari_hazirla
+    bayraklari_hazirla()
 
     try:  # WebEngine opsiyonel kalsın: yoksa GUI yine de açılmalı
         import PySide6.QtWebEngineCore  # noqa: F401
