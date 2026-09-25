@@ -28,6 +28,7 @@ from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
 from .pages.downloads import DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
+from .pages.library import LibraryPage
 from .pages.search import SearchPage
 from .pages.settings import SettingsPage
 from .pages.watchlist import WatchlistPage
@@ -57,6 +58,7 @@ NAV_ITEMS = [
     ("season", "Bu Sezon"),
     ("trending", "Trend"),
     ("watchlist", "İzleme Listesi"),
+    ("library", "Kitaplığım"),
     ("downloads", "İndirilenler"),
     ("settings", "Ayarlar"),
 ]
@@ -193,7 +195,7 @@ class MainWindow(QMainWindow):
     def _make_page(self, key: str, label: str) -> QWidget:
         """`NAV_ITEMS` anahtarına karşılık gelen sayfayı üret.
 
-        Aşağıdaki dallar `NAV_ITEMS`'ın yedi anahtarını da karşılıyor, yani
+        Aşağıdaki dallar `NAV_ITEMS`'ın sekiz anahtarını da karşılıyor, yani
         sona düşmek mümkün değil. Yine de sessizce `None` dönüp çağıranın
         `addWidget`'ında anlamsız bir hatayla patlamak yerine burada
         bağırıyoruz: `NAV_ITEMS`'a dalı yazılmamış bir anahtar eklenirse
@@ -206,6 +208,11 @@ class MainWindow(QMainWindow):
         if key in ("home", "trending", "season"):
             page = DiscoverPage(key)
             page.anime_selected.connect(self._on_discover_selected)
+            page.kitaplik_secildi.connect(self._on_kitaplik_selected)
+            return page
+        if key == "library":
+            page = LibraryPage()
+            page.kitaplik_secildi.connect(self._on_kitaplik_selected)
             return page
         if key == "downloads":
             return DownloadsPage(self.downloads)
@@ -344,6 +351,16 @@ class MainWindow(QMainWindow):
         if isinstance(item, dict) and item and isinstance(page, DetailPage):
             self._open_detail(lambda: page.show_anime(item))
 
+    def _on_kitaplik_selected(self, kayit) -> None:
+        """Kitaplık kartı: detayı kaynağa BAĞLI aç, bölümleri hemen getir.
+
+        Keşif kartından farkı: kayıt kaynağın kendi kimliğini taşıyor, yani
+        eşleştirme (ve yanlış eşleşme riski) yok (bkz. `kitaplik_ac`).
+        """
+        page = self.pages.get("detail")
+        if isinstance(kayit, dict) and isinstance(page, DetailPage):
+            self._open_detail(lambda: page.kitaplik_ac(kayit))
+
     def _on_anime_selected(self, source: str, slug: str, title: str,
                            kayit: object = None) -> None:
         """Arama sonucundan anime seçildi: kaynağı bağlı detay sayfasını aç.
@@ -382,9 +399,15 @@ class MainWindow(QMainWindow):
         aynı listeyi ikinci kez ağdan indirirdi.
         """
         page = self.pages.get("episodes")
+        detail = self.pages.get("detail")
+        # Kaynak başına kimlikler + kapak: kitaplık kaydı satırın KENDİ
+        # kaynağının kimliğiyle yazılsın (bkz. `EpisodePage._kimlik_damgala`).
+        baglam = (detail.kitaplik_baglami() if isinstance(detail, DetailPage)
+                  else {})
         if isinstance(page, EpisodePage):
             self.show_page("episodes")
-            page.load(source, slug, title, episodes=episodes)
+            page.load(source, slug, title, episodes=episodes,
+                      baglar=baglam.get("baglar"), kapak=baglam.get("kapak") or "")
 
     # ── Oynatma / indirme ───────────────────────────────────────────────────
     def _status(self, msg: str, timeout: int = 6000) -> None:
@@ -404,10 +427,10 @@ class MainWindow(QMainWindow):
         # playback: oynatma mpv kapanana kadar thread'i tutar ama İNDİRME
         # havuzuna girmemeli — kuyrukta 30 bölüm varsa mpv hiç açılmaz ve
         # `_playing` açık kaldığı için kullanıcı yeniden de deneyemez.
-        run_bg(self._play_blocking, bolum, entry.get("title") or "",
+        run_bg(self._play_blocking, bolum, entry.get("title") or "", entry,
                playback=True)
 
-    def _play_blocking(self, bolum, title: str) -> None:
+    def _play_blocking(self, bolum, title: str, entry=None) -> None:
         # NOT: Bu gövde arka plan thread'inde; hata yutulursa kullanıcı sonsuza
         # kadar "video aranıyor…" görür. Bu yüzden her çıkış yolu raporlanır.
         #
@@ -436,6 +459,9 @@ class MainWindow(QMainWindow):
                 return
             # Buraya gelindiyse mpv düzgün kapandı: izleme geçmişi + ilerleme.
             prefs.gecmis_kaydet(bolum, "izlendi")
+            # Kitaplık: "izlemeye devam et" + bölüm geçmişi (kaynak ve kaynağın
+            # kendi kimliğiyle; kaynaksız kayıt yazılmaz, bkz. prefs).
+            prefs.kitapliga_yaz(entry or {"obj": bolum}, title)
             self._status(f"{title} — oynatma bitti.")
             self.ui.post(lambda: self._on_play_finished(bolum, title))
         except Exception as exc:

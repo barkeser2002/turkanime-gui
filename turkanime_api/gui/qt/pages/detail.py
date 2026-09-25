@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ....common import kutuphane
 from ....common.episode_parser import merge_episodes
 from ....common.title_match import baslik_normalize, siralama_skoru
 from ....sources.kayit import gorunen_ad, kanonik_ad
@@ -78,6 +79,12 @@ ESLESME_SORGU_SINIRI = 3
 
 # Künyesi arşivin kendisinde duran kaynak (bkz. `animedepo.anime_bilgisi`).
 ARSIV_KAYNAGI = "TürkAnime"
+
+# Kitaplık düğmesinin iki hâli. Düğme bağlı kaynağa göre anahtarlanıyor
+# (bkz. `DetailPage._favori_guncelle`); bağsız kayıtta kitaplığa eklenecek
+# bir kimlik yok, düğme kapalı durur.
+FAVORI_EKLE = "♡ Kitaplığa ekle"
+FAVORI_VAR = "♥ Kitaplıkta"
 
 # AniList/Jikan büyük harfli sabitler döndürür; kullanıcıya Türkçe gösteriyoruz.
 SEASON_LABELS = {"WINTER": "Kış", "SPRING": "İlkbahar", "SUMMER": "Yaz",
@@ -638,6 +645,13 @@ class DetailPage(QWidget):
         self.btnMatch.clicked.connect(self.open_match_dialog)
         actions.addWidget(self.btnMatch)
 
+        # Favori, kaynağın KENDİ kimliğiyle saklanıyor: kitaplıktan açılan kayıt
+        # eşleştirme diyaloğuna uğramadan aynı kaynağa bağlanabilsin.
+        self.btnFavori = QPushButton(FAVORI_EKLE)
+        self.btnFavori.setCheckable(True)
+        self.btnFavori.clicked.connect(self._favori_degistir)
+        actions.addWidget(self.btnFavori)
+
         actions.addStretch(1)
         return actions
 
@@ -713,6 +727,7 @@ class DetailPage(QWidget):
         if source:
             self._select_source(source)
         self._render()
+        self._favori_guncelle()
         self._kapak_yer_tutucu()
         self._load_cover(self._request_id)
         if source and self._slug and kanonik_ad(source) == ARSIV_KAYNAGI:
@@ -770,6 +785,7 @@ class DetailPage(QWidget):
             # döndüğünde bu kaynağa dokunmasın (bkz. `_on_sources_resolved`).
             self._manual[source] = self._slug
         self._select_source(source)
+        self._favori_guncelle()
         self.lblStatus.ok(f"{gorunen_ad(source)} → {title} eşleştirildi.")
         save_match(source, self._slug, self._match_title)
 
@@ -902,6 +918,7 @@ class DetailPage(QWidget):
         self.cmbSource.setCurrentIndex(index)
 
     def _on_source_changed(self, source: str) -> None:
+        self._favori_guncelle()
         if source in METADATA_ONLY:
             self.lblStatus.info(
                 f"{gorunen_ad(source)} yalnızca metadata kaynağı; "
@@ -1066,6 +1083,7 @@ class DetailPage(QWidget):
                             if s not in self._bindings]
         if want_all:
             self._resolved_for = rid       # aynı anime için bir daha arama
+        self._favori_guncelle()            # yeni bağ: kitaplık düğmesi açılabilir
         # Tek kaynak modunda elle eşleştirme kaynağı da değiştirmiş olabilir;
         # istek, isteği başlatan eski seçime değil kullanıcının seçtiğine gider.
         if not want_all and self.current_source() in self._manual:
@@ -1187,6 +1205,72 @@ class DetailPage(QWidget):
         self.btnEpisodes.setEnabled(True)
         self.lblStatus.error(message)
 
+    # ── Kitaplık ────────────────────────────────────────────────────────────
+    def kitaplik_ac(self, kayit: Dict[str, Any]) -> int:
+        """Kitaplık kaydını (kaynak + kaynağın kimliği) BAĞLI olarak aç ve
+        bölümleri hemen getir.
+
+        Kayıt kaynağın kendi kimliğini taşıdığı için eşleştirme yok: ne
+        otomatik arama ne diyalog. "İzlemeye devam et"e basan kullanıcı
+        künye sayfasında bir kez daha "Bölümleri Getir"e basmamalı.
+        """
+        kaynak = str((kayit or {}).get("kaynak") or "")
+        kimlik = str((kayit or {}).get("kimlik") or "")
+        baslik = str((kayit or {}).get("baslik") or kimlik)
+        kapak = (kayit or {}).get("kapak") or ""
+        rid = self.show_match(kaynak, kimlik, baslik,
+                              kayit={"image": kapak} if kapak else None)
+        if kaynak and kimlik:
+            self.chkAllSources.setChecked(False)
+            self.load_episodes()
+        return rid
+
+    def kitaplik_baglami(self) -> Dict[str, Any]:
+        """Bölüm sayfasına devredilen kimlik bilgisi: kaynak→kimlik ve kapak.
+
+        Çok kaynaklı listede her satır KENDİ kaynağının kimliğiyle kaydedilmeli
+        (`episodes_ready` yalnızca birincil kaynağın slug'ını taşıyor).
+        """
+        return {"baglar": dict(self._bindings),
+                "kapak": cover_url(self._anime) or ""}
+
+    def _favori_hedefi(self) -> Tuple[str, str]:
+        """Kitaplık düğmesinin işlediği (kaynak, kimlik); bağ yoksa boş."""
+        kaynak = self.current_source()
+        return kaynak, self._bindings.get(kaynak, "")
+
+    def _favori_guncelle(self) -> None:
+        """Düğmeyi bağlı kaynağın kitaplık durumuna eşitle.
+
+        Okuma yerel ve küçük bir JSON; ayar okumaları gibi GUI thread'inde.
+        """
+        if not hasattr(self, "btnFavori"):
+            return          # kombo kurulurken tetiklendi; düğme henüz yok
+        kaynak, kimlik = self._favori_hedefi()
+        var = bool(kimlik) and kutuphane.favori_mi(kaynak, kimlik)
+        self.btnFavori.setEnabled(bool(kimlik))
+        self.btnFavori.setToolTip(
+            "" if kimlik else "Kitaplığa eklemek için önce bölümleri getirin "
+                              "(anime bir kaynağa bağlanmalı).")
+        self._favori_goster(var)
+
+    def _favori_goster(self, var: bool) -> None:
+        self.btnFavori.setChecked(var)
+        self.btnFavori.setText(FAVORI_VAR if var else FAVORI_EKLE)
+
+    def _favori_degistir(self, isaretli: bool) -> None:
+        """Kitaplığa ekle/çıkar. Yazım arka planda (fsync'li atomik yazım)."""
+        kaynak, kimlik = self._favori_hedefi()
+        if not kimlik:
+            self._favori_goster(False)
+            return
+        self._favori_goster(isaretli)
+        run_bg(kutuphane.favori_ayarla, kaynak, kimlik, bool(isaretli),
+               self._match_title or anime_title(self._anime),
+               cover_url(self._anime) or "")
+        self.lblStatus.ok("Kitaplığa eklendi." if isaretli
+                          else "Kitaplıktan çıkarıldı.")
+
     # ── Eşleşme diyaloğu ────────────────────────────────────────────────────
     def open_match_dialog(self) -> None:
         # Sorgu dolu geliyor; diyalog aramaya kendiliğinden başlar (fazladan
@@ -1197,7 +1281,7 @@ class DetailPage(QWidget):
             self.apply_match(*dialog.selection)
 
 
-__all__ = ["DetailPage", "AnimeMatchDialog", "clean_html", "studio_names",
+__all__ = ["DetailPage", "AnimeMatchDialog", "FAVORI_EKLE", "FAVORI_VAR", "clean_html", "studio_names",
            "genre_names", "meta_line", "tarih_metni", "kunye_birlestir",
            "save_match", "episode_total", "first_slug", "en_iyi_slug",
            "en_iyi_aday", "eslesme_basliklari", "MATCH_LIMIT_PER_SOURCE",

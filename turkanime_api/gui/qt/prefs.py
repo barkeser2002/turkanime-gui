@@ -250,6 +250,59 @@ def gecmis_kaydet(bolum, islem: str) -> bool:
     return True
 
 
+def seri_adi(bolum, yedek: str = "") -> str:
+    """Okunabilir seri adı — ağa çıkabilecek alanlara dokunmadan.
+
+    `objects.Anime.title` gerekirse sayfayı indirir; önce `_title` bakılıyor
+    (bkz. `progress_dialog.anime_adi`, aynı sıra).
+    """
+    try:
+        anime = getattr(bolum, "anime", None)
+    except Exception:
+        anime = None
+    for alan in ("_title", "title", "slug"):
+        deger = getattr(anime, alan, None)
+        if isinstance(deger, str) and deger:
+            return deger
+    return yedek
+
+
+def kitaplik_kimligi(entry: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Bölüm kaydından kitaplık anahtarı: kaynak, kimlik, seri adı, kapak.
+
+    Kaynak ve kimlik `EpisodePage._kimlik_damgala`'dan gelir. Kaynağı
+    bilinmeyen kayıt (eski akışlar, testlerin çıplak `{"obj": ...}`'i)
+    kitaplığa YAZILMAZ: kaynaksız bir kayıt yeniden açılamaz, yani "izlemeye
+    devam et"te tıklanınca hiçbir yere gitmeyen bir kart olurdu.
+    """
+    entry = entry or {}
+    bolum = entry.get("obj")
+    seri, bolum_slug = bolum_kimligi(bolum)
+    kaynak = str(entry.get("kaynak") or "")
+    kimlik = str(entry.get("kimlik") or "") or (seri if kaynak else "")
+    return {
+        "kaynak": kaynak, "kimlik": kimlik, "bolum_slug": bolum_slug,
+        "baslik": str(entry.get("seri_adi") or "") or seri_adi(bolum, kimlik),
+        "kapak": str(entry.get("kapak") or ""),
+    }
+
+
+def kitapliga_yaz(entry: Optional[Dict[str, Any]], bolum_baslik: str = "") -> bool:
+    """Başarılı oynatmayı kitaplığa (izlemeye devam + geçmiş) yaz.
+
+    `gecmis_kaydet` gibi hata yutar: kitaplık yazılamadı diye oynatmanın
+    "başarılı" sonucu değişmemeli.
+    """
+    from ...common import kutuphane
+    k = kitaplik_kimligi(entry)
+    if not (k["kaynak"] and k["kimlik"] and k["bolum_slug"]):
+        return False
+    return kutuphane.izleme_kaydet(
+        k["kaynak"], k["kimlik"], k["baslik"], k["bolum_slug"],
+        bolum_baslik=bolum_baslik or str((entry or {}).get("title") or ""),
+        kapak=k["kapak"])
+
+
 def ilerleme_kaydet(seri: str, bolum_no: int) -> bool:
     """Serinin yerel izleme ilerlemesini yaz.
 
@@ -374,5 +427,6 @@ class Gecmis:
 __all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
            "kaynak_kimliklerini_uygula",
            "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
+           "seri_adi", "kitaplik_kimligi", "kitapliga_yaz",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

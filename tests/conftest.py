@@ -220,6 +220,39 @@ def _gorsel_onbellek_yalitimi(monkeypatch, tmp_path_factory):
     gorsel.bellegi_temizle()
 
 
+@pytest.fixture(autouse=True)
+def _kutuphane_yalitimi(monkeypatch, tmp_path_factory):
+    """Kitaplık dosyası (`kutuphane.json`) yalnızca pytest'in geçici kökünde.
+
+    Kök `Dosyalar().ta_path`: depodan çalışınca DEPO KÖKÜ. `preserved_gecmis`
+    kullanan eski oynatma testleri gerçek `gecmis.json`'a yazıp geri alıyor;
+    kitaplık ayrı dosya olduğu için o yedek onu kapsamıyor ve başarılı her
+    oynatma testi depoya `kutuphane.json` bırakırdı (ana sayfa da açılışta
+    geliştiricinin gerçek kitaplığını okurdu). `izole_ev` kullanan testler
+    etkilenmez: onların kökü zaten geçici.
+    """
+    from turkanime_api.common import kutuphane
+
+    asil = kutuphane.kutuphane_yolu
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    yedek = {}
+    kilit = threading.Lock()          # arka plan işleri de çağırıyor
+
+    def _yalniz_gecici():
+        yol = asil()
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+            return yol
+        except ValueError:
+            with kilit:
+                if "yol" not in yedek:
+                    yedek["yol"] = str(tmp_path_factory.mktemp("kutuphane")
+                                       / kutuphane.DOSYA_ADI)
+                return yedek["yol"]
+
+    monkeypatch.setattr(kutuphane, "kutuphane_yolu", _yalniz_gecici)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _cevresel_taban(pytestconfig):
     """Ağ uçlarının OTURUM BOYU tabanını sahteye çek.

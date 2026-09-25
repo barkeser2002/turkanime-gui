@@ -365,6 +365,10 @@ class EpisodePage(QWidget):
         self._shown = 0
         self._busy = False
         self._context = ("", "", "")
+        # Kaynak → kaynağın KENDİ anime kimliği ve kapak (kitaplık kaydı için;
+        # bkz. `_kimlik_damgala`).
+        self._baglar: Dict[str, str] = {}
+        self._kapak = ""
         # Geçmiş tek seferde okunur; satır başına dosya açmak birkaç yüz
         # bölümlük listede gözle görülür gecikme demek.
         self._gecmis: Optional[prefs.Gecmis] = None
@@ -442,13 +446,17 @@ class EpisodePage(QWidget):
 
     # ── Yükleme ─────────────────────────────────────────────────────────────
     def load(self, source: str, slug: str, title: str,
-             episodes: Optional[Any] = None) -> None:
+             episodes: Optional[Any] = None,
+             baglar: Optional[Dict[str, str]] = None, kapak: str = "") -> None:
         """Bölüm listesini göster.
 
         `episodes` verilirse ağa ÇIKILMAZ: detay sayfası listeyi zaten çekmiş
         olur ve ikinci çağrı hem gereksiz beklemedir hem de bazı kaynaklarda
         (TRAnimeİzle, Tranimaci) yeniden bot-koruma turu tetikler. Yük hem düz
         liste (tek kaynak) hem `{kaynak: liste}` sözlüğü (çok kaynak) olabilir.
+
+        ``baglar`` çok kaynaklı listede her kaynağın kendi kimliği (detay
+        sayfasının bağları); ``kapak`` kitaplık kartının posteri.
         """
         if episodes is None and self._busy:
             self.lblStatus.info("Önceki istek sürüyor, lütfen bekleyin…")
@@ -461,6 +469,8 @@ class EpisodePage(QWidget):
         self._selected.clear()
         self._needle = ""
         self._context = (source, slug, title)
+        self._baglar = {str(k): str(v) for k, v in (baglar or {}).items() if v}
+        self._kapak = str(kapak or "")
         self._reload_gecmis()
         self.lblTitle.setText(f"{title} — {source_label(source)}")
         self.lblSources.setVisible(False)
@@ -482,8 +492,9 @@ class EpisodePage(QWidget):
 
     def _on_episodes(self, episodes: Any) -> None:
         self._busy = False
-        source, _slug, title = self._context
+        source, slug, title = self._context
         self._sources = as_sources_data(source, episodes)
+        self._kimlik_damgala(source, slug, title)
         # Anime adı birleştiriciye veriliyor: kaynaklar başlığa adı da yazıyor
         # ("86 2nd Season 5. Bölüm") ve addaki rakamlar bölüm/sezon sanılırsa
         # aynı bölüm kaynak başına ayrı satır olur.
@@ -511,6 +522,23 @@ class EpisodePage(QWidget):
     def _on_error(self, message: str) -> None:
         self._busy = False
         self.lblStatus.error(message)
+
+    def _kimlik_damgala(self, source: str, slug: str, title: str) -> None:
+        """Her kaynak kaydına kitaplığın anahtarını iliştir.
+
+        Oynatma/indirme yalnızca bu kaydı (`entry`) taşıyor. Kimlik bölüm
+        nesnesinden TÜRETİLEMEZ: `AdapterAnime` sayısal kimliği (AnimeciX
+        "1234") başlık slug'ına çeviriyor ve kitaplık o slug'la seriyi bir
+        daha açamazdı. Çok kaynaklı listede her satır tıklanan KAYNAĞIN
+        kimliğini alır; birincil kaynağın slug'ı yalnızca kendisine aittir.
+        """
+        for name, items in self._sources.items():
+            kimlik = self._baglar.get(name) or (slug if name == source else "")
+            for entry in items:
+                entry["kaynak"] = name
+                entry["kimlik"] = kimlik
+                entry["seri_adi"] = title
+                entry["kapak"] = self._kapak
 
     # ── Geçmiş ──────────────────────────────────────────────────────────────
     def _reload_gecmis(self) -> None:

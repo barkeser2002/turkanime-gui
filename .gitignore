@@ -9,6 +9,7 @@ __pycache__/
 # ── Kullanıcı verisi / yerel durum (asla commit edilmez) ─────────────────────
 ayarlar.json
 gecmis.json
+kutuphane.json
 geckodriver.log
 log
 debug.log
