@@ -1,0 +1,221 @@
+/* TürkAnime — tasarım belirteçleri, temel stiller ve sayfa iskeleti.
+ *
+ * Renkler eski arayüzün kimliğinden: kırmızı marka, mavi birincil eylem,
+ * camgöbeği ikincil vurgu. Koyu zemin tek tema (uygulama hep koyuydu).
+ */
+:root {
+  color-scheme: dark;
+
+  --zemin: #0b0d12;
+  --zemin-2: #0f1219;
+  --yuzey: #151923;
+  --yuzey-2: #1b2030;
+  --yuzey-3: #242a3c;
+  --kenar: rgba(255, 255, 255, 0.07);
+  --kenar-2: rgba(255, 255, 255, 0.13);
+
+  --metin: #eef1f7;
+  --metin-2: #c4cad7;
+  --soluk: #8a93a8;
+  --soluk-2: #626b80;
+
+  --vurgu: #ff4d5e;
+  --vurgu-2: #ff8a4c;
+  --vurgu-yumusak: rgba(255, 77, 94, 0.14);
+  --mavi: #4c8dff;
+  --mavi-2: #6ea4ff;
+  --mavi-yumusak: rgba(76, 141, 255, 0.15);
+  --camgobegi: #22c3b0;
+  --camgobegi-yumusak: rgba(34, 195, 176, 0.15);
+  --sari: #fbbf24;
+  --yesil: #34d399;
+  --kirmizi: #f87171;
+
+  --marka-gradyan: linear-gradient(135deg, var(--vurgu) 0%, var(--vurgu-2) 100%);
+  --golge: 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+  --golge-2: 0 24px 60px -16px rgba(0, 0, 0, 0.8);
+
+  --yaricap: 16px;
+  --yaricap-o: 12px;
+  --yaricap-k: 9px;
+  --gecis: 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --yazi: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Noto Sans", "Ubuntu", "Helvetica Neue", Arial, sans-serif;
+  --yazi-baslik: "Inter Display", "Segoe UI Variable Display", "Segoe UI", system-ui,
+    -apple-system, "Noto Sans", sans-serif;
+
+  --yan-bosluk: clamp(16px, 3vw, 36px);
+  --icerik-genislik: 1680px;
+  --ust-bar: 64px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--zemin);
+  color: var(--metin);
+  font-family: var(--yazi);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--mavi-2);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--yazi-baslik);
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--mavi);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(255, 77, 94, 0.35);
+}
+
+/* İnce, koyu kaydırma çubukları. */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border: 3px solid var(--zemin);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.soluk {
+  color: var(--soluk);
+}
+
+.gizli {
+  display: none !important;
+}
+
+/* ── Sayfa iskeleti ─────────────────────────────────────────────────────── */
+#icerik {
+  position: relative;
+  min-height: 100vh;
+}
+
+html:not([data-kabuk="qt"]) #icerik {
+  min-height: calc(100vh - var(--ust-bar));
+}
+
+.sayfa {
+  width: 100%;
+  max-width: var(--icerik-genislik);
+  margin: 0 auto;
+  padding: 28px var(--yan-bosluk) 56px;
+  animation: sayfa-gir 260ms ease both;
+}
+
+@keyframes sayfa-gir {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.sayfa-baslik {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.sayfa-baslik h1 {
+  font-size: 30px;
+  font-weight: 750;
+}
+
+.sayfa-baslik p {
+  margin-top: 6px;
+  color: var(--soluk);
+}
+
+.sayfa-eylem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── Üst çubuk (web kabuğu) ─────────────────────────────────────────────
+ * Geçiş sürerken (kabuk=qt) üst çubuk ve menü Qt'de; burada gizli. */
+html[data-kabuk="qt"] .ust-bar {
+  display: none;
+}
+
+.ust-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  height: var(--ust-bar);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 var(--yan-bosluk);
+  background: rgba(11, 13, 18, 0.78);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border-bottom: 1px solid var(--kenar);
+}

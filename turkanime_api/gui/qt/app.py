@@ -13,7 +13,7 @@ import os
 import sys
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -42,6 +42,10 @@ from .requirements import RequirementsDialog, RequirementsService
 from .theme import ACCENT, apply_theme
 from .updates import UpdateDialog, UpdateService
 from .workers import UiBridge, run_bg
+from ..web.gorunum import WebGorunum
+from ..web.kopru import Kopru
+from ..web.uclar_genel import GenelUclar
+from ..web.uclar_kesif import KesifUclari
 
 # Header'daki AniList avatarı (kare, köşeler tema tarafından yuvarlanmıyor).
 AVATAR_BOYUTU = 28
@@ -67,6 +71,12 @@ NAV_ITEMS = [
     ("downloads", "İndirilenler"),
     ("settings", "Ayarlar"),
 ]
+
+# Web arayüzüne taşınmış sayfalar (bkz. `gui/web`). Hepsi TEK bir
+# `WebGorunum`'da rota olarak açılıyor; listede olmayanlar hâlâ Qt sayfası.
+# Geçiş sayfa sayfa: bir sayfa taşındığında buraya eklenir, eski Qt sınıfı
+# geçiş bitince silinir.
+WEB_SAYFALARI = ("home", "trending", "season")
 
 
 def _resource_path(rel: str) -> str:
@@ -97,6 +107,11 @@ def prepare_qt_env() -> None:
     # kullanıyor.
     from ...common.chromium import bayraklari_hazirla
     bayraklari_hazirla()
+
+    # Web arayüzünün `ta://` şeması: Chromium şemaları ilk açılışta okuyor,
+    # sonradan kaydedilen şema tanınmıyor.
+    from ..web.sema import semayi_kaydet
+    semayi_kaydet()
 
     try:  # WebEngine opsiyonel kalsın: yoksa GUI yine de açılmalı
         import PySide6.QtWebEngineCore  # noqa: F401
@@ -187,10 +202,12 @@ class MainWindow(QMainWindow):
         body.addWidget(self._build_sidebar())
 
         self.stack = QStackedWidget()
+        self._build_web()
         for key, label in NAV_ITEMS:
             page = self._make_page(key, label)
             self.pages[key] = page
-            self.stack.addWidget(page)
+            if self.stack.indexOf(page) < 0:      # web görünümü tek sefer
+                self.stack.addWidget(page)
 
         # Detay ve bölüm listesi menüde yer almaz; keşif/arama sonucundan açılır.
         detail = DetailPage()
@@ -210,6 +227,30 @@ class MainWindow(QMainWindow):
 
         outer.addLayout(body, 1)
 
+    def _build_web(self) -> None:
+        """Web arayüzü: köprü + uçlar + tek görünüm (bkz. `WEB_SAYFALARI`)."""
+        self.kopru = Kopru(self)
+        self.kopru.bagla(GenelUclar(ac=self._web_ac))
+        self.kopru.bagla(KesifUclari())
+        self.web = WebGorunum(self.kopru)
+
+    def _web_ac(self, hedef: str, veri: Dict) -> None:
+        """Web sayfasından gezinti isteği (GUI thread'i; `GenelUclar.ac`)."""
+        if hedef == "sayfa":
+            key = str(veri.get("ad") or "")
+            if key in self.pages:
+                self.show_page(key)
+                self._sync_nav(key)
+        elif hedef == "anime":
+            self._on_discover_selected(veri.get("kayit"))
+        elif hedef == "kitaplik":
+            self._on_kitaplik_selected(veri.get("kayit"))
+        elif hedef == "arama":
+            sorgu = str(veri.get("sorgu") or "").strip()
+            if sorgu:
+                self.txtSearch.setText(sorgu)
+                self._on_search()
+
     def _make_page(self, key: str, label: str) -> QWidget:
         """`NAV_ITEMS` anahtarına karşılık gelen sayfayı üret.
 
@@ -219,6 +260,8 @@ class MainWindow(QMainWindow):
         bağırıyoruz: `NAV_ITEMS`'a dalı yazılmamış bir anahtar eklenirse
         hata, sebebini söyleyerek açılışta çıksın.
         """
+        if key in WEB_SAYFALARI:
+            return self.web
         if key == "search":
             page = SearchPage()
             page.anime_selected.connect(self._on_anime_selected)
@@ -342,6 +385,8 @@ class MainWindow(QMainWindow):
     def show_page(self, key: str) -> None:
         page = self.pages.get(key)
         if page is not None:
+            if page is self.web:
+                self.web.git(key)
             self.stack.setCurrentWidget(page)
             self._current_page = key
             self.discord.sayfa(key)
@@ -401,11 +446,10 @@ class MainWindow(QMainWindow):
         Detaya hem keşiften hem aramadan gelinebiliyor; sabit bir "Geri" hedefi
         (ör. ana sayfa) kullanıcıyı aramasından koparırdı.
         """
-        current = self.stack.currentWidget()
-        for key, page in self.pages.items():
-            if page is current and key not in ("detail", "episodes"):
-                self._detail_origin = key
-                break
+        # Anahtar `_current_page`'den: web sayfalarının hepsi aynı widget,
+        # widget'tan anahtar çıkarmak hep ilk web sayfasını ("home") verirdi.
+        if self._current_page not in ("detail", "episodes"):
+            self._detail_origin = self._current_page
         self.show_page("detail")
         populate()
 
@@ -900,6 +944,13 @@ def run() -> int:
     window = MainWindow()
     window.show()
     kod = app.exec()
+    # Pencere (ve içindeki web sayfası) QApplication'dan ÖNCE yıkılmalı: web
+    # profilinin ebeveyni QApplication ve Qt, profil sayfadan önce giderse
+    # "WebEnginePage still not deleted" deyip kapanışta çökebiliyor. Yerel
+    # değişkenlerin yıkım sırası Python'da tanımsız; sırayı burada koyuyoruz.
+    window.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    del window
 
     # `~QThreadPool` yıkıcısı ZAMAN AŞIMSIZ `waitForDone()` çağırır: havuzda
     # hâlâ koşan bir iş varsa normal dönüş süreci bitirmez, yorumlayıcı kapanışta

@@ -204,26 +204,33 @@ def test_kart_detayi_bagli_acip_bolumleri_getiriyor(
     assert bolumler._rows and bolumler._rows[0].entry["kimlik"] == "07-ghost"
 
 
-def test_ana_sayfa_devam_seridi(iki_seri, main_window, qtbot, monkeypatch):
-    """Jikan/AniList boş (autouse sahte) ama şerit yerel kitaplıktan dolu."""
-    ana = main_window.pages["home"]
-    qtbot.waitUntil(lambda: len(ana.devam.dugmeler) == 2, timeout=5000)
-    assert ana.devam.isVisible()
-    assert "07-Ghost" in ana.devam.dugmeler[0].text()
-    assert "5. Bölüm" in ana.devam.dugmeler[0].text()
+def test_ana_sayfa_devam_seridi(iki_seri, main_window, web, monkeypatch):
+    """Jikan/AniList boş (autouse sahte) ama şerit yerel kitaplıktan dolu.
+
+    Ana sayfa web arayüzünde: şerit `devam_listesi` ucundan çiziliyor, karta
+    tıklamak köprüden `ac("kitaplik")` ile detayı kaynağa bağlı açıyor.
+    """
+    web.bekle("document.querySelectorAll('#devam .devam-kart').length === 2")
+    assert web.js("document.getElementById('devam').hidden") is False
+    ilk = web.js("document.querySelectorAll('#devam .devam-kart')[0].innerText")
+    assert "07-Ghost" in ilk and "5. Bölüm" in ilk
 
     acilan = []
     monkeypatch.setattr(DetailPage, "kitaplik_ac", lambda self, k: acilan.append(k))
-    ana.devam.dugmeler[1].click()
-    assert acilan and acilan[0]["kimlik"] == "1234"
+    web.js("document.querySelectorAll('#devam .devam-kart')[1].click()")
+    web.qtbot.waitUntil(lambda: bool(acilan), timeout=5000)
+    assert acilan[0]["kimlik"] == "1234"
     assert main_window.stack.currentWidget() is main_window.pages["detail"]
 
 
-def test_bos_kitaplikta_serit_gizli(izole_ev, main_window, qtbot):
-    ana = main_window.pages["home"]
-    qtbot.wait(200)
-    assert ana.devam.dugmeler == []
-    assert not ana.devam.isVisible()
+def test_bos_kitaplikta_serit_gizli(izole_ev, main_window, web):
+    # İstatistik ucu döndüyse (hero sayıları dolu) şerit ucu da dönmüştür:
+    # ikisi aynı `goster`'de, aynı havuzda istendi.
+    web.bekle("document.querySelector('.hero-sayilar b') && "
+              "document.querySelector('.hero-sayilar').innerText.includes('kaynak')")
+    web.qtbot.wait(200)
+    assert web.js("document.querySelectorAll('#devam .devam-kart').length") == 0
+    assert web.js("document.getElementById('devam').hidden") is True
 
 
 def test_menude_kitaplik_ve_bilinmeyen_anahtar_korumasi(main_window):

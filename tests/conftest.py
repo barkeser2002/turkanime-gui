@@ -101,9 +101,20 @@ def _ag_mandali(pytestconfig):
 # ── Qt ───────────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session", autouse=True)
 def _qt_env():
-    """QtWebEngine'in şart koştuğu attribute'u QApplication'dan önce ayarla."""
+    """QtWebEngine'in şart koştuğu attribute'u QApplication'dan önce ayarla.
+
+    Oturum sonunda bekleyen `deleteLater`'lar işleniyor: pytest-qt son testin
+    penceresini yalnızca `deleteLater` ile bırakıyor, olay döngüsü bir daha
+    dönmüyor ve web sayfası, profili (ebeveyni QApplication) yıkılırken hâlâ
+    yaşıyor olurdu ("WebEnginePage still not deleted. Expect troubles").
+    """
     from turkanime_api.gui.qt.app import prepare_qt_env
     prepare_qt_env()
+    yield
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+    if QApplication.instance() is not None:
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(autouse=True)
@@ -349,6 +360,51 @@ def main_window(qtbot):
     win.show()
     yield win
     win.close()
+
+
+# ── Web arayüzü (QtWebEngine sayfası) ────────────────────────────────────────
+class WebSurucu:
+    """Web görünümünde JS çalıştırıp sonucunu bekleyen küçük sürücü.
+
+    `runJavaScript` sonucu geri çağrıyla, olay döngüsü döndükçe geliyor;
+    testler düz değer istiyor. `bekle` koşul doğru olana kadar betiği
+    yeniden çalıştırıyor (sayfa köprüden gelen veriyi eşzamansız çiziyor).
+
+    DİKKAT: DOM düğümü JSON'a çevrilemiyor ve Python'a boş dizge olarak
+    geliyor; varlık sınamasında ``!!document.querySelector(...)`` yazın.
+    """
+
+    def __init__(self, qtbot, gorunum):
+        self.qtbot = qtbot
+        self.gorunum = gorunum
+
+    def hazir(self, timeout: int = 15000) -> "WebSurucu":
+        self.qtbot.waitUntil(lambda: self.gorunum.hazir, timeout=timeout)
+        self.bekle("!!(window.TA && TA.aktif)", timeout=timeout)
+        return self
+
+    def js(self, betik: str, timeout: int = 5000):
+        sonuc: list = []
+        self.gorunum.page().runJavaScript(betik, 0, sonuc.append)
+        self.qtbot.waitUntil(lambda: bool(sonuc), timeout=timeout)
+        return sonuc[0]
+
+    def bekle(self, betik: str, timeout: int = 5000):
+        import time
+        son = time.monotonic() + timeout / 1000.0
+        deger = None
+        while time.monotonic() < son:
+            deger = self.js(betik, timeout=timeout)
+            if deger:
+                return deger
+            self.qtbot.wait(40)
+        raise AssertionError(f"koşul gerçekleşmedi: {betik!r} → {deger!r}")
+
+
+@pytest.fixture
+def web(qtbot, main_window):
+    """Ana penceredeki web görünümünün sürücüsü (sayfa yüklenmiş)."""
+    return WebSurucu(qtbot, main_window.web).hazir()
 
 
 # ── Yerel HTTP sunucusu (dış servis yerine) ──────────────────────────────────

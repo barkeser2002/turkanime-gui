@@ -510,8 +510,12 @@ def test_episode_page_does_not_refetch_when_given_list(main_window, fake_fetch):
 
 def test_detail_back_returns_to_origin(main_window):
     main_window.show_page("trending")
-    main_window.pages["trending"].anime_selected.emit(make_anime())
+    # Trend web sayfası: kart tıklaması köprüden `ac("anime", ...)` olarak gelir.
+    main_window._web_ac("anime", {"kayit": make_anime()})
     assert main_window.stack.currentWidget() is main_window.pages["detail"]
 
     main_window.pages["detail"].back_requested.emit()
     assert main_window.stack.currentWidget() is main_window.pages["trending"]
+    # Web sayfalarının hepsi aynı widget: dönüş ANAHTARI da doğru olmalı.
+    assert main_window._current_page == "trending"
+    assert main_window.web.rota == "trending"

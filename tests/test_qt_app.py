@@ -13,7 +13,9 @@ def test_window_builds_all_pages(main_window):
         assert key in main_window.pages, f"{key} sayfası kurulmadı"
     # Bölüm sayfası menüde yok ama stack'te olmalı (arama sonucundan açılır)
     assert "episodes" in main_window.pages
-    assert main_window.stack.count() == len(main_window.pages)
+    # Web'e taşınan sayfaların hepsi TEK görünüm: yığında bir kez duruyor.
+    tekil = {id(sayfa) for sayfa in main_window.pages.values()}
+    assert main_window.stack.count() == len(tekil)
 
 
 def test_page_switching(main_window):

@@ -106,6 +106,7 @@ hiddenimports = (
         # QtWebEngine modülleri dinamik yüklendiği için açıkça belirtiliyor
         'PySide6.QtWebEngineCore',
         'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebChannel',
         'PySide6.QtNetwork',
         # CF çözücü alt-süreci uygulamanın kendisi tarafından çağrılıyor
         'turkanime_api.common.cf_qt_solver',
@@ -168,6 +169,9 @@ a = Analysis(
         # modülün yanında arıyor; pakette yoksa "kaldığın yer" ve otomatik
         # ilerleme sessizce eski davranışa (her bölümde soru) düşer.
         ('turkanime_api/common/mpv_konum.lua', 'turkanime_api/common'),
+        # Web arayüzünün HTML/CSS/JS/görselleri: `gui.web.sema.STATIK` onları
+        # modülün yanında arıyor; pakette yoksa pencere boş açılır.
+        ('turkanime_api/gui/web/statik', 'turkanime_api/gui/web/statik'),
     ] + pyside_datas + bin_data,
     hiddenimports=hiddenimports,
     hookspath=[],

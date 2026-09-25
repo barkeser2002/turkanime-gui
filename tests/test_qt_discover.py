@@ -315,34 +315,33 @@ def test_score_badge_uses_score_color(qtbot, fake_sources):
     assert none.lblSource.text() == "Puansız"
 
 
-def test_card_click_opens_detail_page(qtbot, main_window, fake_sources):
+def test_card_click_opens_detail_page(main_window, web, fake_sources):
     """Kart tıklaması detay sayfasını açar ve TÜM kaydı taşır.
 
     Faz 4 öncesi yalnızca başlık taşınıp aramaya köprüleniyordu; artık özet ve
-    türlerin yeniden çekilmesine gerek kalmasın diye sözlüğün tamamı gider.
+    türlerin yeniden çekilmesine gerek kalmasın diye sözlüğün tamamı gider
+    (web kartı kaydı köprüden geri yolluyor).
     """
-    from PySide6.QtCore import Qt
-
     fake_sources(trending=[make_item("Cowboy Bebop")])
 
-    page = main_window.pages["trending"]
     main_window.show_page("trending")
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-
-    qtbot.mouseClick(page.cards()[0], Qt.MouseButton.LeftButton)
+    kartlar = "document.querySelectorAll('[data-sayfa=trending] .izgara .kart')"
+    web.bekle(f"{kartlar}.length === 1")
+    web.js(f"{kartlar}[0].click()")
 
     detail = main_window.pages["detail"]
-    assert main_window.stack.currentWidget() is detail
+    web.qtbot.waitUntil(lambda: main_window.stack.currentWidget() is detail,
+                        timeout=5000)
     assert detail.lblTitle.text() == "Cowboy Bebop"
     assert [b.text() for b in detail.genre_badges] == ["Action"]
 
 
-def test_main_window_wires_all_discover_modes(main_window):
+def test_main_window_wires_all_discover_modes(main_window, web):
+    """Üç keşif kipi de tek web görünümünde birer rota."""
     for key in ("home", "trending", "season"):
-        page = main_window.pages[key]
-        assert isinstance(page, DiscoverPage)
-        assert page.mode == key
+        assert main_window.pages[key] is main_window.web
+        main_window.show_page(key)
+        web.bekle(f"TA.aktif === {key!r}")
 
 
 # ── Izgara düzeni ───────────────────────────────────────────────────────────
