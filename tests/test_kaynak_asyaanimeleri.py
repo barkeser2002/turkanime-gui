@@ -615,7 +615,7 @@ def test_kaynak_kayitta():
     assert kaynak.taranabilir and kaynak.oynatilabilir
     assert kaynak in kayit.cli_kaynaklari()
     assert kaynak in kayit.tarayici_kaynaklari()
-    assert kayit.KAYNAKLAR[-1] is kaynak, "yeni kaynak tablonun sonuna eklenmeli"
+    assert kayit.KAYNAKLAR.index(kaynak) > kayit.KAYNAKLAR.index(kayit.bul("Tranimaci")), "yeni kaynak eski kaynakların arkasına eklenmeli"
 
 
 def test_kayit_uclari_modulun_fonksiyonlari():

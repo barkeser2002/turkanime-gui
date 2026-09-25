@@ -217,7 +217,7 @@ def naruto_aramasi_yukle(site: SahteSite) -> None:
 def test_kayit_kaynagi_aciyor():
     kaynak = kayit.bul("AnimPow")
     assert kaynak is not None
-    assert kayit.KAYNAKLAR[-1] is kaynak, "yeni kaynak tablonun SONUNA eklenmeli"
+    assert kayit.KAYNAKLAR.index(kaynak) > kayit.KAYNAKLAR.index(kayit.bul("Tranimaci")), "yeni kaynak eski kaynakların arkasına eklenmeli"
     assert (kaynak.ad, kaynak.etiket, kaynak.kisaltma, kaynak.renk, kaynak.oynatici) == \
         ("AnimPow", "AnimPow", "AP", "#fd79a8", "ANIMPOW")
     assert (kaynak.modul, kaynak.cli_kodu) == ("animpow", "animpow")

@@ -460,6 +460,7 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
            taranabilir=True),
     Kaynak("AnimPow", "AnimPow", "AP", "#fd79a8", "ANIMPOW", _animpow,
            modul="animpow", cli_kodu="animpow", bolum_adresi=_animpow_adresi,
+           taranabilir=True),
     Kaynak("Deokwave", "Deokwave", "DW", "#6c5ce7", "DEOKWAVE", _deokwave,
            modul="deokwave", cli_kodu="deokwave", bolum_adresi=_deokwave_adresi,
            taranabilir=True),

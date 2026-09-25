@@ -705,7 +705,9 @@ def test_anizle_fireplayer_yolu_degismedi(fireplayer):
 # ─────────────────────────────────────────────────────────────────────────────
 def test_kayitta_animeler_var():
     kaynak = kayit.bul("Animeler")
-    assert kaynak is not None and kaynak is kayit.KAYNAKLAR[-1]
+    # Yeni kaynaklar eski yedi kaynağın ARKASINA eklenir; aralarındaki sıra
+    # birleştirme sırasına bağlı olduğu için sabitlenmiyor.
+    assert kaynak is not None and kayit.KAYNAKLAR.index(kaynak) > kayit.KAYNAKLAR.index(kayit.bul("Tranimaci"))
     assert kayit.bul("animeler") is kayit.bul("Animeler.pw") is kaynak
     assert (kaynak.etiket, kaynak.kisaltma, kaynak.renk, kaynak.oynatici) == \
         ("Animeler.pw", "AN", "#00cec9", "ANIMELER")

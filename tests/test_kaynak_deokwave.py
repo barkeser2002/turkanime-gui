@@ -512,7 +512,7 @@ def test_istekler_arasinda_en_az_bir_saniye(site, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 def test_kayit_deokwave_kaynagini_sunuyor():
     kaynak = kayit.bul("deokwave")
-    assert kaynak is not None and kaynak is kayit.KAYNAKLAR[-1]
+    assert kaynak is not None and kayit.KAYNAKLAR.index(kaynak) > kayit.KAYNAKLAR.index(kayit.bul("Tranimaci"))
     assert (kaynak.ad, kaynak.etiket, kaynak.kisaltma, kaynak.renk, kaynak.oynatici) == \
         ("Deokwave", "Deokwave", "DW", "#6c5ce7", "DEOKWAVE")
     assert kaynak.modul == "deokwave" and kaynak.cli_kodu == "deokwave"

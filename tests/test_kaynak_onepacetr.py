@@ -658,7 +658,8 @@ def test_bicimsiz_bolum_yaniti_acik_hata(oturum):
 def test_kayit_kaynagi_aciyor():
     kaynak = kayit.bul("onepacetr")
     assert kaynak is not None
-    assert kaynak is kayit.bul("One Pace TR") is kayit.KAYNAKLAR[-1]
+    assert kaynak is kayit.bul("One Pace TR")
+    assert kayit.KAYNAKLAR.index(kaynak) > kayit.KAYNAKLAR.index(kayit.bul("Tranimaci"))
     assert (kaynak.ad, kaynak.etiket, kaynak.kisaltma, kaynak.renk, kaynak.oynatici) == (
         "One Pace TR", "One Pace TR", "OP", "#fdcb6e", "ONEPACETR")
     assert (kaynak.modul, kaynak.cli_kodu) == ("onepacetr", "onepacetr")
