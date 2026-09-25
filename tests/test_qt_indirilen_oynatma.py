@@ -17,10 +17,10 @@ import pytest
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.common import mpv_oynatici
 from turkanime_api.common.dosya_adi import bolum_hedefi, oynatilabilir_dosya
-from turkanime_api.gui.qt.pages import downloads as downloads_mod
-from turkanime_api.gui.qt.pages.downloads import (
+from turkanime_api.gui.qt import indirme as downloads_mod
+from turkanime_api.gui.qt.indirme import (
     BITMIS_DURUMLAR, DURUM_HATA, DURUM_IPTAL, DURUM_TAMAMLANDI, DownloadManager,
-    DownloadRow, DownloadsPage, satir_basligi,
+    satir_basligi,
 )
 from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 
@@ -157,15 +157,19 @@ def test_kayitli_yol_ayar_degisse_de_bulunuyor(izole_ev, tmp_path, main_window,
     assert sahte_mpv["argv"][0][1] == str(eski)
 
 
-# ── İndirme satırı ───────────────────────────────────────────────────────────
+# ── İndirme satırı (web sayfası) ─────────────────────────────────────────────
 @pytest.mark.parametrize("durum,gorunur", [(DURUM_TAMAMLANDI, True),
                                            (DURUM_HATA, False), (DURUM_IPTAL, False)])
-def test_oynat_ve_klasor_yalnizca_tamamlananda(qtbot, durum, gorunur):
-    row = DownloadRow("dl1", "Naruto — 1. Bölüm")
-    qtbot.addWidget(row)
-    row.set_state(durum)
-    assert (not row.btnPlay.isHidden()) == gorunur
-    assert (not row.btnFolder.isHidden()) == gorunur
+def test_oynat_ve_klasor_yalnizca_tamamlananda(main_window, web, durum, gorunur):
+    y = main_window.downloads
+    main_window.show_page("downloads")
+    y.added.emit("dl1", "Naruto — 1. Bölüm")
+    y.state.emit("dl1", durum)
+    satir = "document.querySelector('.indirme-satiri[data-id=dl1]')"
+    web.bekle(f"!!{satir} && {satir}.querySelector('.durum-cipi').textContent.length > 0")
+    dugmeler = web.js(f"Array.from({satir}.querySelectorAll('button')).map(b => b.textContent)")
+    assert ("Oynat" in dugmeler) == gorunur
+    assert ("Klasörü Aç" in dugmeler) == gorunur
 
 
 def test_satir_basligi_seri_adini_tasiyor():
@@ -194,6 +198,8 @@ class DosyaYazanVideo:
 
 
 def test_biten_indirmeden_oynat_ve_klasor_ac(izole_ev, qtbot, tmp_path, monkeypatch):
+    from turkanime_api.gui.web.kopru import Kopru
+    from turkanime_api.gui.web.uclar_indirme import IndirmeUclari
     acilan = []
 
     class Masaustu:
@@ -204,10 +210,9 @@ def test_biten_indirmeden_oynat_ve_klasor_ac(izole_ev, qtbot, tmp_path, monkeypa
 
     monkeypatch.setattr(downloads_mod, "QDesktopServices", Masaustu)
     mgr = DownloadManager()
-    page = DownloadsPage(mgr)
-    qtbot.addWidget(page)
     istenen = []
-    page.oynat_istendi.connect(istenen.append)
+    uclar = IndirmeUclari(Kopru(), mgr, oynat=istenen.append,
+                          indirme_dizini=lambda: str(tmp_path))
 
     bolum = Bolum(slug="naruto-test-3-bolum", anime=Anime("jjk", "Jujutsu Kaisen"))
     bolum.video = DosyaYazanVideo(bolum)
@@ -216,21 +221,20 @@ def test_biten_indirmeden_oynat_ve_klasor_ac(izole_ev, qtbot, tmp_path, monkeypa
     qtbot.waitUntil(lambda: mgr.durum(tid) in BITMIS_DURUMLAR, timeout=10000)
     assert mgr.durum(tid) == DURUM_TAMAMLANDI
 
-    row = page._rows[tid]
-    assert row.lblTitle.text() == "Jujutsu Kaisen — 3. Bölüm"
+    (satir,) = uclar.indirmeler()["satirlar"]
+    assert satir["baslik"] == "Jujutsu Kaisen — 3. Bölüm"
     assert mgr.dosya(tid) == str(tmp_path / "jjk" / "naruto-test-3-bolum.mp4")
     assert entry["yerel_dosya"] == mgr.dosya(tid)
 
-    row.btnFolder.click()
+    uclar.indirme_eylem(tid, "klasor")
     assert [u.toLocalFile() for u in acilan] == [str(tmp_path / "jjk")]
-    row.btnPlay.click()
+    uclar.indirme_eylem(tid, "oynat")
     assert istenen == [entry]
 
-    page.btnOpenDir.click()
+    uclar.indirme_toplu("klasor")
     assert len(acilan) == 2, "üst düğme indirme klasörünü açar"
 
 
-# ── Toplu indirme bildirimi ──────────────────────────────────────────────────
 def test_kuyruk_bitince_arka_plandaysa_bir_kez_bildiriliyor(main_window, monkeypatch):
     bildirim = []
     kalan = [["dl2", "dl3"], ["dl3"], []]

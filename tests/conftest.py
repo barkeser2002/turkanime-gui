@@ -101,16 +101,27 @@ def _ag_mandali(pytestconfig):
 # ── Qt ───────────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session", autouse=True)
 def _qt_env():
-    """QtWebEngine'in şart koştuğu attribute'u QApplication'dan önce ayarla."""
+    """QtWebEngine'in şart koştuğu attribute'u QApplication'dan önce ayarla.
+
+    Oturum sonunda bekleyen `deleteLater`'lar işleniyor: pytest-qt son testin
+    penceresini yalnızca `deleteLater` ile bırakıyor, olay döngüsü bir daha
+    dönmüyor ve web sayfası, profili (ebeveyni QApplication) yıkılırken hâlâ
+    yaşıyor olurdu ("WebEnginePage still not deleted. Expect troubles").
+    """
     from turkanime_api.gui.qt.app import prepare_qt_env
     prepare_qt_env()
+    yield
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+    if QApplication.instance() is not None:
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(autouse=True)
 def _stub_discover_sources(request, monkeypatch):
     """Keşif ve AniList ağ uçlarını varsayılan olarak sustur.
 
-    `DiscoverPage` ilk gösterimde veri çeker; `main_window` fixture'ı pencereyi
+    Ana sayfa (web) ilk gösterimde veri çeker; `main_window` fixture'ı pencereyi
     `show()` ettiği için ana sayfa açılır ve bu, hiçbir şey yapmayan testleri
     bile Jikan/AniList'e çıkarır. Kural 1 gereği bunu kesiyoruz; gerçek veri
     isteyen testler kendi sahtelerini bu fixture'ın üstüne yazabilir.
@@ -262,7 +273,7 @@ def _indirme_kuyrugu_yalitimi(monkeypatch, tmp_path_factory):
     her `MainWindow` açılışı da onu "duraklatıldı" işler olarak geri yüklerdi.
     `izole_ev` kullanan testler etkilenmez: onların kökü zaten geçici.
     """
-    from turkanime_api.gui.qt.pages import downloads
+    from turkanime_api.gui.qt import indirme as downloads
 
     asil = downloads.kuyruk_yolu
     gecici_kok = tmp_path_factory.getbasetemp().resolve()
@@ -349,6 +360,187 @@ def main_window(qtbot):
     win.show()
     yield win
     win.close()
+
+
+# ── Web arayüzü (QtWebEngine sayfası) ────────────────────────────────────────
+class WebSurucu:
+    """Web görünümünde JS çalıştırıp sonucunu bekleyen küçük sürücü.
+
+    `runJavaScript` sonucu geri çağrıyla, olay döngüsü döndükçe geliyor;
+    testler düz değer istiyor. `bekle` koşul doğru olana kadar betiği
+    yeniden çalıştırıyor (sayfa köprüden gelen veriyi eşzamansız çiziyor).
+
+    DİKKAT: DOM düğümü JSON'da ``{}`` oluyor (Python'da boş sözlük, yani
+    yanlış); varlık sınamasında ``!!document.querySelector(...)`` yazın.
+    """
+
+    def __init__(self, qtbot, gorunum):
+        self.qtbot = qtbot
+        self.gorunum = gorunum
+
+    def hazir(self, timeout: int = 15000) -> "WebSurucu":
+        self.qtbot.waitUntil(lambda: self.gorunum.hazir, timeout=timeout)
+        self.bekle("!!(window.TA && TA.aktif)", timeout=timeout)
+        return self
+
+    def js(self, betik: str, timeout: int = 5000):
+        """Betiği çalıştır; son ifadenin değerini JSON üzerinden döndür.
+
+        `runJavaScript`'in kendi dönüşümü dizileri boş dizgeye çeviriyor;
+        değer sayfada `JSON.stringify` ile paketleniyor (betik `eval` ile
+        koşuyor ki deyim dizileri de çalışsın).
+        """
+        import json
+        sarili = ("(function () { var d = (0, eval)(" + json.dumps(betik) + ");"
+                  " try { return JSON.stringify(d === undefined ? null : d); }"
+                  " catch (e) { return 'null'; } })()")
+        sonuc: list = []
+        self.gorunum.page().runJavaScript(sarili, 0, sonuc.append)
+        self.qtbot.waitUntil(lambda: bool(sonuc), timeout=timeout)
+        return json.loads(sonuc[0]) if isinstance(sonuc[0], str) and sonuc[0] else None
+
+    def satirlar(self, kaynak: str) -> str:
+        """Detay sayfasında kaynağın çizilmiş bölüm satırları (JS ifadesi)."""
+        return (f"document.querySelectorAll('.akordiyon[data-kaynak=\"{kaynak}\"] "
+                ".bolum-satiri[data-sira]')")
+
+    def detay_bekle(self, kaynak: str, adet: int = 1, timeout: int = 8000) -> None:
+        """Detay sayfası açık ve kaynağın en az ``adet`` bölüm satırı çizili."""
+        self.bekle("TA.aktif === 'detail'", timeout=timeout)
+        self.bekle(f"{self.satirlar(kaynak)}.length >= {adet}", timeout=timeout)
+
+    def bekle(self, betik: str, timeout: int = 5000):
+        import time
+        son = time.monotonic() + timeout / 1000.0
+        deger = None
+        while time.monotonic() < son:
+            deger = self.js(betik, timeout=timeout)
+            if deger:
+                return deger
+            self.qtbot.wait(40)
+        raise AssertionError(f"koşul gerçekleşmedi: {betik!r} → {deger!r}")
+
+
+@pytest.fixture
+def sahte_arama(monkeypatch):
+    """`SearchEngine` sahtesi (artımlı sözleşme); sorguları kaydeder.
+
+    ``kur(sonuclar={kaynak: kayıtlar}, hatalar={kaynak: sebep},
+    yetismeyen={kaynak: sebep})``: sonuçlar ve hatalar `kaynak_bitti` ile
+    tek tek bildirilir; ``yetismeyen`` hiç bildirilmez, yalnızca dönüşteki
+    ``hatalar``'da durur (gerçek motordaki zaman aşımı gibi).
+    """
+    import turkanime_api.common.adapters as adapters_mod
+
+    cagrilar: list = []
+
+    def kur(sonuclar=None, hatalar=None, yetismeyen=None):
+        sonuclar, hatalar = dict(sonuclar or {}), dict(hatalar or {})
+        yetismeyen = dict(yetismeyen or {})
+
+        class SahteMotor:
+            def __init__(self):
+                self.adapters = {ad: None for ad in [*sonuclar, *hatalar, *yetismeyen]}
+
+            def artimli_ara(self, query, kaynak_bitti, limit_per_source=10):
+                cagrilar.append(query)
+                for ad, kayitlar in sonuclar.items():
+                    kaynak_bitti(ad, list(kayitlar), None)
+                for ad, sebep in hatalar.items():
+                    kaynak_bitti(ad, [], sebep)
+                return adapters_mod.AramaSonuclari(
+                    sonuclar, hatalar={**hatalar, **yetismeyen})
+
+        monkeypatch.setattr(adapters_mod, "SearchEngine", SahteMotor)
+        return cagrilar
+
+    return kur
+
+
+@pytest.fixture
+def sahte_bolumler(monkeypatch):
+    """`sources_bridge.fetch_episodes` sahtesi; ``(kaynak, kimlik)`` çağrıları kaydeder.
+
+    ``kur({kaynak: [kayıtlar] | callable(kimlik) | Exception})``. Detay
+    sayfasının `bolumler` ucu fonksiyonu çağrı anında modülden okuyor.
+    """
+    import turkanime_api.gui.qt.sources_bridge as sb
+
+    cagrilar: list = []
+
+    def kur(tablo):
+        def fetch(kaynak, kimlik, baslik):
+            cagrilar.append((kaynak, kimlik))
+            deger = tablo.get(kaynak, [])
+            if isinstance(deger, Exception):
+                raise deger
+            return list(deger(kimlik) if callable(deger) else deger)
+
+        monkeypatch.setattr(sb, "fetch_episodes", fetch)
+        return cagrilar
+
+    return kur
+
+
+@pytest.fixture
+def web(qtbot, main_window):
+    """Ana penceredeki web görünümünün sürücüsü (sayfa yüklenmiş)."""
+    return WebSurucu(qtbot, main_window.web).hazir()
+
+
+# ── Köprü uçları (web sayfası olmadan) ───────────────────────────────────────
+class SahteKopru:
+    """`Kopru.yay` olaylarını kaydeden ikame (her thread'den güvenli)."""
+
+    def __init__(self):
+        self.olaylar: list = []
+        self._kilit = threading.Lock()
+
+    def yay(self, ad, veri=None):
+        with self._kilit:
+            self.olaylar.append((ad, veri))
+
+    def hepsi(self, ad: str) -> list:
+        with self._kilit:
+            return [v for a, v in self.olaylar if a == ad]
+
+    def son(self, ad: str):
+        olaylar = self.hepsi(ad)
+        return olaylar[-1] if olaylar else None
+
+
+@pytest.fixture
+def ayar_uclari(qtbot, monkeypatch):
+    """Ayarlar sayfasının Python tarafı (`AyarlarUclari`), sahte köprüyle.
+
+    ``kur(anilist=None, **servisler)``; dönen nesnenin ``kopru`` alanı olay
+    kaydıdır. Kurulumdaki kaynak kimliği uygulaması gerçekte koşar (ayar
+    dosyası testte zaten geçici).
+    """
+    from PySide6.QtCore import QObject, Signal
+    from turkanime_api.gui.web.uclar_ayarlar import AyarlarUclari
+
+    class SahteAniList(QObject):
+        auth_changed = Signal(object)
+        kullanici = None
+
+        def giris_var_mi(self):
+            return False
+
+    kurulanlar: list = []
+
+    def kur(anilist=None, **servisler):
+        kopru = SahteKopru()
+        uclar = AyarlarUclari(kopru, anilist=anilist or SahteAniList(), **servisler)
+        uclar.kopru = kopru
+        kurulanlar.append(uclar)
+        return uclar
+
+    yield kur
+    from PySide6.QtCore import QThreadPool
+    for uclar in kurulanlar:
+        uclar.arsiv_indirmeyi_durdur()
+    QThreadPool.globalInstance().waitForDone(5000)
 
 
 # ── Yerel HTTP sunucusu (dış servis yerine) ──────────────────────────────────

@@ -2,7 +2,7 @@
 
 Ağa çıkılmaz: arşiv `tmp_path`'te kurulur ve "depodaki arşiv" sayılır
 (`DEPO_ARSIVI`); uzak aynalar conftest'te zaten kesik (`_session` patlar).
-Kapak indirmesi `gorsel_getir` sahtesiyle sayılır.
+Detay sayfası web'de: künye `DetayUclari.detay` ucundan geliyor.
 """
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from turkanime_api.gui.qt.pages import detail as detail_mod
-from turkanime_api.gui.qt.pages.detail import DetailPage, kunye_birlestir, meta_line
+from turkanime_api.gui.web.kopru import Kopru
+from turkanime_api.gui.web.kunye import kunye_birlestir, meta_line
+from turkanime_api.gui.web.uclar_detay import DetayUclari, EskiIstek
 from turkanime_api.sources import animedepo
 
 OZET = ("Bir köle olan Teito Klein, Zaiphon adlı bir güce sahiptir. <br /><br />"
@@ -70,23 +71,8 @@ def arsiv(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def kapak_istekleri(monkeypatch):
-    """Detay sayfasının kapak indirmesini say (ağa çıkmaz)."""
-    istekler: list = []
-
-    def _getir(url):
-        istekler.append(url)
-        return None
-
-    monkeypatch.setattr(detail_mod, "gorsel_getir", _getir)
-    return istekler
-
-
-@pytest.fixture
-def page(qtbot):
-    widget = DetailPage()
-    qtbot.addWidget(widget)
-    return widget
+def uclar():
+    return DetayUclari(None, oynat=lambda e: None, indir=lambda e: None)
 
 
 # ── animedepo.anime_bilgisi ─────────────────────────────────────────────────
@@ -161,56 +147,46 @@ def test_meta_satiri_tarih_ve_bicim():
                       "startDate": {"year": 1998, "month": 4}}) == "İlkbahar 1998"
 
 
-# ── Detay sayfası ───────────────────────────────────────────────────────────
-def test_arsiv_sonucu_kunyeyle_aciliyor(qtbot, page, arsiv, kapak_istekleri):
-    page.show_match("TürkAnime", "07-ghost", "07-Ghost")
+# ── Detay ucu ───────────────────────────────────────────────────────────────
+def test_arsiv_sonucu_kunyeyle_aciliyor(uclar, arsiv):
+    rid = uclar.ac_sonuc("TürkAnime", "07-ghost", "07-Ghost")
+    k = uclar.detay(rid)["kunye"]
 
-    qtbot.waitUntil(lambda: "Teito" in page.txtSummary.toPlainText(), timeout=5000)
-    ozet = page.txtSummary.toPlainText()
-    assert "<" not in ozet and "&amp;" not in ozet
-    assert "\n" in ozet, "<br /> satır sonuna çevrilmedi"
-    assert [b.text() for b in page.genre_badges] == ["Fantastik", "Aksiyon"]
-    assert [b.text() for b in page.studio_badges] == ["Studio Deen"]
-    assert "76" in page.lblScore.text()
-    assert "25 bölüm" in page.lblMeta.text()
-    assert "7 Nisan 2009" in page.lblMeta.text()
-    assert page.lblTitle.text() == "07-Ghost", "künye başlığı ezdi"
-    # Kapak yok (arşiv) → çizilmiş yer tutucu; ölü "Resim" adresi istenmedi.
-    assert page.kapak_yer_tutucuda
-    assert not page.lblCover.pixmap().isNull()
-    assert kapak_istekleri == []
+    assert "Teito" in k["ozet"]
+    assert "<" not in k["ozet"] and "&amp;" not in k["ozet"]
+    assert "\n" in k["ozet"], "<br /> satır sonuna çevrilmedi"
+    assert k["turler"] == ["Fantastik", "Aksiyon"]
+    assert k["studyolar"] == ["Studio Deen"]
+    assert k["puan"] == 76
+    assert "25 bölüm" in k["meta"] and "7 Nisan 2009" in k["meta"]
+    assert k["baslik"] == "07-Ghost", "künye başlığı ezdi"
+    # Ölü siteye giden "Resim" adresi kapak olarak taşınmadı.
+    assert k["kapak"] == ""
 
 
-def test_kunyesiz_arsiv_kaydi_sessizce_bos_kaliyor(qtbot, page, arsiv):
-    page.show_match("TürkAnime", "bilgisiz", "Bilgisiz Anime")
-    qtbot.wait(150)
-    assert "Özet bulunamadı." in page.txtSummary.toPlainText()
-    assert page.lblScore.text() == ""
+def test_kunyesiz_arsiv_kaydi_sessizce_bos_kaliyor(uclar, arsiv):
+    k = uclar.detay(uclar.ac_sonuc("TürkAnime", "bilgisiz", "Bilgisiz Anime"))["kunye"]
+    assert k["ozet"] == "" and k["puan"] is None
 
 
 @pytest.mark.parametrize("slug", ["puansiz", "bos-puan", "null-puan"])
-def test_puansiz_kayitta_skor_yok(qtbot, page, arsiv, slug):
-    page.show_match("TürkAnime", slug, slug)
-    qtbot.waitUntil(lambda: "Özet bulunamadı" not in page.txtSummary.toPlainText(),
-                    timeout=5000)
-    assert page.lblScore.text() == ""
+def test_puansiz_kayitta_skor_yok(uclar, arsiv, slug):
+    k = uclar.detay(uclar.ac_sonuc("TürkAnime", slug, slug))["kunye"]
+    assert k["ozet"] and k["puan"] is None
 
 
-def test_eski_anime_kunyesi_yenisini_ezmiyor(qtbot, page, arsiv):
-    """İki hızlı tıklama: yalnızca İKİNCİ animenin künyesi görünmeli."""
-    rid_eski = page.show_match("TürkAnime", "07-ghost", "07-Ghost")
-    page.show_match("TürkAnime", "ikinci", "İkinci")
-    # Birincinin künyesi ŞİMDİ geliyor (geç dönen arka plan işi):
-    page._arsiv_bilgisini_uygula(rid_eski, animedepo.anime_bilgisi("07-ghost"))
-
-    qtbot.waitUntil(lambda: "İkinci animenin" in page.txtSummary.toPlainText(),
-                    timeout=5000)
-    qtbot.wait(100)                          # birincinin gerçek işi de bitsin
-    assert "Teito" not in page.txtSummary.toPlainText()
-    assert [b.text() for b in page.genre_badges] == ["Dram"]
+def test_eski_anime_kunyesi_yenisini_ezmiyor(uclar, arsiv):
+    """İki hızlı tıklama: birincinin geç dönen künyesi ikinciyi ezmemeli."""
+    rid_eski = uclar.ac_sonuc("TürkAnime", "07-ghost", "07-Ghost")
+    rid = uclar.ac_sonuc("TürkAnime", "ikinci", "İkinci")
+    with pytest.raises(EskiIstek):
+        uclar.detay(rid_eski)                # geç dönen arka plan işi
+    assert "Teito" not in json.dumps(uclar.oturum.anime, ensure_ascii=False)
+    k = uclar.detay(rid)["kunye"]
+    assert "İkinci animenin" in k["ozet"] and k["turler"] == ["Dram"]
 
 
-def test_kunye_okunurken_gui_thread_bloklanmiyor(qtbot, page, arsiv, monkeypatch):
+def test_kunye_okunurken_gui_thread_bloklanmiyor(qtbot, uclar, arsiv, monkeypatch):
     """Künye arka planda okunuyor: yavaş disk/ayna arayüzü dondurmamalı."""
     kapi = threading.Event()
     gercek = animedepo.anime_bilgisi
@@ -222,44 +198,70 @@ def test_kunye_okunurken_gui_thread_bloklanmiyor(qtbot, page, arsiv, monkeypatch
         return gercek(slug)
 
     monkeypatch.setattr(animedepo, "anime_bilgisi", yavas)
+    kopru = Kopru()
+    kopru.bagla(uclar)
+    yanitlar: list = []
+    kopru.yanit.connect(lambda istek, ok, veri: yanitlar.append((istek, ok, veri)))
+    rid = uclar.ac_sonuc("TürkAnime", "07-ghost", "07-Ghost")
     try:
-        page.show_match("TürkAnime", "07-ghost", "07-Ghost")
-        assert "Teito" not in page.txtSummary.toPlainText()   # henüz gelmedi
+        kopru.cagir("1", "detay", json.dumps({"rid": rid}))
+        assert yanitlar == []                            # çağrı hemen döndü
     finally:
         kapi.set()
-    qtbot.waitUntil(lambda: "Teito" in page.txtSummary.toPlainText(), timeout=5000)
+    qtbot.waitUntil(lambda: bool(yanitlar), timeout=5000)
+    assert yanitlar[0][1] is True and "Teito" in yanitlar[0][2]
     assert thread_ler and thread_ler[0] != threading.get_ident()
 
 
-def test_arsiv_disi_kaynakta_kunye_okunmuyor(qtbot, page, monkeypatch):
+def test_arsiv_disi_kaynakta_kunye_okunmuyor(uclar, monkeypatch):
     cagrilar: list = []
     monkeypatch.setattr(animedepo, "anime_bilgisi",
                         lambda slug: cagrilar.append(slug) or {})
-    page.show_match("AnimeciX", "17", "Cowboy Bebop")
-    qtbot.wait(100)
+    uclar.detay(uclar.ac_sonuc("AnimeciX", "17", "Cowboy Bebop"))
     assert cagrilar == []
 
 
+def test_arsiv_kunyesi_sayfada(main_window, web, arsiv, sahte_bolumler):
+    """Sayfa: özet satır sonlarıyla, tür/stüdyo hapları, skor kartı."""
+    sahte_bolumler({"TürkAnime": []})
+    main_window._on_anime_selected("TürkAnime", "07-ghost", "07-Ghost", None)
+    web.bekle("!!document.querySelector('.ozet-metin') && "
+              "document.querySelector('.ozet-metin').textContent.includes('Teito')")
+    assert web.js("[...document.querySelectorAll('.etiket-blok .hap')]"
+                  ".map(e => e.textContent)") == ["Fantastik", "Aksiyon", "Studio Deen"]
+    assert web.js("document.querySelector('.stat-deger').textContent") == "76%"
+    assert "25 bölüm" in web.js("document.querySelector('.detay-meta').textContent")
+
+
 # ── Kapak: arama kartından detaya ───────────────────────────────────────────
-def test_arama_kartinin_kapagi_detaya_tasiniyor(qtbot, main_window, kapak_istekleri):
-    from PySide6.QtCore import Qt
+def test_arama_kartinin_kapagi_detaya_tasiniyor(main_window, web, sahte_arama,
+                                                 monkeypatch):
+    import turkanime_api.gui.qt.gorsel as gorsel_mod
+    istenen: list = []
+    monkeypatch.setattr(gorsel_mod, "gorsel_getir",
+                        lambda url, *a, **k: istenen.append(url) or None)
+    sahte_arama(sonuclar={"AniList": [{"slug": "154587", "title": "Sousou no Frieren",
+                                       "image": "https://img/frieren.jpg"}]})
+    main_window.ara("frieren")
+    web.bekle("document.querySelectorAll('.sonuc-grubu .kart').length === 1")
+    web.js("document.querySelector('.sonuc-grubu .kart').click()")
 
-    arama = main_window.pages["search"]
-    arama._on_results({"AniList": [{"slug": "154587", "title": "Sousou no Frieren",
-                                    "image": "https://img/frieren.jpg"}]})
-    main_window.show_page("search")
-    qtbot.waitExposed(arama)
-    qtbot.mouseClick(arama.cards()[0], Qt.MouseButton.LeftButton)
-
-    detay = main_window.pages["detail"]
-    assert main_window.stack.currentWidget() is detay
-    assert detay._anime.get("coverImage") == {"large": "https://img/frieren.jpg"}
-    qtbot.waitUntil(lambda: kapak_istekleri == ["https://img/frieren.jpg"],
-                    timeout=5000)
+    web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-poster')")
+    assert main_window.detay.oturum.anime.get("coverImage") == {
+        "large": "https://img/frieren.jpg"}
+    # Poster detayda da aynı adresten (önbellekli `ta://gorsel`) isteniyor.
+    web.bekle("!!document.querySelector('.detay-poster .bas-harf')")
+    web.qtbot.waitUntil(lambda: istenen.count("https://img/frieren.jpg") >= 2,
+                        timeout=5000)
 
 
-def test_kapaksiz_detayda_yer_tutucu(page, kapak_istekleri):
-    page.show_anime({"title": {"romaji": "Kapaksız"}})
-    assert page.kapak_yer_tutucuda
-    assert not page.lblCover.pixmap().isNull()
-    assert kapak_istekleri == []
+def test_kapaksiz_detayda_yer_tutucu(main_window, web, monkeypatch):
+    import turkanime_api.gui.qt.gorsel as gorsel_mod
+    istenen: list = []
+    monkeypatch.setattr(gorsel_mod, "gorsel_getir",
+                        lambda url, *a, **k: istenen.append(url) or None)
+    main_window._on_discover_selected({"title": {"romaji": "Kapaksız"}})
+    web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-poster .bas-harf')")
+    assert web.js("document.querySelector('.detay-poster .bas-harf').textContent") == "K"
+    assert not web.js("!!document.querySelector('.detay-poster img')")
+    assert istenen == []

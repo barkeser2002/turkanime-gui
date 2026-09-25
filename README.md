@@ -16,8 +16,12 @@
 
 TürkAnime GUI **tamamen arayüz odaklı** bir anime keşif, izleme ve indirme
 uygulaması. Arayüz **PySide6 + QtWebEngine** üzerine kurulu; V10.0.0 ile
-CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sürümü
-çalışmaya devam ediyor ama geliştirme masaüstü uygulamasına odaklı.
+CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Sayfalar **HTML/CSS/JS**
+ile yazılmış bir web arayüzü: Qt penceresinin içindeki gömülü Chromium
+(QtWebEngine) gösteriyor, Python tarafıyla QWebChannel üzerinden konuşuyor.
+Ek bağımlılık, derleme adımı ya da internetten yüklenen arayüz dosyası yok
+(bkz. [Arayüz Mimarisi](#-arayüz-mimarisi)). Terminal (CLI) sürümü çalışmaya
+devam ediyor ama geliştirme masaüstü uygulamasına odaklı.
 
 ## ✨ Öne Çıkan Özellikler
 
@@ -49,8 +53,10 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
   DEĞİL, projenin sunucusu (`node-kyb.bariskeser.com:8191`) yazılı gelir ve
   zincirin 3. kademesi oraya uğrar. İstemiyorsanız Ayarlar → FlareSolverr
   URL alanını boşaltın; zincir gömülü çözücüyle çalışmaya devam eder.
-- **Çok kaynaklı bölüm birleştirme:** Aynı anime birden çok kaynakta varsa
-  bölümler `(sezon, bölüm)` anahtarıyla tek listede birleşir.
+- **Kaynak başına bölüm listesi:** Anime birden çok kaynakta varsa detay
+  sayfasında her kaynak kendi akordiyonunda listelenir. Otomatik eşleşen
+  başlık yanında yazar, yanlışsa "Değiştir" ile doğru kayıt seçilir. Oynat ve
+  İndir, tıklanan satırın kaynağından çalışır.
 - **Gelişmiş indirme sistemi:** Bölüm başına ilerleme çubukları, başka adayla
   yeniden deneme, tek tuşla iptal. Kuyruk diske yazılır ve açılışta geri
   gelir; Duraklat/Devam et, "Tümünü Duraklat". Başarısız indirme "tamamlandı"
@@ -67,14 +73,18 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 - **Fansub ve kalite seçimi:** Desteklenen kaynaklardan en temiz sürümü bulur.
   "Fansub'u kendim seçeyim" açıksa birden çok grup olan bölümde sorar; seçim
   seri için hatırlanır.
-- **Kart tabanlı arayüz:** Hover efektli kartlar, batch rendering, poster
-  galerileri.
+- **Web arayüzü:** Eski ekran görüntülerindeki düzen modernleştirilerek
+  HTML/CSS/JS ile yeniden yazıldı. Üst menü ve arama çubuğu; hero ve kaydırmalı
+  şeritli ana sayfa; kart ızgaraları; künye kartlı detay sayfası; bölüm
+  akordiyonları; bildirimler ve onay pencereleri. Veri beklenirken iskelet
+  kartlar görünür, düzen pencere daralınca uyum sağlar.
 - **Discord Rich Presence:** O anda ne izlediğini arkadaşlarınla paylaş.
 - **Çoklu platform:** Windows/Linux/macOS için hazır paket, Python 3.9+ olan
   her platformdan pip ile çalıştır.
 - **Terminal sürümü tkinter istemez:** klasör seçici yoksa yol terminalden
   sorulur; kayıtlı TRAnimeİzle çerezi ve OpenAnime jetonları CLI'da da yüklenir.
-- **Testler:** 1.936 otomatik test (pytest + pytest-qt), ağa çıkmaz.
+- **Testler:** 1.970 otomatik test (pytest + pytest-qt; web sayfaları gerçek
+  QtWebEngine'de), ağa çıkmaz.
 
 ## 🧭 Uygulama Akışı
 
@@ -86,13 +96,39 @@ CustomTkinter yığını kaldırıldı ve tek arayüz kaldı. Terminal (CLI) sü
 4. **İlerleme Takibi:** İzlediklerin otomatik tutulur, "Kitaplığım"da görünür
    ve AniList'e bağlıysan oraya yansır.
 
+## 🧩 Arayüz Mimarisi
+
+Arayüz tek bir Qt penceresi, içinde tek bir web görünümü (`QWebEngineView`):
+
+| Katman | Yer | Görev |
+|--------|-----|-------|
+| Sayfalar | `turkanime_api/gui/web/statik/` (`index.html`, `css/`, `js/sayfalar/`) | HTML/CSS/JS. Derleme adımı yok; bütün dosyalar yerel, CDN yok |
+| Köprü | `turkanime_api/gui/web/kopru.py` | QWebChannel: JS → Python çağrıları (`TA.cagir`), Python → JS olayları (`kopru.yay`) |
+| Uçlar | `turkanime_api/gui/web/uclar_*.py` | Sayfa başına Python tarafı: keşif, arama, detay, kitaplık, izleme listesi, indirmeler, ayarlar |
+| Şema | `turkanime_api/gui/web/sema.py` | `ta://uygulama/…` statik dosyaları, `ta://gorsel/…` kapak önbelleğini sunar; dış adresler sistem tarayıcısında açılır |
+| Servisler | `turkanime_api/gui/qt/` | İndirme yöneticisi, oynatma (mpv), AniList, Discord, güncelleme, kurulum sihirbazı |
+
+Ağ ve disk işleri arka plan havuzunda koşar; sayfa donmaz. Sayfalar veriyi
+JSON olarak alır. Bölüm nesneleri Python'da kalır, sayfa onları `(kaynak, sıra)`
+ile anar. Birkaç küçük pencere hâlâ Qt'dir: fansub seçimi, ilerleme sorusu,
+güncelleme, kurulum sihirbazı, bağış onayı ve TRAnimeİzle çerez tarayıcısı.
+
 ## 📺 Ekran Görüntüleri
 
-### Anasayfa Ekranı
-![anasayfa.png](https://i.imgur.com/Mh353OU.png)
+### Ana Sayfa
+![Ana sayfa: hero, arama, trend şeridi](https://raw.githubusercontent.com/barkeser2002/turkanime-gui/main/docs/ekran/anasayfa.webp)
 
-### Anime Ekranı
-![animesayfası.png](https://i.imgur.com/9D4yUdn.png)
+### Anime Detayı
+![Anime detayı: künye, skor ve izleyici kartları, türler, stüdyo](https://raw.githubusercontent.com/barkeser2002/turkanime-gui/main/docs/ekran/detay.webp)
+
+### Kaynaklar ve Bölümler
+![Kaynak akordiyonu: bölüm arama, aralık seçimi, izlendi/indirildi rozetleri](https://raw.githubusercontent.com/barkeser2002/turkanime-gui/main/docs/ekran/bolumler.webp)
+
+### Arama
+![Arama: kaynak filtreleri, aranamayan kaynakların sebebi, kaynak başına sonuçlar](https://raw.githubusercontent.com/barkeser2002/turkanime-gui/main/docs/ekran/arama.webp)
+
+### Ayarlar
+![Ayarlar: bölüm menüsü ve anahtarlar](https://raw.githubusercontent.com/barkeser2002/turkanime-gui/main/docs/ekran/ayarlar.webp)
 
 ## 🎮 Discord Rich Presence
 
@@ -195,7 +231,7 @@ python -m turkanime_api.gui.qt
 1. **İlk açılışta** ffmpeg/mpv/aria2c/yt-dlp denetlenir; eksik varsa kurulum
    sihirbazı açılır (hazır pakette hepsi gömülü gelir).
 2. **TürkAnime'yi internetsiz** kullanmak istiyorsan Ayarlar →
-   **Çevrimdışı arşiv (TürkAnime)** → **"Tüm arşivi indir (~230 MB)"**.
+   **Çevrimdışı Arşiv (TürkAnime)** → **"Tüm arşivi indir (~230 MB)"**.
    Ayrıntı: [Çevrimdışı Arşiv](#-çevrimdışı-arşiv-türkanime).
 3. **TRAnimeİzle** kullanmak istiyorsan Ayarlar → TRAnimeİzle Cookie →
    **"Tarayıcıdan Al"** düğmesine bas. Uygulama içindeki tarayıcı açılır, bot
@@ -205,9 +241,12 @@ python -m turkanime_api.gui.qt
    (isteğe bağlı). Diğer kaynaklar giriş istemez.
 4. **FlareSolverr** kullanmak istiyorsan Ayarlar → FlareSolverr URL bölümünden
    sunucu adresini gir (zorunlu değil).
-5. **Keşfet veya Ara sekmesinden** anime seç.
-6. **Bölümü oynat** ya da **indir**; her bölüm için ayrı ilerleme çubuğu,
-   yeniden deneme ve iptal desteği mevcut.
+5. **Ana Sayfa, Trend, Bu Sezon** ya da üst çubuktaki **arama kutusundan**
+   anime seç. Kutunun yanındaki listeden tek bir kaynakta da arayabilirsin.
+6. Detay sayfasında kaynağın akordiyonundan **bölümü oynat** ya da **indir**.
+   Toplu seçim için aralık ("1-12, 20-"), İzlenmemişler / İndirilmemişler ya
+   da Shift+tık. İndirmeler **İndirilenler** sayfasında: bölüm başına
+   ilerleme çubuğu, yeniden deneme, duraklatma ve iptal.
 7. **AniList'e bağlanmak** istersen Ayarlar → AniList → "AniList'e Giriş Yap";
    gizli anahtar (client secret) gerekmez, ayrıntı için
    [AniList Girişi](docs/ANILIST_OAUTH.md).
@@ -245,7 +284,7 @@ ilk konum kullanılır; geçersiz klasör atlanır ve Ayarlar'da uyarı çıkar:
 çalıştırılıyorsa depo kökü (indirilenler bu yüzden `arsiv/` değil
 `cevrimdisi_arsiv/` adıyla durur ve `.gitignore`'dadır).
 
-**Ayarlar'dan indirme:** Ayarlar → **Çevrimdışı arşiv (TürkAnime)** bölümü
+**Ayarlar'dan indirme:** Ayarlar → **Çevrimdışı Arşiv (TürkAnime)** bölümü
 etkin konumu, yolunu ya da adresini, anime sayısını ve dizinin son güncelleme
 tarihini gösterir. Bu bilgi sayfa açılınca arka planda okunur; ağa çıkılmaz.
 
@@ -357,7 +396,10 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 
 ## 🧪 Testler
 
-Otomatik test paketi (ağa çıkmaz, Qt offscreen koşar):
+Otomatik test paketi (ağa çıkmaz, Qt offscreen koşar). Web sayfası testleri
+QtWebEngine'i de offscreen çalıştırır; root olarak (ör. bir container'da)
+koşarken Chromium'un korumalı alanı açılamaz, `QTWEBENGINE_DISABLE_SANDBOX=1`
+verin:
 
 ```bash
 pip install -r requirements-gui.txt
@@ -406,7 +448,7 @@ python -m pytest --network -m network
 ### Test Kapsamı
 | Alan | Testler |
 |------|---------|
-| **Arayüz (pytest-qt)** | Keşif/arama/detay/bölüm/indirme sayfaları, oynatma, izleme listesi, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
+| **Arayüz (pytest-qt + QtWebEngine)** | Web sayfaları gerçek tarayıcıda (offscreen): keşif, arama, detay ve kaynak akordiyonları, kitaplık, izleme listesi, indirmeler, ayarlar; köprü ve `ta://` şeması, ızgara yerleşimi. Oynatma, güncelleme servisi, gereksinim sihirbazı, Discord RPC, çerez tarayıcısı, worker havuzu |
 | **Arama** | Alakaya göre sıralama, çok kaynaklı arama zaman aşımı, başlık eşleştirme |
 | **Çevrimdışı arşiv** | Konum sırası, aynalar ve disk önbelleği, tam arşiv indirme (tar güvenliği, bağlanırken de işleyen iptal, eskiyi koruyan takas, disk hatasında yedeğe geçmeme, sembolik bağlı hedef), sıfırlamanın GUI'yi dondurmaması, okunamayan arşivin aramada, bölüm listesinde ve oynatmada söylenmesi ("yok" ile "ulaşılamadı" ayrı), Windows uzun yolları (MAX_PATH taklidiyle), eşitleme aracının yanlış hedefi reddetmesi, Ayarlar bölümü (ilerleme, iptal, hata mesajı, klasör seçimi, yalnızca indirileni silme, silinemeyen eski kopya uyarısı) |
 | **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; ad çakışması import anında hata; uzun bölüm slug'ları kesilmeden ayrık (geçmiş anahtarı, dosya adı); CLI yeniden denemede oynatılamayan videoyu atlıyor; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |

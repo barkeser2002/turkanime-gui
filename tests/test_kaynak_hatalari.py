@@ -246,9 +246,9 @@ def test_oynatma_sebebi_durum_cubugunda_kalici(main_window, qtbot, monkeypatch):
 
 def test_indirme_satiri_kisa_sebep_arac_ipucunda_ham(qtbot, izole_ev):
     from yt_dlp.utils import DownloadError
-    from turkanime_api.gui.qt.pages.downloads import (
-        BITMIS_DURUMLAR, DownloadManager, DownloadsPage,
-    )
+    from turkanime_api.gui.qt.indirme import BITMIS_DURUMLAR, DownloadManager
+    from turkanime_api.gui.web.kopru import Kopru
+    from turkanime_api.gui.web.uclar_indirme import IndirmeUclari
 
     ham = ("ERROR: unable to download video data: HTTP Error 403: Forbidden "
            + "x" * 300)
@@ -269,12 +269,12 @@ def test_indirme_satiri_kisa_sebep_arac_ipucunda_ham(qtbot, izole_ev):
             return Video()
 
     mgr = DownloadManager()
-    sayfa = DownloadsPage(mgr)
-    qtbot.addWidget(sayfa)
+    uclar = IndirmeUclari(Kopru(), mgr, oynat=lambda e: None)
     tid = mgr.enqueue({"title": "Sahte 1. Bölüm", "obj": Bolum()},
                       output=str(izole_ev / "indir"))
     qtbot.waitUntil(lambda: mgr.durum(tid) in BITMIS_DURUMLAR, timeout=10000)
-    satir = sayfa._rows[tid]
-    qtbot.waitUntil(lambda: "403" in satir.lblDetail.text(), timeout=5000)
-    assert len(satir.lblDetail.text()) <= 120
-    assert "HTTP Error 403: Forbidden" in satir.lblDetail.toolTip()
+    satir = lambda: uclar.indirmeler()["satirlar"][0]      # noqa: E731
+    qtbot.waitUntil(lambda: "403" in satir()["mesaj"], timeout=5000)
+    # Satırda kısa sebep; ham metnin tamamı araç ipucunda (sayfada `title`).
+    assert len(satir()["mesaj"]) <= 120
+    assert "HTTP Error 403: Forbidden" in satir()["ayrinti"]

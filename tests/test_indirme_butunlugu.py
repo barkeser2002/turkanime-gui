@@ -176,7 +176,7 @@ def _indirildi():
 
 
 def _kuyrukta_indir(qtbot, bolum, output):
-    from turkanime_api.gui.qt.pages.downloads import BITMIS_DURUMLAR, DownloadManager
+    from turkanime_api.gui.qt.indirme import BITMIS_DURUMLAR, DownloadManager
 
     mgr = DownloadManager()
     biten: list = []
@@ -190,7 +190,7 @@ def _kuyrukta_indir(qtbot, bolum, output):
 
 def test_kuyruk_403te_hata_diyor_gecmise_yazmiyor(
         qtbot, izole_ev, ayarla, medya, tmp_path, monkeypatch):
-    from turkanime_api.gui.qt.pages.downloads import DURUM_HATA
+    from turkanime_api.gui.qt.indirme import DURUM_HATA
     from turkanime_api.gui.qt import prefs
 
     ayarla(**{"aria2c kullan": False})
@@ -207,7 +207,7 @@ def test_kuyruk_403te_hata_diyor_gecmise_yazmiyor(
 
 def test_kuyruk_200de_dosyayi_yaziyor_gecmise_bir_kez(
         qtbot, izole_ev, ayarla, medya, tmp_path, monkeypatch):
-    from turkanime_api.gui.qt.pages.downloads import DURUM_TAMAMLANDI
+    from turkanime_api.gui.qt.indirme import DURUM_TAMAMLANDI
 
     ayarla(**{"aria2c kullan": False})
     bolum = _TekVideoluBolum(_video(medya(200), monkeypatch=monkeypatch))

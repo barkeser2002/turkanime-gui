@@ -1,11 +1,12 @@
-"""PySide6 GUI giriş noktası — CustomTkinter `MainWindow` yerine geçecek iskelet.
+"""PySide6 GUI giriş noktası: pencere, servisler ve web arayüzünün kablolaması.
 
-Bu modül A0 fazının çıktısıdır: Qt event loop'u, tema, pencere iskeleti ve
-threading köprüleri. İçerik sayfaları (arama, bölüm listesi, indirmeler) sonraki
-fazlarda `QStackedWidget` içine doldurulur.
+Arayüzün tamamı web'de (`gui/web`): pencerenin merkezinde tek bir
+`WebGorunum`; üst çubuk, menü, sayfalar ve alt durum çubuğu HTML/CSS/JS.
+Bu modülde kalanlar pencere düzeyindeki işler: oynatma (mpv), indirme
+kuyruğu, AniList/Discord/güncelleme servisleri, kapanış ve sayfaların
+köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak.
 
-Eski akış:  ctk.set_appearance_mode -> MainWindow(ctk.CTk) -> app.mainloop()
-Yeni akış:  prepare_qt_env() -> QApplication -> MainWindow(QMainWindow) -> exec()
+Akış:  prepare_qt_env() -> QApplication -> MainWindow(QMainWindow) -> exec()
 """
 from __future__ import annotations
 
@@ -13,12 +14,10 @@ import os
 import sys
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QSystemTrayIcon,
-    QVBoxLayout, QWidget,
+    QApplication, QMainWindow, QMessageBox, QSystemTrayIcon, QWidget,
 )
 
 from ...common import kutuphane, mpv_oynatici
@@ -28,23 +27,23 @@ from ...common.oynatma import yedekli_oynat
 from . import prefs
 from .anilist import AniListService
 from .discord import DiscordService
-from .pages.detail import DetailPage
-from .pages.discover import DiscoverPage
 from .fansub import FansubSecici
-from .pages.downloads import DURUM_IPTAL, DownloadManager, DownloadsPage
-from .pages.episodes import EpisodePage
-from .pages.library import LibraryPage
-from .pages.search import SearchPage
-from .pages.settings import SettingsPage
-from .pages.watchlist import WatchlistPage
+from .indirme import DURUM_IPTAL, DownloadManager
 from .progress_dialog import ProgressDialog, anime_adi
 from .requirements import RequirementsDialog, RequirementsService
-from .theme import ACCENT, apply_theme
+from .theme import apply_theme
 from .updates import UpdateDialog, UpdateService
 from .workers import UiBridge, run_bg
-
-# Header'daki AniList avatarı (kare, köşeler tema tarafından yuvarlanmıyor).
-AVATAR_BOYUTU = 28
+from ..web.gorunum import WebGorunum
+from ..web.kopru import Kopru
+from ..web.uclar_arama import AramaUclari
+from ..web.uclar_ayarlar import AyarlarUclari
+from ..web.uclar_detay import DetayUclari
+from ..web.uclar_genel import GenelUclar
+from ..web.uclar_kesif import KesifUclari
+from ..web.uclar_indirme import IndirmeUclari
+from ..web.uclar_izleme import IzlemeUclari
+from ..web.uclar_kitaplik import KitaplikUclari
 
 APP_TITLE = "TürkAnime İndirici"
 
@@ -56,7 +55,9 @@ ACILIS_DENETIM_GECIKMESI = 1500
 # süreç zorla sonlandırılır (bkz. `run`).
 KAPANIS_MUHLETI = 3000
 
-# Sol menü: (anahtar, etiket). Sonraki fazlarda her biri gerçek sayfayla dolacak.
+# Sayfalar: (anahtar, etiket). Hepsi web arayüzünde bir rota (`#/home`);
+# menü üst çubukta (statik/js/kabuk.js). Anahtarlar Discord durumunda ve
+# detaydaki "Geri" hedefinde de kullanılıyor.
 NAV_ITEMS = [
     ("home", "Ana Sayfa"),
     ("search", "Arama"),
@@ -67,6 +68,9 @@ NAV_ITEMS = [
     ("downloads", "İndirilenler"),
     ("settings", "Ayarlar"),
 ]
+
+# Menüde olmayan sayfalar (kartlardan açılıyor).
+WEB_ALT_SAYFALAR = ("detail",)
 
 
 def _resource_path(rel: str) -> str:
@@ -98,6 +102,11 @@ def prepare_qt_env() -> None:
     from ...common.chromium import bayraklari_hazirla
     bayraklari_hazirla()
 
+    # Web arayüzünün `ta://` şeması: Chromium şemaları ilk açılışta okuyor,
+    # sonradan kaydedilen şema tanınmıyor.
+    from ..web.sema import semayi_kaydet
+    semayi_kaydet()
+
     try:  # WebEngine opsiyonel kalsın: yoksa GUI yine de açılmalı
         import PySide6.QtWebEngineCore  # noqa: F401
     except ImportError:
@@ -128,7 +137,6 @@ class MainWindow(QMainWindow):
         # listesi ve ilerleme yazımı aynı jetonu/oturumu paylaşır.
         self.anilist = AniListService(self)
         self.anilist.auth_changed.connect(self._on_anilist_user)
-        self.anilist.avatar_ready.connect(self._on_anilist_avatar)
         self.anilist.status_changed.connect(self._on_anilist_status)
 
         # Çevresel servisler. Sayfalardan ÖNCE kuruluyor: `show_page` Discord'a
@@ -172,162 +180,77 @@ class MainWindow(QMainWindow):
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        root = QWidget(self)
-        self.setCentralWidget(root)
-
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        outer.addWidget(self._build_header())
-
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-        body.addWidget(self._build_sidebar())
-
-        self.stack = QStackedWidget()
-        for key, label in NAV_ITEMS:
-            page = self._make_page(key, label)
-            self.pages[key] = page
-            self.stack.addWidget(page)
-
-        # Detay ve bölüm listesi menüde yer almaz; keşif/arama sonucundan açılır.
-        detail = DetailPage()
-        detail.episodes_ready.connect(self._on_detail_episodes)
-        detail.back_requested.connect(self._on_detail_back)
-        self.pages["detail"] = detail
-        self.stack.addWidget(detail)
-
-        episodes = EpisodePage()
-        episodes.play_requested.connect(self._on_play)
-        episodes.download_requested.connect(self._on_download)
-        episodes.kuyrukta_mi = self._kuyrukta_mi
-        self.pages["episodes"] = episodes
-        self.stack.addWidget(episodes)
-
-        body.addWidget(self.stack, 1)
-
-        outer.addLayout(body, 1)
-
-    def _make_page(self, key: str, label: str) -> QWidget:
-        """`NAV_ITEMS` anahtarına karşılık gelen sayfayı üret.
-
-        Aşağıdaki dallar `NAV_ITEMS`'ın sekiz anahtarını da karşılıyor, yani
-        sona düşmek mümkün değil. Yine de sessizce `None` dönüp çağıranın
-        `addWidget`'ında anlamsız bir hatayla patlamak yerine burada
-        bağırıyoruz: `NAV_ITEMS`'a dalı yazılmamış bir anahtar eklenirse
-        hata, sebebini söyleyerek açılışta çıksın.
+        """Pencerenin tamamı web arayüzü: üst çubuk, menü, sayfalar ve alt
+        durum çubuğu HTML'de (bkz. `gui/web`). Qt'de yalnızca pencere,
+        küçük diyaloglar ve durum mesajlarının kaynağı olan `statusBar` kaldı.
         """
-        if key == "search":
-            page = SearchPage()
-            page.anime_selected.connect(self._on_anime_selected)
-            return page
-        if key in ("home", "trending", "season"):
-            page = DiscoverPage(key)
-            page.anime_selected.connect(self._on_discover_selected)
-            page.kitaplik_secildi.connect(self._on_kitaplik_selected)
-            return page
-        if key == "library":
-            page = LibraryPage()
-            page.kitaplik_secildi.connect(self._on_kitaplik_selected)
-            return page
-        if key == "downloads":
-            page = DownloadsPage(self.downloads)
-            # Biten indirmenin "Oynat"ı normal oynatma yolundan geçer: yerel
-            # dosya orada ilk aday, geçmiş/kitaplık yazımı da aynı yerde.
-            page.oynat_istendi.connect(self._on_play)
-            return page
-        if key == "watchlist":
-            page = WatchlistPage(self.anilist)
-            page.anime_selected.connect(self._on_discover_selected)
-            page.settings_requested.connect(self._goto_settings)
-            return page
-        if key == "settings":
-            return SettingsPage(self.anilist, discord=self.discord,
-                                updates=self.updates,
-                                requirements=self.requirements)
-        raise ValueError(f"NAV_ITEMS anahtarı {key!r} ({label}) için sayfa dalı yok")
+        self._build_web()
+        self.setCentralWidget(self.web)
+        for key, _label in NAV_ITEMS:
+            self.pages[key] = self.web
+        for key in WEB_ALT_SAYFALAR:
+            self.pages[key] = self.web
+        # Durum çubuğu Qt'de GİZLİ: mesajlar sayfanın alt çubuğunda
+        # gösteriliyor. `showMessage` çağıranlar (ve testler) aynı yolu
+        # kullanmaya devam ediyor; `messageChanged` mesajı sayfaya taşıyor.
+        self._durum_turu = "bilgi"
+        bar = self.statusBar()
+        bar.messageChanged.connect(self._durum_sayfaya)
+        bar.hide()
 
-    def _goto_settings(self) -> None:
-        """"Ayarlar'a Git" yönlendirmesi (sol menü de senkron kalmalı)."""
-        self.show_page("settings")
-        self._sync_nav("settings")
+    def _durum_sayfaya(self, mesaj: str) -> None:
+        self.kopru.yay("durum_mesaji", {"mesaj": mesaj, "tur": self._durum_turu})
 
-    def _build_header(self) -> QWidget:
-        header = QFrame()
-        header.setObjectName("Header")
-        header.setFixedHeight(64)
+    def _build_web(self) -> None:
+        """Web arayüzü: köprü + sayfaların uçları + tek görünüm."""
+        # Köprünün Qt EBEVEYNİ YOK (bilerek): arka plan uçları bitince köprüden
+        # sinyal yayıyor. Ebeveyni pencere olsaydı, pencere yıkılırken süren
+        # bir iş yıkılmakta olan nesneden `emit` edip süreci segfault'la
+        # düşürüyordu (test paketinde 12 koşuda bir yakalandı). Ebeveynsiz
+        # nesneyi Python referansı yaşatıyor; iş sürdükçe `self` referansı da
+        # sürüyor, yani yayıcı işten önce ölemiyor. Alıcı (web kanalı)
+        # silinirse Qt bağlantıyı güvenle koparıyor.
+        self.kopru = Kopru()
+        self.kopru.bagla(GenelUclar(ac=self._web_ac, kabuk=self._kabuk_durumu))
+        self.kopru.bagla(KesifUclari())
+        self.kopru.bagla(KitaplikUclari())
+        self.kopru.bagla(IzlemeUclari(self.kopru, self.anilist))
+        # Biten indirmenin "Oynat"ı normal oynatma yolundan geçer: yerel dosya
+        # orada ilk aday, geçmiş/kitaplık yazımı da aynı yerde.
+        self.indirme_uclari = self.kopru.bagla(IndirmeUclari(
+            self.kopru, self.downloads, oynat=self._on_play))
+        # Kurulurken diskteki çerez/jetonları kaynak modüllerine uygular
+        # (eskiden ayar sayfasının kurucusu yapıyordu; açılışta şart).
+        self.ayarlar_uclari = self.kopru.bagla(AyarlarUclari(
+            self.kopru, anilist=self.anilist, discord=self.discord,
+            updates=self.updates, requirements=self.requirements, pencere=self))
+        self.arama = self.kopru.bagla(AramaUclari(self.kopru))
+        self.detay = self.kopru.bagla(DetayUclari(
+            self.kopru, oynat=self._on_play, indir=self._on_download,
+            kuyrukta=self._web_kuyrukta))
+        self.web = WebGorunum(self.kopru, kabuk="web")
+        # Detay sayfasındaki "Kuyrukta" rozetleri: iş eklendi/bitti/durdu.
+        self.downloads.state.connect(lambda *_a: self.kopru.yay("kuyruk_degisti"))
 
-        layout = QHBoxLayout(header)
-        layout.setContentsMargins(20, 10, 20, 10)
-        layout.setSpacing(12)
-
-        brand = QLabel(APP_TITLE)
-        brand.setObjectName("Subtitle")
-        layout.addWidget(brand)
-        layout.addSpacing(16)
-
-        self.txtSearch = QLineEdit()
-        self.txtSearch.setPlaceholderText("Anime ara…")
-        self.txtSearch.setClearButtonEnabled(True)
-        self.txtSearch.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                     QSizePolicy.Policy.Fixed)
-        self.txtSearch.returnPressed.connect(self._on_search)
-        layout.addWidget(self.txtSearch, 1)
-
-        self.btnSearch = QPushButton("Ara")
-        self.btnSearch.setObjectName("Primary")
-        self.btnSearch.clicked.connect(self._on_search)
-        layout.addWidget(self.btnSearch)
-
-        # AniList giriş durumu: avatar yalnızca indirildiğinde görünür, aksi
-        # hâlde 28px'lik boş bir kutu header'da delik gibi durur.
-        layout.addSpacing(8)
-        self.lblAvatar = QLabel()
-        self.lblAvatar.setFixedSize(AVATAR_BOYUTU, AVATAR_BOYUTU)
-        self.lblAvatar.setVisible(False)
-        layout.addWidget(self.lblAvatar)
-
-        self.lblAniList = QLabel()
-        self.lblAniList.setObjectName("Muted")
-        layout.addWidget(self.lblAniList)
-        self._on_anilist_user(None)
-
-        return header
-
-    def _build_sidebar(self) -> QWidget:
-        sidebar = QFrame()
-        sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(200)
-
-        layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(10, 14, 10, 14)
-        layout.setSpacing(4)
-
-        self._nav_group = QButtonGroup(self)
-        self._nav_group.setExclusive(True)
-        self._nav_buttons: Dict[str, QPushButton] = {}
-
-        for key, label in NAV_ITEMS:
-            btn = QPushButton(label)
-            btn.setObjectName("Nav")
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda _=False, k=key: self.show_page(k))
-            self._nav_group.addButton(btn)
-            self._nav_buttons[key] = btn
-            layout.addWidget(btn)
-            if key == "home":
-                btn.setChecked(True)
-
-        layout.addStretch(1)
-
-        version = QLabel(self._version_text())
-        version.setObjectName("Muted")
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(version)
-
-        return sidebar
+    def _web_ac(self, hedef: str, veri: Dict) -> None:
+        """Web sayfasından gezinti isteği (GUI thread'i; `GenelUclar.ac`)."""
+        if hedef == "sayfa":
+            key = str(veri.get("ad") or "")
+            if key in self.pages:
+                self.show_page(key)
+        elif hedef == "anime":
+            self._on_discover_selected(veri.get("kayit"))
+        elif hedef == "kitaplik":
+            self._on_kitaplik_selected(veri.get("kayit"))
+        elif hedef == "arama":
+            self.ara(str(veri.get("sorgu") or ""), str(veri.get("kaynak") or ""))
+        elif hedef == "geri":
+            self._on_detail_back()
+        elif hedef == "sonuc":
+            kayit = veri.get("kayit") if isinstance(veri.get("kayit"), dict) else None
+            self._on_anime_selected(str(veri.get("kaynak") or ""),
+                                    str(veri.get("slug") or ""),
+                                    str(veri.get("baslik") or ""), kayit)
 
     @staticmethod
     def _version_text() -> str:
@@ -338,50 +261,47 @@ class MainWindow(QMainWindow):
         except Exception:
             return ""
 
+    def _kabuk_durumu(self) -> Dict:
+        """Sayfa açılınca üst/alt çubuğun ilk hâli (sonrası olaylarla)."""
+        return {"surum": self._version_text(),
+                "kullanici": self._anilist_kullanicisi(self.anilist.kullanici),
+                "indirme": len(self.downloads.active_ids()),
+                "durum": {"mesaj": self.statusBar().currentMessage(), "tur": "bilgi"}}
+
     # ── Davranış ────────────────────────────────────────────────────────────
-    def show_page(self, key: str) -> None:
-        page = self.pages.get(key)
-        if page is not None:
-            self.stack.setCurrentWidget(page)
+    def show_page(self, key: str, parametreler: Optional[Dict] = None) -> None:
+        if key in self.pages:
+            self.web.git(key, parametreler)
             self._current_page = key
             self.discord.sayfa(key)
 
-    def _on_search(self) -> None:
-        query = self.txtSearch.text().strip()
-        if not query:
+    def ara(self, sorgu: str, kaynak: str = "") -> None:
+        """Arama sayfasını aç; sayfa aramayı kendisi başlatıyor (`ara` ucu,
+        sonuçlar olaylarla). ``kaynak`` verilirse yalnızca o kaynakta."""
+        sorgu = " ".join(str(sorgu or "").split())
+        if not sorgu:
             return
-        self.show_page("search")
-        self._sync_nav("search")
-        page = self.pages.get("search")
-        if isinstance(page, SearchPage):
-            page.start_search(query)
-
-    def _sync_nav(self, key: str) -> None:
-        """Sol menüdeki seçili düğmeyi programatik geçişlerle senkron tut."""
-        btn = self._nav_buttons.get(key)
-        if btn is not None and not btn.isChecked():
-            btn.setChecked(True)
+        self.kopru.yay("arama_metni", {"sorgu": sorgu})
+        self.show_page("search", {"sorgu": sorgu, "kaynak": kaynak or ""})
 
     def _on_discover_selected(self, item) -> None:
-        """Keşif kartına tıklandı: kaydın tamamıyla detay sayfasını aç.
+        """Keşif/izleme listesi kartı: kaydın tamamıyla detay sayfasını aç.
 
-        Kaynak/slug verilmiyor: MyAnimeList/AniList kimliğinin TürkAnime
-        kaynaklarındaki karşılığı bilinmiyor. Kullanıcı detay sayfasında
-        "Bölümleri Getir"e basınca eşleştirme diyaloğu devreye girer.
+        Kaynağa bağlı değil: MyAnimeList/AniList kimliğinin Türkçe
+        kaynaklardaki karşılığı bilinmiyor; detay sayfası eşleşme arıyor
+        (yerel arşivde kendiliğinden, diğer kaynaklarda kullanıcı isteyince).
         """
-        page = self.pages.get("detail")
-        if isinstance(item, dict) and item and isinstance(page, DetailPage):
-            self._open_detail(lambda: page.show_anime(item))
+        if isinstance(item, dict) and item:
+            self._open_detail(self.detay.ac_kesif(item))
 
     def _on_kitaplik_selected(self, kayit) -> None:
-        """Kitaplık kartı: detayı kaynağa BAĞLI aç, bölümleri hemen getir.
+        """Kitaplık kartı: detayı kaynağa BAĞLI aç; bölümler hemen gelir.
 
         Keşif kartından farkı: kayıt kaynağın kendi kimliğini taşıyor, yani
-        eşleştirme (ve yanlış eşleşme riski) yok (bkz. `kitaplik_ac`).
+        eşleştirme (ve yanlış eşleşme riski) yok.
         """
-        page = self.pages.get("detail")
-        if isinstance(kayit, dict) and isinstance(page, DetailPage):
-            self._open_detail(lambda: page.kitaplik_ac(kayit))
+        if isinstance(kayit, dict) and kayit:
+            self._open_detail(self.detay.ac_kitaplik(kayit))
 
     def _on_anime_selected(self, source: str, slug: str, title: str,
                            kayit: object = None) -> None:
@@ -390,51 +310,36 @@ class MainWindow(QMainWindow):
         ``kayit`` arama kaydının kendisi (kapak adresi dahil); detay sayfası
         kartta görünen posteri tekrar göstermek için kullanıyor.
         """
-        page = self.pages.get("detail")
-        if isinstance(page, DetailPage):
-            ek = kayit if isinstance(kayit, dict) else None
-            self._open_detail(lambda: page.show_match(source, slug, title, kayit=ek))
+        ek = kayit if isinstance(kayit, dict) else None
+        self._open_detail(self.detay.ac_sonuc(source, slug, title, ek))
 
-    def _open_detail(self, populate) -> None:
-        """Detay sayfasına geç ve dönüş noktasını hatırla.
+    def _open_detail(self, rid: int) -> None:
+        """Detay sayfasına (``rid`` oturumuyla) geç, dönüş noktasını hatırla.
 
         Detaya hem keşiften hem aramadan gelinebiliyor; sabit bir "Geri" hedefi
         (ör. ana sayfa) kullanıcıyı aramasından koparırdı.
         """
-        current = self.stack.currentWidget()
-        for key, page in self.pages.items():
-            if page is current and key not in ("detail", "episodes"):
-                self._detail_origin = key
-                break
-        self.show_page("detail")
-        populate()
+        # Anahtar `_current_page`'den: web sayfalarının hepsi aynı widget,
+        # widget'tan anahtar çıkarmak hep ilk web sayfasını ("home") verirdi.
+        if self._current_page != "detail":
+            self._detail_origin = self._current_page
+        self.show_page("detail", {"rid": rid})
 
     def _on_detail_back(self) -> None:
         self.show_page(self._detail_origin)
-        self._sync_nav(self._detail_origin)
-
-    def _on_detail_episodes(self, source: str, slug: str, title: str,
-                            episodes) -> None:
-        """Detay sayfası bölümleri çekti: listeyi olduğu gibi devral.
-
-        `EpisodePage.load` burada `episodes` ile çağrılır; parametresiz çağrı
-        aynı listeyi ikinci kez ağdan indirirdi.
-        """
-        page = self.pages.get("episodes")
-        detail = self.pages.get("detail")
-        # Kaynak başına kimlikler + kapak: kitaplık kaydı satırın KENDİ
-        # kaynağının kimliğiyle yazılsın (bkz. `EpisodePage._kimlik_damgala`).
-        baglam = (detail.kitaplik_baglami() if isinstance(detail, DetailPage)
-                  else {})
-        if isinstance(page, EpisodePage):
-            self.show_page("episodes")
-            page.load(source, slug, title, episodes=episodes,
-                      baglar=baglam.get("baglar"), kapak=baglam.get("kapak") or "")
 
     # ── Oynatma / indirme ───────────────────────────────────────────────────
-    def _status(self, msg: str, timeout: int = 6000) -> None:
+    def _status(self, msg: str, timeout: int = 6000, tur: str = "bilgi") -> None:
         """Durum çubuğuna yaz (her thread'den güvenli)."""
-        self.ui.post(lambda: self.statusBar().showMessage(msg, timeout))
+        self.ui.post(lambda: self._durum_goster(msg, timeout, tur))
+
+    def _durum_goster(self, msg: str, timeout: int, tur: str) -> None:
+        """`showMessage` + türü (sayfadaki alt çubuk hatayı kırmızı gösterir)."""
+        self._durum_turu = tur
+        try:
+            self.statusBar().showMessage(msg, timeout)
+        finally:
+            self._durum_turu = "bilgi"
 
     def _hata_durumu(self, msg: str) -> None:
         """Hatayı durum çubuğuna SÜRESİZ yaz; bir sonraki mesaj onu değiştirir.
@@ -443,7 +348,7 @@ class MainWindow(QMainWindow):
         açılmasını bekleyip başka pencereye bakan kullanıcı "neden
         oynamadı?"nın cevabını hiç görmüyordu.
         """
-        self._status(msg, 0)
+        self._status(msg, 0, "hata")
 
     def _on_play(self, entry) -> None:
         bolum = (entry or {}).get("obj")
@@ -631,38 +536,31 @@ class MainWindow(QMainWindow):
         self.anilist.ilerleme_yaz(seri, bolum_no, anime_adi)
 
     # ── AniList ─────────────────────────────────────────────────────────────
-    def _on_anilist_user(self, user) -> None:
-        """Giriş durumu değişti (GUI thread'i): header'ı ve senkronu güncelle."""
+    @staticmethod
+    def _anilist_kullanicisi(user) -> Dict:
         if isinstance(user, dict) and user.get("name"):
-            self.lblAniList.setText(str(user["name"]))
-            self.lblAniList.setStyleSheet(f"color: {ACCENT}; font-weight: 600;")
+            avatar = user.get("avatar") if isinstance(user.get("avatar"), dict) else {}
+            return {"ad": str(user["name"]),
+                    "avatar": str(avatar.get("large") or avatar.get("medium") or "")}
+        return {"ad": "", "avatar": ""}
+
+    def _on_anilist_user(self, user) -> None:
+        """Giriş durumu değişti (GUI thread'i): üst çubuk ve senkron."""
+        self.anilist_kullanici = self._anilist_kullanicisi(user)
+        self.kopru.yay("anilist_kullanici", self.anilist_kullanici)
+        if self.anilist_kullanici["ad"]:
             # Giriş tazelendiğinde AniList → yerel ilerleme senkronu; kullanıcı
             # başka cihazda izlediyse rozetleri burada yakalıyoruz.
             self.anilist.yereli_senkronla()
-        else:
-            self.lblAniList.setText("AniList: giriş yok")
-            self.lblAniList.setStyleSheet("")
-            self.lblAvatar.clear()
-            self.lblAvatar.setVisible(False)
-
-    def _on_anilist_avatar(self, data) -> None:
-        pix = QPixmap()
-        if not pix.loadFromData(bytes(data or b"")):
-            return
-        self.lblAvatar.setPixmap(pix.scaled(
-            AVATAR_BOYUTU, AVATAR_BOYUTU,
-            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            Qt.TransformationMode.SmoothTransformation))
-        self.lblAvatar.setVisible(True)
 
     def _on_anilist_status(self, mesaj: str, _hata: bool) -> None:
         """Servis mesajları durum çubuğuna (sinyal zaten GUI thread'inde)."""
         self.statusBar().showMessage(mesaj, 8000)
 
     def _refresh_episode_history(self) -> None:
-        page = self.pages.get("episodes")
-        if isinstance(page, EpisodePage):
-            page.refresh_history()
+        """Oynatma/indirme bitti: detay sayfası rozetleri ve "Devam et"i
+        tazelesin (izlendi/indirildi/kaldığın yer)."""
+        self.kopru.yay("gecmis_degisti")
 
     def _on_download(self, entry) -> None:
         """İndirmeyi kuyruğa al; kullanıcı bulunduğu bölüm listesinde KALIR.
@@ -702,17 +600,20 @@ class MainWindow(QMainWindow):
             devam(True, None)
 
     def _kuyrukta_mi(self, entry) -> bool:
-        """`EpisodePage` toplu indirmesi için: bölümün bitmemiş işi var mı?"""
+        """Bölümün bitmemiş indirme işi var mı?"""
         return self.downloads.kuyruktaki_is(entry, self._download_dir()) is not None
 
+    def _web_kuyrukta(self, entry) -> bool:
+        """Detay sayfasının satır rozeti: kuyruk boşsa hedef yolu hiç hesaplama
+        (1000 bölümlük seride satır başına ayar okuması olurdu)."""
+        if not self.downloads.active_ids():
+            return False
+        return self._kuyrukta_mi(entry)
+
     def _indirme_sayacini_guncelle(self, *_args) -> None:
-        """Menüdeki İndirilenler düğmesine süren iş sayısını yaz."""
-        btn = self._nav_buttons.get("downloads")
-        if btn is None:
-            return
-        etiket = dict(NAV_ITEMS)["downloads"]
-        sayi = len(self.downloads.active_ids())
-        btn.setText(f"{etiket} ({sayi})" if sayi else etiket)
+        """Menüdeki "İndirilenler" rozetine süren iş sayısını yaz."""
+        self.indirme_sayisi = len(self.downloads.active_ids())
+        self.kopru.yay("indirme_sayaci", {"sayi": self.indirme_sayisi})
 
     def _on_download_added(self, task_id: str, title: str) -> None:
         """İş adlarını sakla: `progress` sinyali yalnızca kimlik taşıyor."""
@@ -869,9 +770,7 @@ class MainWindow(QMainWindow):
         try:
             # Aynı sebeple süren tam arşiv indirmesi (~230 MB) de iptal edilir;
             # yarım paket geçici klasörle birlikte silinir, eski arşiv yerinde.
-            ayarlar = self.pages.get("settings")
-            if isinstance(ayarlar, SettingsPage):
-                ayarlar.arsiv_indirmeyi_durdur()
+            self.ayarlar_uclari.arsiv_indirmeyi_durdur()
         except Exception:
             pass
         try:
@@ -900,6 +799,13 @@ def run() -> int:
     window = MainWindow()
     window.show()
     kod = app.exec()
+    # Pencere (ve içindeki web sayfası) QApplication'dan ÖNCE yıkılmalı: web
+    # profilinin ebeveyni QApplication ve Qt, profil sayfadan önce giderse
+    # "WebEnginePage still not deleted" deyip kapanışta çökebiliyor. Yerel
+    # değişkenlerin yıkım sırası Python'da tanımsız; sırayı burada koyuyoruz.
+    window.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    del window
 
     # `~QThreadPool` yıkıcısı ZAMAN AŞIMSIZ `waitForDone()` çağırır: havuzda
     # hâlâ koşan bir iş varsa normal dönüş süreci bitirmez, yorumlayıcı kapanışta

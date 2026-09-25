@@ -1,6 +1,7 @@
-"""İndirme kuyruğu ve ilerleme paneli.
+"""İndirme kuyruğu: `DownloadManager` ve yardımcıları.
 
-Eski GUI'deki `DownloadWorker` + indirme paneli davranışının Qt karşılığı:
+Arayüzü web'de (İndirilenler sayfası, `gui/web/uclar_indirme.py`); burada
+yalnızca iş mantığı. Eski GUI'deki `DownloadWorker` davranışının karşılığı:
 kullanıcı ayarlarına uyan paralellik, başarısızlıkta otomatik tekrar, elle
 "Yeniden Dene" ve gerçekten çalışan iptal.
 
@@ -16,21 +17,16 @@ import sys
 import threading
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
-)
 
-from ....common.dosya_adi import (
+from ...common.dosya_adi import (
     bolum_hedefi, oynatilabilir_dosya, yarim_dosyalari_sil,
 )
-from ....common.hatalar import insanlastir
-from ....sources import kayit as kaynak_kaydi
-from .. import prefs
-from ..widgets import StatusLabel
-from ..workers import run_bg, set_long_task_limit
+from ...common.hatalar import insanlastir
+from ...sources import kayit as kaynak_kaydi
+from . import prefs
+from .workers import run_bg, set_long_task_limit
 
 # Kullanıcıya gösterilen durumlar. Metinler tek yerde: satır etiketi, durum
 # çubuğu ve testler aynı sözlüğü konuşsun.
@@ -59,14 +55,6 @@ HATA_METNI_SINIRI = 120
 # Eski GUI ile aynı: bir otomatik tekrar hakkı. Kaynak sunucuları sık sık
 # geçici 5xx/timeout veriyor; ikinci deneme çoğu zaman tutuyor.
 MAX_DENEME = 2
-
-DURUM_RENK = {
-    DURUM_DURAKLATILDI: "#fdcb6e",
-    DURUM_TAMAMLANDI: "#00b894",
-    DURUM_HATA: "#d63031",
-    DURUM_IPTAL: "#e17055",
-}
-
 
 def _sade(metin: str) -> str:
     return re.sub(r"[\W_]+", " ", metin.casefold()).strip()
@@ -105,7 +93,7 @@ def kuyruk_yolu() -> str:
     Import fonksiyon içinde: testler `Dosyalar`'ı geçici köke bağlıyor
     (`izole_ev`); modül düzeyinde bağlansaydı o bağ görünmezdi.
     """
-    from ....cli.dosyalar import Dosyalar
+    from ...cli.dosyalar import Dosyalar
     return os.path.join(Dosyalar().ta_path, KUYRUK_DOSYASI)
 
 
@@ -144,7 +132,7 @@ def _bolumu_kur(kayit: Dict[str, Any]) -> Any:
     (arka planda) yüklenir: açılışta 40 işlik kuyruğu geri yüklemek her
     kaynağın modülünü GUI thread'inde import etmemeli.
     """
-    from ....sources.adapter import AdapterAnime, AdapterBolum
+    from ...sources.adapter import AdapterAnime, AdapterBolum
     kaynak = kaynak_kaydi.bul(kayit.get("kaynak"))
     bolum_id = str(kayit.get("bolum_id") or "")
     if kaynak is None or not kaynak.oynatilabilir or not bolum_id:
@@ -666,7 +654,7 @@ class DownloadManager(QObject):
             try:
                 yol = kuyruk_yolu()
                 if kayitlar or os.path.exists(yol):
-                    from ....cli.dosyalar import atomik_json_yaz
+                    from ...cli.dosyalar import atomik_json_yaz
                     atomik_json_yaz(yol, {"surum": KUYRUK_SURUMU, "isler": kayitlar})
             except Exception as exc:     # kuyruğu kaydedememek indirmeyi durdurmasın
                 print(f"[İndirme] kuyruk kaydedilemedi: {exc}")
@@ -704,7 +692,7 @@ class DownloadManager(QObject):
         belki bilerek bıraktığı işleri ölçülü bağlantıda sürdürmek olurdu).
         Bozuk dosya `ayarlar.json` gibi `*.bozuk-*` adıyla kenara ayrılır.
         """
-        from ....cli.dosyalar import _json_oku
+        from ...cli.dosyalar import _json_oku
         try:
             veri = _json_oku(kuyruk_yolu(), {"isler": []})
         except Exception as exc:
@@ -791,266 +779,7 @@ class DownloadManager(QObject):
         return yeni
 
 
-class DownloadRow(QFrame):
-    """Tek bir indirme işinin satırı: ilerleme + iptal/yeniden dene."""
-
-    cancel_requested = Signal(str)
-    retry_requested = Signal(str)
-    pause_requested = Signal(str)
-    resume_requested = Signal(str)
-    play_requested = Signal(str)
-    folder_requested = Signal(str)
-
-    def __init__(self, task_id: str, title: str, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setObjectName("Card")
-        self.task_id = task_id
-        # Bitmişlik AÇIKÇA tutulur; ilerleme metninden ya da bar değerinden
-        # çıkarmaya çalışmak başarısız işleri kaçırır.
-        self.durum = DURUM_BEKLIYOR
-        self.is_finished = False
-        self.is_ok = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(6)
-
-        top = QHBoxLayout()
-        self.lblTitle = QLabel(title)
-        top.addWidget(self.lblTitle, 1)
-        self.lblDetail = QLabel(DURUM_BEKLIYOR)
-        self.lblDetail.setObjectName("Muted")
-        top.addWidget(self.lblDetail)
-
-        self.btnPause = QPushButton("Duraklat")
-        self.btnPause.clicked.connect(
-            lambda: self.pause_requested.emit(self.task_id))
-        top.addWidget(self.btnPause)
-
-        self.btnResume = QPushButton("Devam et")
-        self.btnResume.setObjectName("Primary")
-        self.btnResume.clicked.connect(
-            lambda: self.resume_requested.emit(self.task_id))
-        self.btnResume.setVisible(False)
-        top.addWidget(self.btnResume)
-
-        self.btnCancel = QPushButton("İptal")
-        self.btnCancel.clicked.connect(
-            lambda: self.cancel_requested.emit(self.task_id))
-        top.addWidget(self.btnCancel)
-
-        self.btnRetry = QPushButton("Yeniden Dene")
-        self.btnRetry.clicked.connect(
-            lambda: self.retry_requested.emit(self.task_id))
-        self.btnRetry.setVisible(False)
-        top.addWidget(self.btnRetry)
-
-        # Yalnızca TAMAMLANAN işte: indirilen bölüm uygulamadan, ağsız izlenebilsin.
-        self.btnPlay = QPushButton("Oynat")
-        self.btnPlay.setObjectName("Primary")
-        self.btnPlay.clicked.connect(lambda: self.play_requested.emit(self.task_id))
-        self.btnPlay.setVisible(False)
-        top.addWidget(self.btnPlay)
-
-        self.btnFolder = QPushButton("Klasörü Aç")
-        self.btnFolder.clicked.connect(
-            lambda: self.folder_requested.emit(self.task_id))
-        self.btnFolder.setVisible(False)
-        top.addWidget(self.btnFolder)
-        layout.addLayout(top)
-
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setTextVisible(False)
-        layout.addWidget(self.bar)
-
-    def set_progress(self, pct: int, detail: str) -> None:
-        if pct >= 0:                    # -1: yalnızca metin ("duraklatılıyor…")
-            self.bar.setValue(min(100, pct))
-        self.lblDetail.setText(detail)
-
-    def set_state(self, durum: str) -> None:
-        """Durumu ve buton görünürlüklerini eşitle."""
-        self.durum = durum
-        self.is_finished = durum in BITMIS_DURUMLAR
-        self.is_ok = durum == DURUM_TAMAMLANDI
-        self.btnCancel.setVisible(not self.is_finished)
-        self.btnPause.setVisible(durum in CALISAN_DURUMLAR)
-        self.btnResume.setVisible(durum == DURUM_DURAKLATILDI)
-        self.btnRetry.setVisible(durum in (DURUM_HATA, DURUM_IPTAL))
-        self.btnPlay.setVisible(self.is_ok)
-        self.btnFolder.setVisible(self.is_ok)
-        if durum == DURUM_BEKLIYOR:
-            # Yeniden denemede eski hata metni/rengi kalmasın.
-            self.bar.setValue(0)
-            self.lblDetail.setStyleSheet("")
-            self.lblDetail.setText(DURUM_BEKLIYOR)
-        elif durum == DURUM_DURAKLATILDI:
-            self.lblDetail.setStyleSheet(f"color: {DURUM_RENK[DURUM_DURAKLATILDI]};")
-            self.lblDetail.setText("duraklatıldı — “Devam et” kaldığı yerden sürdürür")
-
-    def set_done(self, ok: bool, message: str) -> None:
-        self.bar.setValue(100 if ok else self.bar.value())
-        self.lblDetail.setText(message)
-        renk = DURUM_RENK.get(self.durum, DURUM_RENK[DURUM_HATA] if not ok
-                              else DURUM_RENK[DURUM_TAMAMLANDI])
-        self.lblDetail.setStyleSheet(f"color: {renk};")
-
-
-class DownloadsPage(QWidget):
-    """Aktif ve tamamlanmış indirmeleri listeler."""
-
-    # Biten satırın "Oynat"ı: bölüm kaydı ana pencerenin oynatma yoluna gider
-    # (yerel dosya orada ilk aday; geçmiş ve kitaplık da orada yazılıyor).
-    oynat_istendi = Signal(object)
-
-    def __init__(self, manager: DownloadManager, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self._rows: Dict[str, DownloadRow] = {}
-
-        self.manager = manager
-        manager.added.connect(self._on_added)
-        manager.progress.connect(self._on_progress)
-        manager.state.connect(self._on_state)
-        manager.finished.connect(self._on_finished)
-
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(10)
-
-        head = QHBoxLayout()
-        title = QLabel("İndirilenler")
-        title.setObjectName("Title")
-        head.addWidget(title)
-        head.addStretch(1)
-        self.lblStatus = StatusLabel()
-        head.addWidget(self.lblStatus)
-        self.btnResumeAll = QPushButton("Tümünü Sürdür")
-        self.btnResumeAll.setObjectName("Primary")
-        self.btnResumeAll.clicked.connect(self._resume_all)
-        self.btnResumeAll.setVisible(False)
-        head.addWidget(self.btnResumeAll)
-        self.btnPauseAll = QPushButton("Tümünü Duraklat")
-        self.btnPauseAll.clicked.connect(self.manager.pause_all)
-        head.addWidget(self.btnPauseAll)
-        self.btnCancelAll = QPushButton("Tümünü İptal")
-        self.btnCancelAll.clicked.connect(self._cancel_all)
-        head.addWidget(self.btnCancelAll)
-        self.btnClear = QPushButton("Tamamlananları Temizle")
-        self.btnClear.clicked.connect(self._clear_finished)
-        head.addWidget(self.btnClear)
-        self.btnOpenDir = QPushButton("İndirme klasörünü aç")
-        self.btnOpenDir.clicked.connect(
-            lambda: self._klasor_ac_yol(prefs.indirme_dizini()))
-        head.addWidget(self.btnOpenDir)
-        layout.addLayout(head)
-
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        holder = QWidget()
-        self._list = QVBoxLayout(holder)
-        self._list.setContentsMargins(0, 0, 0, 0)
-        self._list.setSpacing(6)
-        self._list.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.scroll.setWidget(holder)
-        layout.addWidget(self.scroll, 1)
-
-        self.lblStatus.info("Henüz indirme yok.")
-
-    # ── Sinyal alıcıları (GUI thread'i) ─────────────────────────────────────
-    def _on_added(self, task_id: str, title: str) -> None:
-        row = DownloadRow(task_id, title)
-        row.cancel_requested.connect(self.manager.cancel)
-        row.retry_requested.connect(self.manager.retry)
-        row.pause_requested.connect(self.manager.pause)
-        row.resume_requested.connect(self.manager.resume)
-        row.play_requested.connect(self._oynat)
-        row.folder_requested.connect(
-            lambda tid: self._klasor_ac_yol(self.manager.klasor(tid)))
-        self._rows[task_id] = row
-        self._list.addWidget(row)
-        self._refresh_status()
-
-    def _on_progress(self, task_id: str, pct: int, detail: str) -> None:
-        row = self._rows.get(task_id)
-        if row is not None:
-            row.set_progress(pct, detail)
-
-    def _on_state(self, task_id: str, durum: str) -> None:
-        row = self._rows.get(task_id)
-        if row is not None:
-            row.set_state(durum)
-        self._refresh_status()
-
-    def _on_finished(self, task_id: str, ok: bool, message: str) -> None:
-        row = self._rows.get(task_id)
-        if row is not None:
-            row.set_done(ok, message)
-            # Ham metin (yt-dlp/requests) araç ipucunda: hata bildirimi için
-            # kopyalanabilsin, satırı doldurmasın.
-            row.lblDetail.setToolTip("" if ok else self.manager.ayrinti(task_id))
-        self._refresh_status()
-
-    def _oynat(self, task_id: str) -> None:
-        kayit = self.manager.kayit(task_id)
-        if kayit:
-            self.oynat_istendi.emit(kayit)
-
-    def _klasor_ac_yol(self, yol: str) -> None:
-        if not (yol and os.path.isdir(yol)):
-            self.lblStatus.error("Klasör bulunamadı (taşınmış ya da silinmiş olabilir).")
-            return
-        if not klasoru_ac(yol):
-            self.lblStatus.error(f"Klasör açılamadı: {yol}")
-
-    # ── Yardımcılar ─────────────────────────────────────────────────────────
-    def _refresh_status(self) -> None:
-        """Aktiflik satırlardan sayılır; ayrı sayaç tutmak yeniden denemede şaşar."""
-        total = len(self._rows)
-        duran = sum(1 for row in self._rows.values()
-                    if row.durum == DURUM_DURAKLATILDI)
-        active = sum(1 for row in self._rows.values() if not row.is_finished) - duran
-        self.btnResumeAll.setVisible(duran > 0)
-        self.btnPauseAll.setVisible(active > 0)
-        if duran:
-            self.lblStatus.info(f"{active} aktif, {duran} duraklatıldı / {total} toplam")
-        elif active:
-            self.lblStatus.info(f"{active} aktif / {total} toplam")
-        elif total:
-            hatali = sum(1 for row in self._rows.values() if not row.is_ok)
-            if hatali:
-                self.lblStatus.error(f"{total - hatali} tamamlandı, {hatali} başarısız")
-            else:
-                self.lblStatus.ok(f"{total} iş tamamlandı")
-        else:
-            self.lblStatus.info("Henüz indirme yok.")
-
-    def _resume_all(self) -> None:
-        adet = self.manager.resume_all()
-        if adet:
-            self.lblStatus.info(f"{adet} indirme sürdürülüyor…")
-
-    def _cancel_all(self) -> None:
-        adet = self.manager.cancel_all()
-        if adet:
-            self.lblStatus.info(f"{adet} indirme iptal ediliyor…")
-
-    def _clear_finished(self) -> None:
-        """Biten işleri (başarılı VE başarısız) listeden çıkar."""
-        for task_id, row in list(self._rows.items()):
-            if row.is_finished:
-                row.setParent(None)
-                row.deleteLater()
-                del self._rows[task_id]
-        self._refresh_status()
-
-
-__all__ = ["DownloadsPage", "DownloadManager", "DownloadRow", "IndirmeIptal",
+__all__ = ["DownloadManager", "IndirmeIptal",
            "satir_basligi", "klasoru_ac",
            "DURUM_BEKLIYOR", "DURUM_INDIRILIYOR", "DURUM_TAMAMLANDI",
            "DURUM_HATA", "DURUM_IPTAL", "DURUM_DURAKLATILDI", "BITMIS_DURUMLAR",

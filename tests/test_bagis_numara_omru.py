@@ -23,7 +23,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from turkanime_api.gui.qt.pages.settings import SettingsPage  # noqa: E402
+from PySide6.QtCore import QObject, Signal  # noqa: E402
+
+from turkanime_api.gui.web.uclar_ayarlar import (  # noqa: E402
+    AyarlarUclari, bagis_kimlikleri, bagis_metni,
+)
 
 
 class SahteDosya:
@@ -41,31 +45,32 @@ class SahteDosya:
         self.ayarlar[ad] = deger
 
 
-class SahteEtiket:
+class SahteKopru:
     def __init__(self):
-        self.mesajlar = []
+        self.olaylar: List[Any] = []
 
-    def ok(self, m): self.mesajlar.append(("ok", m))
-    def info(self, m): self.mesajlar.append(("info", m))
-    def error(self, m): self.mesajlar.append(("error", m))
-    def setText(self, m): self.mesajlar.append(("text", m))
-    def setStyleSheet(self, _): pass
+    def yay(self, ad, veri=None):
+        self.olaylar.append((ad, veri))
+
+    def durumlar(self):
+        return [(v["tur"], v["mesaj"]) for ad, v in self.olaylar if ad == "ayar_durum"]
 
 
-class SahteDugme:
-    def __init__(self): self.etkin = None
-    def setEnabled(self, v): self.etkin = v
+class SahteAniList(QObject):
+    auth_changed = Signal(object)
+    kullanici = None
+
+    def giris_var_mi(self):
+        return False
 
 
 def _sayfa(ayarlar, gonderilen=None, geri_cekilen=None, yazma_hatasi=False,
            gonderim_hatasi=None, geri_cekme_hatasi=None):
-    """Qt kurmadan `SettingsPage`in bağış yollarını çalıştırılabilir hâle getir."""
-    s = SettingsPage.__new__(SettingsPage)
+    """`AyarlarUclari`nın bağış yollarını sahte dosya/katkı ile kur."""
+    kopru = SahteKopru()
+    s = AyarlarUclari(kopru, anilist=SahteAniList())
     dosya = SahteDosya(ayarlar, yazma_hatasi)
     s._dosya = lambda: dosya                                  # noqa: SLF001
-    s.lblStatus = SahteEtiket()
-    s.lblKimlik = SahteEtiket()
-    s.btnBagisGeriCek = SahteDugme()
 
     class SahteKatki:
         KAYNAK_TRANIME = "tranime"
@@ -89,7 +94,14 @@ def _sayfa(ayarlar, gonderilen=None, geri_cekilen=None, yazma_hatasi=False,
             return True
 
     s._katki = lambda: SahteKatki                             # noqa: SLF001
+    s.kopru = kopru
     return s, dosya
+
+
+@pytest.fixture(autouse=True)
+def _kimlik_uygulama(monkeypatch):
+    """Kurulumdaki `prefs.kaynak_kimliklerini_uygula` gerçek ayar okumasın."""
+    monkeypatch.setattr(AyarlarUclari, "_kimlikleri_uygula", staticmethod(lambda: True))
 
 
 AYAR_TABAN = {"kimlik paylas": True, "sunucu adresi": "https://x.test",
@@ -101,21 +113,21 @@ def test_ikinci_bagis_birinciyi_ezmiyor():
     """ESKİ HATA: ikinci bağış eski numarayı siliyordu → yetim kayıt."""
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32]})
     sayfa, dosya = _sayfa(ayarlar, gonderilen=["b" * 32])
-    sayfa._kimlik_bagisi_teklif("cerez")                      # noqa: SLF001
+    sayfa.kimlik_bagisi_teklif("cerez")
     assert dosya.ayarlar["kimlik bagis id"] == ["a" * 32, "b" * 32]
 
 
 def test_ucuncu_bagis_da_birikiyor():
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32, "b" * 32]})
     sayfa, dosya = _sayfa(ayarlar, gonderilen=["c" * 32])
-    sayfa._kimlik_bagisi_teklif("cerez")                      # noqa: SLF001
+    sayfa.kimlik_bagisi_teklif("cerez")
     assert len(dosya.ayarlar["kimlik bagis id"]) == 3
 
 
 def test_ayni_numara_iki_kez_eklenmiyor():
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32]})
     sayfa, dosya = _sayfa(ayarlar, gonderilen=["a" * 32])
-    sayfa._kimlik_bagisi_teklif("cerez")                      # noqa: SLF001
+    sayfa.kimlik_bagisi_teklif("cerez")
     assert dosya.ayarlar["kimlik bagis id"] == ["a" * 32]
 
 
@@ -130,14 +142,14 @@ def test_ayni_numara_iki_kez_eklenmiyor():
 ])
 def test_eski_biçim_okunuyor(eski, beklenen):
     """10.0.0'dan yükselen kullanıcının numarası kaybolmamalı."""
-    assert SettingsPage._bagis_kimlikleri({"kimlik bagis id": eski}) == beklenen
+    assert bagis_kimlikleri({"kimlik bagis id": eski}) == beklenen
 
 
 def test_dizgi_bicimindeki_eski_numara_yeni_bagista_korunuyor():
     """Göç yolu: düz dizgi + yeni bağış = iki kayıt, kayıp yok."""
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": "a" * 32})
     sayfa, dosya = _sayfa(ayarlar, gonderilen=["b" * 32])
-    sayfa._kimlik_bagisi_teklif("cerez")                      # noqa: SLF001
+    sayfa.kimlik_bagisi_teklif("cerez")
     assert dosya.ayarlar["kimlik bagis id"] == ["a" * 32, "b" * 32]
 
 
@@ -146,9 +158,9 @@ def test_kaydetme_hatasinda_numara_kullaniciya_gosteriliyor():
     """ESKİ HATA: "gönderilemedi" deniyordu — yalan; bağış sunucudaydı."""
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": []})
     sayfa, _ = _sayfa(ayarlar, gonderilen=["b" * 32], yazma_hatasi=True)
-    sayfa._kimlik_bagisi_teklif("cerez")                      # noqa: SLF001
-    tur, mesaj = sayfa.lblStatus.mesajlar[-1]
-    assert tur == "error"
+    sayfa.kimlik_bagisi_teklif("cerez")
+    tur, mesaj = sayfa.kopru.durumlar()[-1]
+    assert tur == "hata"
     assert "b" * 32 in mesaj, f"numara gösterilmiyor: {mesaj}"
     assert "gönderilemedi" not in mesaj, f"hâlâ yalan söylüyor: {mesaj}"
     assert "ULAŞTI" in mesaj
@@ -158,9 +170,9 @@ def test_gercek_gonderim_hatasinda_hala_gonderilemedi_deniyor():
     """Gönderim GERÇEKTEN düştüyse mesaj doğru; ayırt edilebilmeli."""
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": []})
     sayfa, dosya = _sayfa(ayarlar, gonderim_hatasi=RuntimeError("ağ yok"))
-    sayfa._kimlik_bagisi_teklif("cerez")                      # noqa: SLF001
-    tur, mesaj = sayfa.lblStatus.mesajlar[-1]
-    assert tur == "error" and "gönderilemedi" in mesaj
+    sayfa.kimlik_bagisi_teklif("cerez")
+    tur, mesaj = sayfa.kopru.durumlar()[-1]
+    assert tur == "hata" and "gönderilemedi" in mesaj
     assert not dosya.yazilanlar, "başarısız gönderim ayara yazdı"
 
 
@@ -169,7 +181,8 @@ def test_geri_cekme_butun_kayitlari_siliyor():
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32, "b" * 32]})
     cekilen = []
     sayfa, dosya = _sayfa(ayarlar, geri_cekilen=cekilen)
-    sayfa._bagis_geri_cek()                                   # noqa: SLF001
+    sonuc = sayfa.bagis_geri_cek()
+    assert sonuc["tur"] == "tamam" and sonuc["kimlikler"] == []
     assert cekilen == ["a" * 32, "b" * 32]
     assert dosya.ayarlar["kimlik bagis id"] == []
 
@@ -182,10 +195,10 @@ def test_bir_kayit_dusense_otekiler_yine_siliniyor():
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32, "b" * 32, "c" * 32]})
     sayfa, dosya = _sayfa(ayarlar, geri_cekilen=[],
                           geri_cekme_hatasi={"b" * 32: "sunucu 500"})
-    sayfa._bagis_geri_cek()                                   # noqa: SLF001
+    sonuc = sayfa.bagis_geri_cek()
     assert dosya.ayarlar["kimlik bagis id"] == ["b" * 32], "kalan yanlış"
-    tur, mesaj = sayfa.lblStatus.mesajlar[-1]
-    assert tur == "error" and "2/3" in mesaj
+    assert sonuc["kimlikler"] == ["b" * 32]
+    assert sonuc["tur"] == "hata" and "2/3" in sonuc["mesaj"]
 
 
 def test_hicbiri_cekilemezse_mesaj_sayi_saymiyor():
@@ -193,9 +206,9 @@ def test_hicbiri_cekilemezse_mesaj_sayi_saymiyor():
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32]})
     sayfa, dosya = _sayfa(ayarlar, geri_cekilen=[],
                           geri_cekme_hatasi={"a" * 32: "ağ yok"})
-    sayfa._bagis_geri_cek()                                   # noqa: SLF001
-    tur, mesaj = sayfa.lblStatus.mesajlar[-1]
-    assert tur == "error"
+    sonuc = sayfa.bagis_geri_cek()
+    tur, mesaj = sonuc["tur"], sonuc["mesaj"]
+    assert tur == "hata"
     assert "geri çekilemedi" in mesaj, mesaj
     assert "0/1" not in mesaj, mesaj
     assert dosya.ayarlar["kimlik bagis id"] == ["a" * 32], "numara atıldı!"
@@ -204,22 +217,36 @@ def test_hicbiri_cekilemezse_mesaj_sayi_saymiyor():
 def test_kayit_yokken_geri_cekme_bilgilendiriyor():
     ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": []})
     sayfa, dosya = _sayfa(ayarlar)
-    sayfa._bagis_geri_cek()                                   # noqa: SLF001
-    assert sayfa.lblStatus.mesajlar[-1][0] == "info"
+    assert sayfa.bagis_geri_cek()["tur"] == "bilgi"
     assert not dosya.yazilanlar
 
 
 # ── Durum gösterimi ─────────────────────────────────────────────────────────
 def test_cogul_kayit_kullanicidan_gizlenmiyor():
     """Kaç kaydı olduğunu ve düğmenin hepsini sildiğini bilmeli."""
-    sayfa, _ = _sayfa(dict(AYAR_TABAN))
-    sayfa._show_kimlik_state(["a" * 32, "b" * 32])            # noqa: SLF001
-    metin = sayfa.lblKimlik.mesajlar[-1][1]
+    metin = bagis_metni(["a" * 32, "b" * 32])
     assert "2 bağış" in metin and "hepsini" in metin
-    assert sayfa.btnBagisGeriCek.etkin is True
+    assert "a" * 32 in bagis_metni(["a" * 32])
+    assert "yok" in bagis_metni([])
 
 
-def test_kayit_yokken_dugme_pasif():
-    sayfa, _ = _sayfa(dict(AYAR_TABAN))
-    sayfa._show_kimlik_state([])                              # noqa: SLF001
-    assert sayfa.btnBagisGeriCek.etkin is False
+def test_teklif_sonrasi_sayfaya_liste_gidiyor():
+    """Sayfa düğmeyi `kimlikler` doluluğuna göre açıyor: liste olay ile gitmeli."""
+    ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32]})
+    sayfa, _ = _sayfa(ayarlar, gonderilen=["b" * 32])
+    sayfa.kimlik_bagisi_teklif("cerez")
+    bagis = [v for ad, v in sayfa.kopru.olaylar if ad == "ayar_bagis"][-1]
+    assert bagis["kimlikler"] == ["a" * 32, "b" * 32]
+    assert "2 bağış" in bagis["metin"]
+
+
+def test_kayit_yokken_dugme_pasif(main_window, web):
+    main_window.show_page("settings")
+    web.bekle("[...document.querySelectorAll('button')].some("
+              "b => b.textContent.includes('Bağışımı geri çek'))", timeout=8000)
+    dugme = ("[...document.querySelectorAll('button')].find("
+             "b => b.textContent.includes('Bağışımı geri çek'))")
+    main_window.kopru.yay("ayar_bagis", {"kimlikler": [], "metin": "yok"})
+    web.bekle(dugme + ".disabled === true")
+    main_window.kopru.yay("ayar_bagis", {"kimlikler": ["a" * 32], "metin": "var"})
+    web.bekle(dugme + ".disabled === false")
