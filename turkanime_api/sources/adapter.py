@@ -12,9 +12,10 @@ import re
 import unicodedata
 
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from .animecix import _video_streams
-from ..common.dosya_adi import guvenli_alt_yol
+from ..common.dosya_adi import bolum_hedefi, indirilen_dosya
 from ..common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 
@@ -105,10 +106,17 @@ class AdapterVideo:
             # OPENANI linkleri Cloudflare arkasında olduğu için yt-dlp 404 dönecektir.
             # Bu linkler direkt mp4/m3u8 olduğu için info'yu sahte (mock) oluşturuyoruz.
             if self.player == "OPENANI":
+                # `id`/`extractor` şart: yt-dlp `process_video_result`'ta
+                # `info_dict['extractor']`ı okuyor; yoksa KeyError('extractor')
+                # ile her OpenAnime indirmesi "hata: 'extractor'" diye düşüyordu.
                 self._info = {
+                    "id": str(getattr(self.bolum, "slug", "") or "video"),
                     "url": self.url,
                     "ext": "mp4" if "mp4" in self.url else "m3u8",
-                    "title": self.bolum.title if self.bolum else "Video"
+                    "title": self.bolum.title if self.bolum else "Video",
+                    "extractor": "generic",
+                    "extractor_key": "Generic",
+                    "webpage_url": self.url,
                 }
                 return self._info
 
@@ -143,15 +151,19 @@ class AdapterVideo:
 
     def indir(self, callback=None, output=""):
         assert self.is_working, "Video çalışmıyor."
-        seri_slug = self.bolum.anime.slug if getattr(self.bolum, 'anime', None) else ""
         # Slug kaynağın verisi: arşivin dizin.json'ına `"../../../evil"` konursa
         # yt-dlp dosyayı indirme klasörünün DIŞINA yazar. Bkz. common.dosya_adi.
-        out_tmpl_dir = guvenli_alt_yol(output, seri_slug, self.bolum.slug,
-                                       yedek="bolum")
+        out_tmpl_dir = bolum_hedefi(output, self.bolum)
         opts = self.ydl_opts.copy()
         if callback:
             opts['progress_hooks'] = [callback]
         opts['outtmpl'] = {'default': out_tmpl_dir + r'.%(ext)s'}
+        # `get_ydl_opts` 'ignoreerrors': 'only_download' veriyor; o ayarla
+        # yt-dlp HTTP 403'te istisna FIRLATMIYOR, yalnızca 1 döndürüyordu.
+        # Dönüş değeri de okunmadığı için arayüz ve CLI klasör boşken işi
+        # "tamamlandı" sayıp geçmişe "indirildi" yazıyordu; kuyruğun kendi
+        # yeniden denemesi de hiç çalışmıyordu. İndirmede hata hata olmalı.
+        opts['ignoreerrors'] = False
         # delete=False şart: yt-dlp dosyayı adıyla ikinci kez açıyor (Windows'ta
         # açık bir NamedTemporaryFile yeniden açılamaz). Bu yüzden temizliği biz
         # yapıyoruz — aksi hâlde her indirme bir geçici dosya sızdırır.
@@ -159,7 +171,14 @@ class AdapterVideo:
             json.dump(self.info, tmp)
         try:
             with YoutubeDL(opts) as ydl:  # type: ignore
-                ydl.download_with_info_file(tmp.name)
+                kod = ydl.download_with_info_file(tmp.name)
+            # İki kat güvence: çıkış kodu da, diskteki sonuç da denetlenir.
+            # Yalnızca `.part`/`.ytdl` kaldıysa indirme bitmemiştir.
+            if isinstance(kod, int) and kod != 0:
+                raise DownloadError(f"yt-dlp indirmeyi bitiremedi (çıkış kodu {kod})")
+            if indirilen_dosya(out_tmpl_dir) is None:
+                raise DownloadError("indirme bitti ama dosya diskte yok: "
+                                    f"{out_tmpl_dir}.*")
         finally:
             try:
                 remove(tmp.name)

@@ -9,6 +9,7 @@ Ağa çıkılmaz, gerçek yt-dlp/aria2c çalıştırılmaz: `Bolum`/`Video` saht
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -288,6 +289,67 @@ def test_basarisiz_is_otomatik_bir_kez_tekrarlaniyor(qtbot, manager, ayarla, tmp
 
     assert manager.durum(task_id) == DURUM_HATA
     assert bolum.video.deneme == MAX_DENEME
+
+
+class AdresliVideo(SahteVideo):
+    """Adresi olan sahte: kuyruk başarısız adresi `atla`ya ekleyebilsin."""
+
+    def __init__(self, bolum, url, hata=None, part_yolu=None):
+        super().__init__(bolum, hata=hata)
+        self.url = url
+        self.part_yolu = part_yolu
+        self.part_vardi = None
+
+    def indir(self, callback=None, output=""):
+        if self.part_yolu is not None:
+            self.part_vardi = os.path.exists(self.part_yolu)
+        super().indir(callback, output)
+
+
+def test_ikinci_deneme_baska_adayi_istiyor_yarim_dosyayi_siliyor(
+        qtbot, manager, ayarla, tmp_path):
+    """ESKİ HATA: ikinci deneme AYNI adresi yeniden indiriyordu. Aday
+    değişince eski akışın `.part`'ı da silinmeli: yt-dlp ona ekleme yapar ve
+    iki farklı akışın baytları tek dosyada birleşirdi."""
+    ayarla(**{"aria2c kullan": False})
+    bolum = SahteBolum()
+    part = tmp_path / "naruto-test" / "naruto-test-1-bolum.mp4.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"eski akis")
+    a = AdresliVideo(bolum, "https://a.test/v.mp4", hata=RuntimeError("HTTP 403"))
+    b = AdresliVideo(bolum, "https://b.test/v.mp4", part_yolu=str(part))
+    cagrilar = []
+
+    def best_video(**kwargs):
+        cagrilar.append(kwargs)
+        return b if kwargs.get("atla") else a
+    bolum.best_video = best_video
+
+    task_id = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    _bekle(qtbot, manager, task_id)
+
+    assert manager.durum(task_id) == DURUM_TAMAMLANDI
+    assert len(cagrilar) == 2
+    assert set(cagrilar[1]["atla"]) == {"https://a.test/v.mp4"}
+    assert (a.deneme, b.deneme) == (1, 1)
+    assert b.part_vardi is False, "yarım dosya ikinci aday başlamadan silinmeli"
+
+
+def test_baska_aday_yoksa_ayni_video_yeniden_deneniyor(qtbot, manager, ayarla, tmp_path):
+    """Geçici 5xx için: aday kalmadıysa aynı adres, `.part` korunarak."""
+    ayarla(**{"aria2c kullan": False})
+    bolum = SahteBolum()
+    part = tmp_path / "naruto-test" / "naruto-test-1-bolum.mp4.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"yarim")
+    a = AdresliVideo(bolum, "https://a.test/v.mp4", hata=RuntimeError("HTTP 503"))
+    bolum.best_video = lambda **k: None if k.get("atla") else a
+
+    task_id = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    _bekle(qtbot, manager, task_id)
+
+    assert a.deneme == MAX_DENEME
+    assert part.exists(), "aynı adres yeniden denenirken .part silinmemeli"
 
 
 def test_yeniden_dene_basarisiz_isi_kuyruga_aliyor(qtbot, manager, ayarla, tmp_path):

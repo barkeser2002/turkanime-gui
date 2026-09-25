@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Any
+from typing import Any, Optional
 
 # Windows'ta dosya adında yasak olanlar. Yol ayırıcıları (`/`, `\`) ve `:`
 # (sürücü harfi) bu kümede olduğu için POSIX'te de dolaşım kapanıyor.
@@ -107,5 +107,85 @@ def guvenli_alt_yol(kok: Any, *parcalar: Any, yedek: str = YEDEK_AD) -> str:
     return hedef
 
 
+# ── Bölüm indirme hedefi ────────────────────────────────────────────────────
+# yt-dlp/aria2c'nin yarım bıraktığı dosyaların izleri. Bu adlardan biri
+# "indirme bitti" kanıtı değildir; `.part` ile `.ytdl` başka bir akıştan
+# yeniden başlayan indirmeye devam diye eklenirse dosya bozulur.
+YARIM_SONEKLER = (".part", ".ytdl", ".aria2")
+YARIM_ICERIKLER = (".part-Frag", ".temp.")
+
+
+def bolum_hedefi(kok: Any, bolum: Any) -> str:
+    """Bölümün UZANTISIZ indirme hedefi: ``<kok>/<seri slug>/<bölüm slug>``.
+
+    `AdapterVideo.indir` yt-dlp'ye ``<hedef>.%(ext)s`` veriyor. Aynı yol
+    indirme kuyruğunun "bu bölüm zaten kuyrukta mı?" denetiminde ve yarım
+    dosya temizliğinde de gerekiyor; üç yerde ayrı ayrı hesaplanırsa biri
+    kaydığında denetim sessizce boşa düşer.
+    """
+    try:
+        anime = getattr(bolum, "anime", None)
+    except Exception:               # Bolum.anime bir property; patlayabilir
+        anime = None
+    seri = getattr(anime, "slug", "") if anime else ""
+    return guvenli_alt_yol(kok, seri or "", getattr(bolum, "slug", ""),
+                           yedek="bolum")
+
+
+def _hedefin_dosyalari(hedef: str):
+    """``(uzantı kısmı, tam yol)``; uzantı kısmı ``.mp4.part`` gibi, noktayla.
+
+    Yalnızca addan SONRAKİ kısım döner: slug'ın kendisi ".temp." içerse bile
+    yarım sayılmasın.
+    """
+    klasor, ad = os.path.split(hedef)
+    try:
+        adlar = os.listdir(klasor)
+    except OSError:
+        return
+    for dosya in adlar:
+        if dosya.startswith(ad + "."):
+            yield dosya[len(ad):], os.path.join(klasor, dosya)
+
+
+def _yarim_mi(uzanti: str) -> bool:
+    return (uzanti.endswith(YARIM_SONEKLER)
+            or any(parca in uzanti for parca in YARIM_ICERIKLER))
+
+
+def indirilen_dosya(hedef: str) -> Optional[str]:
+    """``<hedef>.<uzantı>`` biçiminde TAMAMLANMIŞ dosya varsa yolu, yoksa None.
+
+    yt-dlp `ignoreerrors` açıkken HTTP 403'te istisna fırlatmıyor, yalnızca
+    1 döndürüyordu; indirme "tamamlandı" sayılıp klasör boşken geçmişe
+    "indirildi" yazılıyordu. Çıkış kodu denetimine ek olarak diskteki sonuç
+    da doğrulanır: yalnızca `.part`/`.ytdl` kalmışsa indirme bitmemiştir.
+    """
+    for uzanti, yol in _hedefin_dosyalari(hedef):
+        if not _yarim_mi(uzanti) and os.path.isfile(yol):
+            return yol
+    return None
+
+
+def yarim_dosyalari_sil(hedef: str) -> int:
+    """Hedefin yarım indirme dosyalarını sil; silinen sayısını döndür.
+
+    Yalnızca BAŞKA bir aday (farklı akış) indirilmeden önce çağrılmalı:
+    yt-dlp `.part`'ı gördüğünde kaldığı yerden devam ediyor ve iki farklı
+    akışın baytları tek dosyada birleşiyordu. Aynı adresin yeniden
+    denenmesinde `.part` korunur; orada devam etmek doğru.
+    """
+    silinen = 0
+    for uzanti, yol in _hedefin_dosyalari(hedef):
+        if _yarim_mi(uzanti):
+            try:
+                os.remove(yol)
+                silinen += 1
+            except OSError:
+                pass
+    return silinen
+
+
 __all__ = ["guvenli_ad", "guvenli_alt_yol", "alt_yolda_mi",
+           "bolum_hedefi", "indirilen_dosya", "yarim_dosyalari_sil",
            "YASAK_KARAKTERLER", "AYRILMIS_ADLAR", "UZUNLUK_SINIRI"]

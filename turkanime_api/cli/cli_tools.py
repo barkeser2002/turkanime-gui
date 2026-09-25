@@ -146,8 +146,12 @@ def indirme_task_cli(bolum,table,dosya):
             # Yt-dlp ile İndir
             best_video.indir(callback=dl_cli.ytdl_callback, output=down_dir)
             success = True
-    except Exception:
+    except Exception as e:
+        # `indir` artık HTTP hatasında gerçekten yükseliyor (eskiden yt-dlp
+        # 1 döndürüp susuyordu ve bölüm, dosya yokken "indirildi" oluyordu).
+        # Sebep yazılmazsa kullanıcı yalnızca yarım kalan çubuğu görür.
         success = False
+        print(f"  (!) {bolum.slug} indirilemedi: {e}")
     if success:
         dosya.set_gecmis(bolum.anime.slug, bolum.slug, "indirildi")
 

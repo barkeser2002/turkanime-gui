@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import shutil
 
+from pathlib import Path
+
 import pytest
 
 from turkanime_api.sources import adapter as adapter_mod
@@ -60,6 +62,7 @@ def test_referer_indirmede_yt_dlp_ye_geciyor(monkeypatch, tmp_path):
     class SahteYDL:
         def __init__(self, opts):
             kayit.append(dict(opts))
+            self.opts = opts
 
         def __enter__(self):
             return self
@@ -68,7 +71,12 @@ def test_referer_indirmede_yt_dlp_ye_geciyor(monkeypatch, tmp_path):
             return False
 
         def download_with_info_file(self, _yol):
-            pass
+            # Gerçek yt-dlp gibi dosyayı yazar: `indir` artık diskteki sonucu
+            # doğruluyor (bkz. test_indirme_butunlugu).
+            hedef = Path(self.opts["outtmpl"]["default"].replace(".%(ext)s", ".mp4"))
+            hedef.parent.mkdir(parents=True, exist_ok=True)
+            hedef.write_bytes(b"video")
+            return 0
 
     monkeypatch.setattr(adapter_mod, "YoutubeDL", SahteYDL)
     monkeypatch.setattr(adapter_mod, "extract_video_info",

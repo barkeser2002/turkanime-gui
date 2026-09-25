@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ....common.dosya_adi import bolum_hedefi, yarim_dosyalari_sil
 from .. import prefs
 from ..widgets import StatusLabel
 from ..workers import run_bg, set_long_task_limit
@@ -247,17 +248,26 @@ class DownloadManager(QObject):
 
         hook = self._hook_uret(job)
         son_hata: Optional[Exception] = None
+        # İndirilemeyen adresler. İkinci deneme eskiden AYNI videoyu yeniden
+        # indiriyordu; `best_video` her çağrıda aynı ilk adayı seçtiği için
+        # `atla` olmadan çalışan diğer adaylara hiç geçilmiyordu.
+        basarisiz: set = set()
         for deneme in range(1, MAX_DENEME + 1):
             if job.iptal.is_set():
                 break
             if deneme > 1:
                 self._yay("progress", task_id, 0, f"{deneme}. deneme…")
+                video = self._siradaki_aday(bolum, video, tercih, basarisiz,
+                                            job.output)
             try:
                 prefs.indir(video, hook, job.output, tercih)
             except IndirmeIptal:
                 break
             except Exception as exc:
                 son_hata = exc
+                adres = getattr(video, "url", None)
+                if adres:
+                    basarisiz.add(adres)
                 continue
             if job.iptal.is_set():
                 # aria2c'de hook yalnızca sonda ateşleniyor: iş iptal istendikten
@@ -273,6 +283,32 @@ class DownloadManager(QObject):
             self._bitir(job, False, DURUM_IPTAL)
         else:
             self._bitir(job, False, DURUM_HATA, f"hata: {son_hata}")
+
+    @staticmethod
+    def _siradaki_aday(bolum, video, tercih, basarisiz: set, output: str):
+        """İkinci deneme için `atla` ile başka bir aday iste.
+
+        Başka aday yoksa (ya da arama patlarsa) AYNI video yeniden denenir:
+        kaynak sunucuları sık sık geçici 5xx/timeout veriyor ve `MAX_DENEME`
+        tam da bunun için var; `.part` korunur, yt-dlp kaldığı yerden devam
+        eder. Aday DEĞİŞİYORSA yarım dosyalar silinir: yt-dlp `.part`'ı
+        gördüğünde başka akışın baytlarına ekleme yapıyor ve dosya bozuluyordu.
+        """
+        if not basarisiz:
+            return video
+        try:
+            yeni = bolum.best_video(by_res=tercih.max_res,
+                                    early_subset=tercih.aday_sayisi,
+                                    atla=frozenset(basarisiz))
+        except Exception:
+            return video
+        if yeni is None or getattr(yeni, "url", None) in basarisiz:
+            return video
+        try:
+            yarim_dosyalari_sil(bolum_hedefi(output, bolum))
+        except (ValueError, OSError):
+            pass
+        return yeni
 
 
 class DownloadRow(QFrame):
