@@ -182,3 +182,74 @@ def test_flaresolverr_varsayilani_dogru_anlatiliyor(yol):
     else:
         assert "VARSAYILAN OLARAK DOLU" not in metin, (
             f"{yol.name}: varsayılan artık boş; belge hâlâ dolu olduğunu söylüyor")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sağlayıcı rehberi: iki kopya, silinen şablon
+# ─────────────────────────────────────────────────────────────────────────────
+KOK_REHBER = KOK / "ANIME_PROVIDER_GUIDE.md"
+DOCS_REHBER = KOK / "docs" / "ANIME_PROVIDER_GUIDE.md"
+
+
+def test_iki_rehber_kopyasi_ayni():
+    """`docs/index.html` docs kopyasını yüklüyor; biri güncellenip öteki unutulmasın."""
+    kok = KOK_REHBER.read_text(encoding="utf-8")
+    docs = re.sub(r"\]\(\.\./", "](", DOCS_REHBER.read_text(encoding="utf-8"))
+    assert kok == docs, "ANIME_PROVIDER_GUIDE.md kopyaları ayrışmış"
+
+
+def test_eski_adaptor_sablonu_geri_gelmedi():
+    """Hiçbir yerden kullanılmayan sınıf tabanlı şablon silindi; rehber kayda yönlendiriyor."""
+    assert not (KOK / "turkanime_api" / "sources" / "adapter_template.py").exists()
+    rehber = KOK_REHBER.read_text(encoding="utf-8")
+    assert "kayit.py" in rehber
+    assert "dosyasını kopyala" not in rehber
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloudflare kademe sayısı kurulum biçimine göre
+# ─────────────────────────────────────────────────────────────────────────────
+def _pyside_istege_bagli() -> bool:
+    pyproject = (KOK / "pyproject.toml").read_text(encoding="utf-8")
+    return bool(re.search(r"(?im)^pyside6\s*=\s*\{[^}]*optional\s*=\s*true", pyproject))
+
+
+@pytest.mark.parametrize("yol", [KOK_README, DOCS_README])
+def test_cf_kademe_iddiasi_kurulum_yoluna_gore(yol):
+    """"Her kurulum 5 kademe" yanlıştı: sade pip kurulumunda PySide6 yok.
+
+    `cf_bypass` QtWebEngine kademesini `PySide6.QtWebEngineCore` bulunursa
+    ekliyor; PySide6 `[gui]` ekstrasında. Sade `pip install turkanime-gui`'de
+    zincir 4 kademe (FlareSolverr adresi boşsa 3). Eski iddia bir düzeltme
+    notunun (`>` satırı) içindeydi, bu yüzden alıntılar da taranıyor.
+    """
+    assert _pyside_istege_bagli(), (
+        "PySide6 artık zorunlu: her kurulum QtWebEngine taşıyor. README'deki "
+        "kurulum biçimine göre kademe açıklamasını ve bu testi yeniden yaz.")
+    metin = yol.read_text(encoding="utf-8")
+    for yanlis in ("beş kademenin tamamını", "5 kademenin tamamını"):
+        assert yanlis not in metin, f"{yol.name}: '{yanlis}' kurulum biçimine bakmıyor"
+    zincir = metin.split("### Cloudflare Bypass Zinciri", 1)[1].split("\n### ", 1)[0]
+    assert "[gui]" in zincir, f"{yol.name}: zincirde QtWebEngine'in [gui] şartı yazmıyor"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python sürümü
+# ─────────────────────────────────────────────────────────────────────────────
+PYTHON_BELGELERI = [KOK_README, DOCS_README, KOK_REHBER, DOCS_REHBER,
+                    KOK / "turkanime_api" / "gui" / "README.md"]
+
+
+@pytest.mark.parametrize("yol", PYTHON_BELGELERI, ids=lambda p: str(p.relative_to(KOK)))
+def test_python_surumu_pyproject_ile_tutuyor(yol):
+    """Taban sürüm pyproject'le aynı; "test edilen" denmiyor.
+
+    Belgeler "test edilen: 3.9 – 3.13" diyordu; yayın kapısı yalnızca 3.12'de
+    koşuyor. Sınıflandırıcıları "test edildi" diye sunmak yanlış güven verir.
+    """
+    pyproject = (KOK / "pyproject.toml").read_text(encoding="utf-8")
+    taban = re.search(r'(?m)^python\s*=\s*">=(\d+\.\d+)', pyproject).group(1)
+    metin = yol.read_text(encoding="utf-8")
+    beyanlar = set(re.findall(r"Python(?::\*\*)?\s*\**\s*(\d+\.\d+)\+", metin))
+    assert beyanlar == {taban}, f"{yol.name}: {beyanlar} ≠ pyproject {taban}"
+    assert "test edilen" not in metin.lower()

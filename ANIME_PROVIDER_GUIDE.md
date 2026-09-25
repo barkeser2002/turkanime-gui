@@ -13,7 +13,7 @@ Bu rehber, TürkAnime GUI'ye yeni bir anime kaynağı eklemeyi anlatır.
 
 ## Gereksinimler
 
-- **Python 3.9+** (`pyproject.toml`: `>=3.9,<4`; test edilen: 3.9 – 3.13)
+- **Python 3.9+** (`pyproject.toml`: `>=3.9,<4`; sınıflandırıcılarda 3.9 – 3.13)
 - `requests`, `curl_cffi`, `beautifulsoup4` — hepsi `requirements.txt`'te
 
 ## Mimariye kısa bakış
@@ -35,6 +35,7 @@ Kayıttan türetilenler (hiçbirine elle ekleme yapılmaz):
 | CLI "Kaynak seç" menüsü, `SOURCE_TITLES` | `turkanime_api/cli/__main__.py` |
 | `PROVIDERS` | `turkanime_api/sources/__init__.py` |
 | Sunucu tarayıcısının tablosu (`taranabilir=True` olanlar) | `turkanime_server/crawler/kaynaklar.py` |
+| Sunucu API'sinin kaynak tablosu (aynı liste; `/sources`, `/<kaynak>/…`) | `turkanime_server/app.py` |
 
 Bölüm nesneleri (`AdapterBolum`) her kaynak için aynı yoldan kurulur:
 `sources/adapter.py::kayittan_bolumler`. Oynatma/indirme boru hattı (yt-dlp +
@@ -49,9 +50,10 @@ mpv) kaynaktan bağımsızdır.
 > `Anime`/`Bolum` nesnesi üretmesi gerekiyorsa `Anime.cevrimdisi(...)` /
 > `Bolum.cevrimdisi(...)`.
 
-> `sources/adapter_template.py` dosyasını kopyalama. Sınıf tabanlı eski bir
-> şablon; içindeki çıplak `except:` bloğu kopyalayan her yeni kaynağa taşınır.
-> Örnek olarak gerçekten kullanılan bir kaynağı okuyun.
+> Şablon dosyası yok: sınıf tabanlı eski `sources/adapter_template.py` hiçbir
+> yerden kullanılmıyordu ve silindi. Başlangıç noktası `kayit.py`'deki
+> `KAYNAKLAR` demeti ile oradaki yükleyiciler (`_anizle`, `_openani`); örnek
+> kaynak modülü olarak gerçekten kullanılan birini okuyun.
 
 ---
 

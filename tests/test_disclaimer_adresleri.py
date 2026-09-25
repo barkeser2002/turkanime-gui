@@ -27,12 +27,13 @@ BELGELER = [KOK / "DISCLAIMER.md", KOK / "docs" / "DISCLAIMER.md"]
 
 # Tabloya girmesi gereken sabitler. Bunlar kullanıcının isteğinin gerçekten
 # gittiği konaklar; "şu siteye erişiyoruz" cümlesinin karşılığı.
-SABITLER = ("BASE_URL", "ALT_URL", "API_BASE_URL", "PLAYER_BASE_URL")
+# GITHUB_AYNA_URL: TürkAnime arşivinin ikinci aynası (`animedepo.py`); arşiv
+# de tabloda, iki aynanın konağı da yazılı olmalı.
+SABITLER = ("BASE_URL", "ALT_URL", "API_BASE_URL", "PLAYER_BASE_URL",
+            "GITHUB_AYNA_URL")
 
-# Kaynak sitesi olmayan modüller. `adapter` bir uyarlayıcı, `animedepo`
-# GitLab'daki statik arşiv (tabloda ayrı satırı var, ham URL'i değil depo
-# adresi yazılı).
-HARIC = {"adapter", "__init__", "animedepo"}
+# Kaynak sitesi olmayan modüller. `adapter` bir uyarlayıcı.
+HARIC = {"adapter", "__init__"}
 
 
 def _kaynak_konaklari():
@@ -79,13 +80,24 @@ def test_artik_kullanilmayan_alan_adi_belgede_kalmadi(belge):
     metin = belge.read_text(encoding="utf-8")
     kod_konaklari = {k for _, _, k in _kaynak_konaklari()}
     olu = []
-    for eski in ("tranimeizle.co", "anizle.com", "turkanime.tv"):
+    # turkanime.co: sitenin son alan adı; uygulama oraya hiç bağlanmıyor
+    # (TürkAnime artık arşivden okunuyor).
+    for eski in ("tranimeizle.co", "anizle.com", "turkanime.tv", "turkanime.co"):
         if eski in metin and eski not in kod_konaklari:
             # "tranimeizle.co" dizgisi "tranimeizle.com" içinde de geçebilir;
             # sınır kontrolü yap.
             if re.search(rf"{re.escape(eski)}(?![\w.-])", metin):
                 olu.append(eski)
     assert not olu, f"{belge.name}: kodda olmayan eski adres duruyor: {olu}"
+
+
+@pytest.mark.parametrize("belge", BELGELER, ids=lambda p: p.parent.name or "kok")
+def test_arsiv_tek_satir_turkanime_adiyla(belge):
+    """AnimeDepo, kayıtta TürkAnime'nin takma adı; aynı arşiv iki satır olmasın."""
+    satirlar = belge.read_text(encoding="utf-8").splitlines()
+    assert not [s for s in satirlar if s.startswith("| AnimeDepo")]
+    arsiv = [s for s in satirlar if s.startswith("| TürkAnime")]
+    assert len(arsiv) == 1 and "arşiv" in arsiv[0], arsiv
 
 
 def test_iki_disclaimer_kopyasi_ayni():

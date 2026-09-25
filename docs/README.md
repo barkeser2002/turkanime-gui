@@ -127,11 +127,17 @@ turkanime-cli
 > `[gui]` ekstrası PySide6'yı (ve opsiyonel `pypresence`'ı) kurar. Sade
 > `pip install turkanime-gui` yalnızca terminal sürümünü çalıştırır.
 >
-> **Not (düzeltildi):** Burada eskiden "pip ile kurulan sürümde `cloudscraper`
-> gelmez, Cloudflare zinciri 5 yerine 4 kademeyle çalışır" yazıyordu. Doğru
-> değil: `cloudscraper` hem `pyproject.toml` hem `requirements.txt` içinde
-> **zorunlu** bağımlılık. Her kurulum biçimi beş kademenin tamamını taşıyor
+> **Cloudflare zinciri kurulum biçimine göre değişir.** Hazır paket, kaynak
+> koddan kurulum (`requirements-gui.txt`) ve `pip install "turkanime-gui[gui]"`
+> beş kademeyle çalışır. Sade `pip install turkanime-gui` PySide6 kurmaz, yani
+> QtWebEngine kademesi de yoktur: zincir 4 kademe. Her durumda FlareSolverr
+> kademesi yalnızca `flaresolverr_url` doluyken vardır
 > (bkz. [Cloudflare Bypass Zinciri](#cloudflare-bypass-zinciri)).
+>
+> **Not (düzeltildi):** Burada önce "pip'te `cloudscraper` gelmez", sonra "her
+> kurulum beş kademeyi de taşır" yazıyordu; ikisi de yanlıştı. `cloudscraper`
+> zorunlu bağımlılık, her kurulumda var; sade pip kurulumunda eksik olan
+> QtWebEngine.
 
 ### 3. Kaynak Koddan
 ```bash
@@ -245,7 +251,7 @@ işaretli oynatıcılar atlanır. Arşivde İngilizce adlar yok, romaji ile aray
 1. curl_cffi      (TLS fingerprint taklidi)
 2. cloudscraper   (JS Challenge çözümü — zorunlu bağımlılık, her kurulumda var)
 3. FlareSolverr   (Uzak headless browser — VARSAYILAN OLARAK DOLU gelir)
-4. QtWebEngine    (Yerel gömülü Chromium, ayrı süreçte)
+4. QtWebEngine    (Yerel gömülü Chromium, ayrı süreçte — yalnızca [gui] kurulumlarında)
 5. requests       (Son çare)
 ```
 > Zincir, HTTP 200 dönen *challenge sayfalarını* da tanır ve başarı saymaz;
@@ -275,13 +281,15 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 | **TürkAnime kapandı** | Kaynak artık sitenin arşivi: içerik sitenin kapanmadan önceki kaydı (dizinin tarihi Ayarlar'da görünür). Video kayıtlarının yaklaşık dörtte biri turkanime.tv'nin kendi oynatıcısına bağlıydı ve oynatılamıyor; arama yalnızca romaji adlarla bulur. |
 | **TRAnimeİzle çerez istiyor** | Çerez alınmadan bu kaynak bölüm döndürmez. Ayarlar → "Tarayıcıdan Al" ile bir kez alınır. |
 | **OpenAnime stream 404** | Arama ve bölüm listesi çalışıyor, ama CDN uçları `not_found` dönüyor. `api.openani.me` kimlik doğrulama ("Vanguard") istiyor. Uygulama bu durumda sessiz kalmaz, sebebi yazar. |
-| ~~**pip kurulumunda 4 kademeli CF zinciri**~~ | Geçersiz: `cloudscraper` zorunlu bağımlılık (`pyproject.toml`, `requirements.txt`); her kurulum 5 kademenin tamamını taşır. |
+| **Sade pip kurulumunda 4 kademeli CF zinciri** | `cloudscraper` zorunlu, her kurulumda var; ama sade `pip install turkanime-gui` PySide6 kurmadığı için QtWebEngine kademesi yok. 5 kademe için `[gui]` ekstrası, hazır paket ya da `requirements-gui.txt`. |
 | **Anizle bölüm başına sınırlı kaynak** | Site video.js/HLS'e geçti; bazı bölümlerde tek stream dönebiliyor. |
 
 ## 🔧 Sistem Gereksinimleri
 
 - **Python:** 3.9+ (kaynaktan/pip ile çalıştırmak için; hazır pakette gerekmez).
-  Test edilen sürümler: 3.9 – 3.13.
+  Sınıflandırıcılarda 3.9 – 3.13; yayın kapısındaki testler 3.12 ile koşuyor.
+  3.11+ önerilir: yt-dlp, curl-cffi ve PySide6'nın güncel sürümleri 3.10+,
+  rapidfuzz'unki 3.11+ istiyor; 3.9'da pip bunların eski sürümlerinde kalır.
 - **FFmpeg, mpv, aria2c, yt-dlp:** Hazır Windows paketinde gömülü gelir;
   kaynaktan çalıştırıyorsan uygulama içindeki sihirbaz indirip kurar.
 - **FlareSolverr:** Varsayılan ayarda projenin sunucusu yazılıdır, yani
@@ -327,6 +335,14 @@ python tests/adapters-test-all.py --skip-streams
 
 > Betik şu an **4 kaynağı** kapsıyor: `animecix`, `anizle`, `tranime`,
 > `animedepo` (TürkAnime arşivi). OpenAnime ve Tranimaci bu betikte yok.
+
+Gerçek ağa çıkan küçük bir duman testi de `pytest` içinde:
+`tests/test_ag_canli.py` (arşiv aynaları ve AniList). `network` işaretli,
+varsayılan koşuda atlanır; ağ mandalını kaldırıp yalnızca onları koşmak için:
+
+```bash
+python -m pytest --network -m network
+```
 
 ### Test Kapsamı
 | Alan | Testler |

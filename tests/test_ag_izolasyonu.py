@@ -67,3 +67,23 @@ def test_guncelleme_servisi_arka_planda_aga_cikmiyor(qtbot):
     with qtbot.waitSignal(servis.up_to_date, timeout=5000):
         servis.kontrol_et(sessiz=True)
     shutdown_pools(2000)
+
+
+def test_ag_isaretli_testler_gercekten_var():
+    """`--network` altyapısı boşa durmasın: işaretli en az bir test toplanmalı.
+
+    Eskiden `--collect-only -m network` "no tests collected" diyordu; uzak
+    arşiv aynasının ölmesini yakalayacak tek bir test yoktu.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    depo = Path(__file__).resolve().parent.parent
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+         "-m", "network", "tests/test_ag_canli.py"],
+        cwd=depo, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=120)
+    toplanan = [s for s in r.stdout.splitlines() if "::" in s]
+    assert r.returncode == 0 and toplanan, r.stdout + r.stderr
