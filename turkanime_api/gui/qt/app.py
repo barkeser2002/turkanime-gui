@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QSystemTrayIcon,
+    QMainWindow, QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QSystemTrayIcon,
     QVBoxLayout, QWidget,
 )
 
@@ -158,6 +158,14 @@ class MainWindow(QMainWindow):
         self.pages: Dict[str, QWidget] = {}
         self._build_ui()
         self.show_page("home")
+        # Önceki oturumun bitmemiş indirmeleri (kapanışta ya da çökmede
+        # kalanlar) "duraklatıldı" olarak geri gelir; ağa çıkılmaz, iş
+        # başlatılmaz. Sayfalar kurulduktan SONRA: satırlar `added` ile doğuyor.
+        geri = self.downloads.geri_yukle()
+        if geri:
+            self.statusBar().showMessage(
+                f"Önceki oturumdan {geri} indirme duraklatılmış olarak geri "
+                "yüklendi — İndirilenler'den “Tümünü Sürdür”.", 0)
         # Jeton diskte duruyor olabilir; kullanıcı adını/avatarı arka planda al.
         self.anilist.baslat()
         QTimer.singleShot(ACILIS_DENETIM_GECIKMESI, self._acilis_denetimleri)
@@ -711,6 +719,8 @@ class MainWindow(QMainWindow):
         self._dl_titles[task_id] = title
 
     def _on_download_progress(self, task_id: str, yuzde: int, _detay: str) -> None:
+        if yuzde < 0:                   # yalnızca metin ("duraklatılıyor…")
+            return
         self.discord.indiriyor(self._dl_titles.get(task_id, "Bölüm"), yuzde)
 
     def _on_download_finished(self, task_id: str, ok: bool, mesaj: str) -> None:
@@ -806,24 +816,54 @@ class MainWindow(QMainWindow):
         if dialog is not None:
             dialog.deleteLater()
 
+    def _kapanis_onayi(self, adet: int) -> bool:
+        """Süren indirmeler varken kapanış sorusu (testler bunu sahteler).
+
+        Eskiden kapatmak sormadan her şeyi iptal ediyordu ve kuyruk yalnızca
+        bellekteydi: 40 bölümlük toplu indirme yanlış bir tıkla kayboluyordu.
+        """
+        cevap = QMessageBox.question(
+            self, "İndirmeler sürüyor",
+            f"{adet} indirme sürüyor. Duraklatılıp çıkılsın mı?\n\n"
+            "Kuyruk kaydedilir; uygulamayı yeniden açınca İndirilenler'den "
+            "“Devam et” ile kaldığı yerden sürdürebilirsiniz.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        return cevap == QMessageBox.StandardButton.Yes
+
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt imzası)
         """Kapanışta arka plan işlerini durdur.
 
         `clear()` tek başına yetmez: yalnızca HENÜZ BAŞLAMAMIŞ görevleri atar.
         Çalışan bir indirme, biz pencereyi yok ettikten sonra sinyal yaymaya
         devam eder ve silinmiş C++ nesnesine çarpar (çökme). Bu yüzden önce
-        işleri iptal ediyor, sonra kısa süre bitmelerini bekliyoruz.
+        işleri durduruyor, sonra kısa süre bitmelerini bekliyoruz.
+
+        Süren indirme varsa ÖNCE sorulur ("Hayır": pencere açık kalır, hiçbir
+        şeye dokunulmaz). İşler iptal değil DURAKLATILIR ve kuyruk diske
+        yazılır; bir sonraki açılışta geri gelirler (`geri_yukle`).
         """
+        # closeEvent ASLA fırlatmamalı: C++ sanal metodundan kaçan istisna
+        # (ör. yıkılmakta olan yönetici) süreci segfault'la düşürüyor.
+        try:
+            calisan = self.downloads.active_ids()
+        except Exception:
+            calisan = []
+        if calisan and not self._kapanis_onayi(len(calisan)):
+            event.ignore()
+            return
         try:
             self.discord.durdur()
         except Exception:
             pass
         try:
-            # İptal ŞART: yalnızca beklemek yetmez, yt-dlp indirmeyi sonuna
-            # kadar sürdürür ve süreç dakikalarca kapanmaz. `cancel_all` iptal
-            # bayrağını kaldırır, ilerleme hook'u bir sonraki parçada görüp
-            # indirmeyi bırakır.
-            self.downloads.cancel_all()
+            # Durdurmak ŞART: yalnızca beklemek yetmez, yt-dlp indirmeyi
+            # sonuna kadar sürdürür ve süreç dakikalarca kapanmaz.
+            # `pause_all` iptal bayrağını kaldırır (hook bir sonraki parçada
+            # görüp indirmeyi bırakır) ama işi "duraklatıldı" bitirir: `.part`
+            # diskte kalır, kuyruk dosyası işi bir sonraki açılışa taşır.
+            self.downloads.pause_all()
+            self.downloads.kapanista_kaydet()
         except Exception:
             pass
         try:

@@ -253,6 +253,37 @@ def _kutuphane_yalitimi(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(kutuphane, "kutuphane_yolu", _yalniz_gecici)
 
 
+@pytest.fixture(autouse=True)
+def _indirme_kuyrugu_yalitimi(monkeypatch, tmp_path_factory):
+    """İndirme kuyruğu dosyası (`indirme_kuyrugu.json`) yalnızca geçici kökte.
+
+    Kök `Dosyalar().ta_path`: depodan çalışınca DEPO KÖKÜ. Yalıtılmasa gerçek
+    `AdapterBolum`'la kuyruğa iş koyan bir test depoya kuyruk dosyası bırakır,
+    her `MainWindow` açılışı da onu "duraklatıldı" işler olarak geri yüklerdi.
+    `izole_ev` kullanan testler etkilenmez: onların kökü zaten geçici.
+    """
+    from turkanime_api.gui.qt.pages import downloads
+
+    asil = downloads.kuyruk_yolu
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    yedek = {}
+    kilit = threading.Lock()
+
+    def _yalniz_gecici():
+        yol = asil()
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+            return yol
+        except ValueError:
+            with kilit:
+                if "yol" not in yedek:
+                    yedek["yol"] = str(tmp_path_factory.mktemp("kuyruk")
+                                       / downloads.KUYRUK_DOSYASI)
+                return yedek["yol"]
+
+    monkeypatch.setattr(downloads, "kuyruk_yolu", _yalniz_gecici)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _cevresel_taban(pytestconfig):
     """Ağ uçlarının OTURUM BOYU tabanını sahteye çek.
@@ -309,6 +340,11 @@ def main_window(qtbot):
 
     apply_theme(QApplication.instance())
     win = MainWindow()
+    # Süren indirme varken kapanış modal soru açıyor; teardown asla beklememeli.
+    # `yield`'den ÖNCE: pytest-qt `addWidget` ile kaydedilen pencereyi
+    # fixture sonlandırıcılarından önce (kendi teardown kancasında) kapatıyor.
+    # Soruyu sınayan testler bunu kendi `monkeypatch`'leriyle eziyor.
+    win._kapanis_onayi = lambda _adet: True
     qtbot.addWidget(win)
     win.show()
     yield win
