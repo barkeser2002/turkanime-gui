@@ -125,8 +125,16 @@ class SearchEngine:
         self.adapters = {k.ad: kaynak_adaptoru(k) for k in kayit.kaynaklar()}
 
     def _paralel_ara(self, gorev: Callable[[str], Any],
-                     timeout: Optional[float] = None) -> Dict[str, Any]:
+                     timeout: Optional[float] = None,
+                     bitince: Optional[Callable[[str, Any], Any]] = None,
+                     hatalar: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """`gorev`'i her kaynak için paralel çalıştır, süre dolunca ELİNDEKİYLE dön.
+
+        ``bitince(kaynak, sonuc)``: her kaynak bittiği AN (bu thread'de)
+        çağrılır — arama sayfası yerel arşivin anlık sonuçlarını en yavaş
+        kaynağı beklemeden gösterebilsin. ``hatalar`` verilirse süreye
+        yetişemeyen kaynaklar oraya "zaman aşımı" olarak yazılır: eskiden
+        ne sonuçta ne hatada görünüyorlardı, kullanıcı "0 sonuç" sanıyordu.
 
         `with ThreadPoolExecutor(...)` KULLANILMIYOR: bağlam çıkışında
         `shutdown(wait=True)` çalışır ve hâlâ süren işleri bekler. Yani toplam
@@ -159,6 +167,11 @@ class SearchEngine:
                     except Exception as exc:
                         print(f"{name} arama hatası (timeout/exception): {exc}")
                         sonuc[name] = []
+                    if bitince is not None:
+                        try:
+                            bitince(name, sonuc[name])
+                        except Exception as exc:   # alıcı aramayı düşürmesin
+                            print(f"[Arama] {name} sonucu iletilemedi: {exc}")
             except FuturesTimeoutError:
                 print("[Arama] Bazı kaynaklar zaman aşımına uğradı, "
                       "mevcut sonuçlar döndürülüyor.")
@@ -167,6 +180,8 @@ class SearchEngine:
             havuz.shutdown(wait=False, cancel_futures=True)
 
         for name in self.adapters:          # yetişemeyenler boş
+            if name not in sonuc and hatalar is not None:
+                hatalar.setdefault(name, f"zaman aşımı ({timeout:g} sn)")
             sonuc.setdefault(name, [])
         return sonuc
 
@@ -202,7 +217,7 @@ class SearchEngine:
                 hatalar[source_name] = _hata_metni(exc)
                 return source_name, []
 
-        sonuc = self._paralel_ara(_search_single)
+        sonuc = self._paralel_ara(_search_single, hatalar=hatalar)
         # Kopya: süre dolduktan sonra biten geç bir iş sözlüğe yazmaya devam
         # edebilir; döndürülen sonuç o anki hâliyle sabit kalmalı.
         return AramaSonuclari(sonuc, hatalar=dict(hatalar))
@@ -218,8 +233,30 @@ class SearchEngine:
 
         Dönüş bir `AramaSonuclari` (dict): hata veren kaynağın listesi boş,
         sebebi ``.hatalar[kaynak]``'ta — arama sayfası "bulunamadı" ile
-        "okunamadı"yı ayırt edebilsin.
+        "okunamadı"yı ayırt edebilsin. Süreye yetişemeyen kaynak da
+        ``hatalar``'da ("zaman aşımı").
         """
+        return self._zengin_ara(query, limit_per_source)
+
+    def artimli_ara(
+        self, query: str,
+        kaynak_bitti: Callable[[str, List[Dict[str, Any]], Optional[str]], Any],
+        limit_per_source: int = 10,
+    ) -> "AramaSonuclari":
+        """`search_all_sources_rich` gibi, ama her kaynak bittiği AN haber verir.
+
+        ``kaynak_bitti(kaynak, kayitlar, hata)`` aramayı yürüten thread'de,
+        kaynak bittikçe çağrılır (hata veren kaynakta ``kayitlar=[]`` ve
+        ``hata`` dolu). Eskiden arama sayfası hiçbir şey göstermeden en yavaş
+        kaynağı (25 sn'ye kadar) bekliyordu; yerel arşivin milisaniyelik
+        sonuçları da o sürenin sonunda geliyordu. Dönüş, tamamlanmış
+        `AramaSonuclari` (yetişemeyenler "zaman aşımı" olarak ``hatalar``'da).
+        """
+        return self._zengin_ara(query, limit_per_source, kaynak_bitti)
+
+    def _zengin_ara(self, query: str, limit_per_source: int,
+                    kaynak_bitti: Optional[Callable[..., Any]] = None
+                    ) -> "AramaSonuclari":
         hatalar: Dict[str, str] = {}
 
         def _one(source_name: str):
@@ -238,7 +275,13 @@ class SearchEngine:
                 hatalar[source_name] = _hata_metni(exc)
                 return source_name, []
 
-        sonuc = self._paralel_ara(_one)
+        def _ilet(ad: str, kayitlar: Any) -> None:
+            # `_one` hatayı dönmeden ÖNCE `hatalar`'a yazıyor; burada okunur.
+            kaynak_bitti(ad, list(kayitlar or []), hatalar.get(ad))
+
+        sonuc = self._paralel_ara(
+            _one, bitince=_ilet if kaynak_bitti is not None else None,
+            hatalar=hatalar)
         return AramaSonuclari(sonuc, hatalar=dict(hatalar))
 
 

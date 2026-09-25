@@ -112,10 +112,11 @@ def test_gercek_motor_ciktisi_dogrudan_islenebiliyor(page):
 
     page._on_results(sonuc)
 
+    # Gruplar kayıt sırasında, metadata kaynağı (AniList) EN SONDA.
     assert [c.lblTitle.text() for c in page.cards()] == [
-        "Cowboy Bebop", "Cowboy Bebop TR"]
-    assert page.cards()[0].payload == ("AniList", "101", "Cowboy Bebop")
-    assert page.cards()[1].payload == ("TurkAnime", "cowboy-bebop",
+        "Cowboy Bebop TR", "Cowboy Bebop"]
+    assert page.cards()[1].payload == ("AniList", "101", "Cowboy Bebop")
+    assert page.cards()[0].payload == ("TurkAnime", "cowboy-bebop",
                                        "Cowboy Bebop TR")
 
 
@@ -311,24 +312,33 @@ def test_arama_hatasi_bildiriliyor_ve_busy_sifirlaniyor(qtbot, page, monkeypatch
     assert page._busy is False
 
 
-def test_suren_arama_varken_ikincisi_reddediliyor(qtbot, page, sahte_motor):
-    """ESKİ HATA: üst üste arama, ilkinin sonucunu ikincinin üstüne yazıyordu."""
+def test_yeni_sorgu_surenin_yerini_aliyor(qtbot, page, sahte_motor):
+    """ESKİ DAVRANIŞ: süren arama varken ikinci sorgu REDDEDİLİYORDU; bir
+    yazım hatası en yavaş kaynak kadar (25 sn'ye dek) bekletiyordu. Artık
+    yeni sorgu hemen başlıyor, eskisinin geç sonucu ekrana düşmüyor."""
     kapi = threading.Event()
-    cagrilar = sahte_motor({"TurkAnime": [kayit("naruto", "Naruto")]}, gecikme=kapi)
 
-    page.start_search("naruto")
+    def sonuc(sorgu):
+        if sorgu == "a":
+            kapi.wait(10)                       # "a" yavaş kaynak gibi
+            return {"TurkAnime": [kayit("eski", "Eski Sonuç")]}
+        return {"TurkAnime": [kayit("yeni", "Yeni Sonuç")]}
+
+    cagrilar = sahte_motor(sonuc)
+    page.start_search("a")
     try:
         qtbot.waitUntil(lambda: len(cagrilar) == 1, timeout=5000)
-        page.start_search("bleach")
-        assert len(cagrilar) == 1, "önceki arama sürerken ikincisi başladı"
-        assert "sürüyor" in page.lblStatus.text()
+        page.start_search("b")
+        qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+        assert "b" in page.lblTitle.text()
+        assert page.cards()[0].lblTitle.text() == "Yeni Sonuç"
     finally:
-        kapi.set()
+        kapi.set()                              # "a"nın cevabı ŞİMDİ dönüyor
 
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-    # Kilit çözüldükten sonra sayfa yeniden arama kabul etmeli.
-    page.start_search("bleach")
-    qtbot.waitUntil(lambda: len(cagrilar) == 2, timeout=5000)
+    qtbot.wait(200)
+    assert [c.lblTitle.text() for c in page.cards()] == ["Yeni Sonuç"]
+    assert "“a”" not in page.lblStatus.text()
+    assert page._busy is False
 
 
 # ── Kapak görselleri ────────────────────────────────────────────────────────
@@ -367,3 +377,111 @@ def test_gorselsiz_kayit_icin_indirme_kuyruga_alinmiyor(page, monkeypatch):
                       "AniList": [kayit("1", "Bebop", "http://kapak/1.jpg")]})
 
     assert [a[1] for a in isler] == ["http://kapak/1.jpg"]
+
+
+# ── Artımlı sonuçlar (kaynak kaynak) ────────────────────────────────────────
+class _Anlik:
+    def __init__(self, ciftler):
+        self.ciftler = ciftler
+
+    def search_anime(self, query, limit=10):
+        return list(self.ciftler)
+
+
+class _Yavas:
+    def __init__(self, kapi, ciftler):
+        self.kapi = kapi
+        self.ciftler = ciftler
+
+    def search_anime(self, query, limit=10):
+        self.kapi.wait(10)
+        return list(self.ciftler)
+
+
+@pytest.fixture
+def adaptorlu_motor(monkeypatch):
+    """GERÇEK `SearchEngine` (artımlı yol), adaptörler sahte."""
+    import turkanime_api.common.adapters as adapters_mod
+
+    def _kur(adaptorler):
+        class Motor(adapters_mod.SearchEngine):
+            def __init__(self):
+                self.adapters = dict(adaptorler)
+
+        monkeypatch.setattr(adapters_mod, "SearchEngine", Motor)
+
+    return _kur
+
+
+def test_anlik_arsiv_sonucu_yavas_kaynagi_beklemiyor(qtbot, page, adaptorlu_motor):
+    import time
+
+    kapi = threading.Event()
+    adaptorlu_motor({"TürkAnime": _Anlik([("naruto", "Naruto")]),
+                     "Yavas": _Yavas(kapi, [("y1", "Naruto Yavaş"),
+                                            ("y2", "Naruto Yavaş 2")])})
+    try:
+        basla = time.monotonic()
+        page.start_search("naruto")
+        qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=2000)
+        assert time.monotonic() - basla < 0.5
+        ilk_kart = page.cards()[0]
+        assert ilk_kart.lblTitle.text() == "Naruto"
+        qtbot.waitUntil(lambda: "1 kaynak bekleniyor" in page.lblStatus.text(),
+                        timeout=2000)
+        assert page._busy
+    finally:
+        kapi.set()
+
+    qtbot.waitUntil(lambda: len(page.cards()) == 3, timeout=5000)
+    assert page.cards()[0] is ilk_kart, "gelen grup mevcut kartları yeniden kurdu"
+    qtbot.waitUntil(lambda: not page._busy, timeout=5000)
+    metin = page.lblStatus.text()
+    assert "3 sonuç" in metin and "TürkAnime (arşiv): 1" in metin and "Yavas: 2" in metin
+    assert "bekleniyor" not in metin
+
+
+def test_sureye_yetisemeyen_kaynak_durumda_adiyla(qtbot, page, adaptorlu_motor,
+                                                  monkeypatch):
+    import turkanime_api.common.adapters as adapters_mod
+
+    monkeypatch.setattr(adapters_mod, "OVERALL_SEARCH_TIMEOUT", 0.3)
+    kapi = threading.Event()
+    adaptorlu_motor({"TürkAnime": _Anlik([("naruto", "Naruto")]),
+                     "Yavas": _Yavas(kapi, [("y", "Y")])})
+    try:
+        page.start_search("naruto")
+        qtbot.waitUntil(lambda: not page._busy, timeout=5000)
+    finally:
+        kapi.set()
+    assert "zaman aşımı: Yavas" in page.lblStatus.text()
+    assert len(page.cards()) == 1
+
+
+def test_gruplar_kayit_sirasinda_metadata_en_sonda(page):
+    """ESKİ HATA: alfabetik sıra AniList'i (oynatılamaz) en başa koyuyordu."""
+    page._on_results({"AniList": [kayit("1", "A-AniList")],
+                      "AnimeciX": [kayit("2", "B-AnimeciX")],
+                      "TürkAnime": [kayit("3", "C-Arşiv")]})
+    assert [c.payload[0] for c in page.cards()] == ["TürkAnime", "AnimeciX", "AniList"]
+
+
+def test_gec_gelen_grup_kendi_yerine_giriyor(page):
+    """Kaynaklar hangi sırayla gelirse gelsin dizilim kayıt sırası."""
+    page._busy = True
+    rid = page._istek
+    page._kaynak_geldi((rid, "AniList", [kayit("1", "A")], None))
+    page._kaynak_geldi((rid, "TürkAnime", [kayit("3", "C")], None))
+    page._kaynak_geldi((rid, "AnimeciX", [kayit("2", "B")], None))
+    assert [c.payload[0] for c in page.cards()] == ["TürkAnime", "AnimeciX", "AniList"]
+
+
+def test_eski_istegin_kaynak_sonucu_atiliyor(page):
+    page._busy = True
+    eski = page._istek
+    page._istek += 1                     # yeni arama başlamış gibi
+    page._kaynak_geldi((eski, "TürkAnime", [kayit("x", "Eski")], None))
+    page._arama_bitti((eski, {"TürkAnime": [kayit("x", "Eski")]}))
+    page._arama_hatasi((eski, "eski patladı"))
+    assert page.cards() == []
+    assert "eski" not in page.lblStatus.text().lower()
