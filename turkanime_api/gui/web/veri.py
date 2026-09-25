@@ -10,10 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-# Kayıt okuma yardımcıları eski Qt sayfalarında (`pages.discover`,
-# `pages.detail`); içe aktarım fonksiyon içinde: `gui.qt` paketi açılırken
-# `app` → `gui.web` zinciri bu modülü yüklüyor, modül düzeyinde geri import
-# döngü olurdu.
+from .kunye import FORMAT_LABELS, anime_title, cover_url, genre_names, score_of
 
 
 # AniList/MyAnimeList türleri İngilizce geliyor; kartta Türkçe gösteriliyor.
@@ -36,14 +33,12 @@ def tur_adi(tur: str) -> str:
 
 def puan10(item: Dict[str, Any]) -> Optional[float]:
     """0-100 puanı 0-10'a (bir basamak); puansız kayıtta ``None``."""
-    from ..qt.pages.discover import score_of
     puan = score_of(item)
     return round(puan / 10.0, 1) if puan else None
 
 
 def alt_satir(item: Dict[str, Any]) -> str:
     """Kartın alt satırı: ``"2026 · TV · Aksiyon"``."""
-    from ..qt.pages.detail import FORMAT_LABELS, genre_names
     parcalar: List[str] = []
     yil = item.get("seasonYear")
     if yil:
@@ -59,7 +54,6 @@ def alt_satir(item: Dict[str, Any]) -> str:
 
 def kart(item: Dict[str, Any]) -> Dict[str, Any]:
     """Keşif/izleme listesi kaydından kart verisi."""
-    from ..qt.pages.discover import anime_title, cover_url
     baslik = anime_title(item)
     puan = puan10(item)
     bolum = item.get("episodes")

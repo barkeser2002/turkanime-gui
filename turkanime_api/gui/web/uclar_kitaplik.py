@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 from ...common import kutuphane
 from ...sources import kayit as kaynak_kaydi
 from .kopru import uc
-from .uclar_kesif import devam_karti, kaynak_rengi
+from .uclar_kesif import devam_karti, devam_kayitlari, kaynak_rengi
 
 
 def tarih_metni(zaman: Any, simdi: float = None) -> str:
@@ -76,7 +76,6 @@ class KitaplikUclari:
 
     @uc(arka=True)
     def kitaplik(self) -> Dict[str, Any]:
-        from ..qt.pages.library import devam_kayitlari
         veri = kutuphane.oku()
         devam = [dict(devam_karti(k), **{"rozet": _kaynakli(k)["rozet"]})
                  for k in devam_kayitlari(veri)]

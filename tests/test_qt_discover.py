@@ -1,6 +1,8 @@
 """Keşif sayfaları (Ana Sayfa / Trend / Bu Sezon).
 
 Hiçbir test ağa çıkmaz: Jikan ve AniList uçları `monkeypatch` ile sahtelenir.
+Veri katmanı `web.uclar_kesif`'te (Qt'siz), sayfalar `kesif.js`'te; sayfa
+davranışı ve ızgara düzeni web sürücüsüyle sınanıyor.
 """
 from __future__ import annotations
 
@@ -8,10 +10,12 @@ from datetime import datetime
 
 import pytest
 
-from turkanime_api.gui.qt.pages.discover import (
-    DiscoverPage, anime_title, cover_url, fetch_discover, score_of, season_label,
-)
-from turkanime_api.gui.qt.theme import ACCENT, DANGER
+from turkanime_api.gui.web.kunye import anime_title, cover_url, score_of
+from turkanime_api.gui.web.uclar_kesif import KesifUclari, fetch_discover, season_label
+
+# CSS'teki `minmax(162px, 1fr)` ve sütun aralığı (bkz. `bilesenler.css` .izgara).
+KART_ASGARI = 162
+SUTUN_ARALIGI = 18
 
 
 def make_item(title: str, score: int | None = 80, cover: str | None = None):
@@ -194,125 +198,132 @@ def test_season_label(month, expected):
     assert season_label(datetime(2026, month, 15)) == f"{expected} 2026"
 
 
-# ── Sayfa davranışı ─────────────────────────────────────────────────────────
-@pytest.mark.parametrize("mode", ["home", "trending", "season"])
-def test_page_builds_cards_in_every_mode(qtbot, fake_sources, mode):
-    items = [make_item(f"Anime {i}") for i in range(5)]
-    fake_sources(trending=items, season=items)
-
-    page = DiscoverPage(mode)
-    qtbot.addWidget(page)
-    page.refresh()
-
-    qtbot.waitUntil(lambda: len(page.cards()) == 5, timeout=5000)
-    assert page.results.grid.count() == 5
-    assert [c.lblTitle.text() for c in page.cards()][0] == "Anime 0"
-    assert "5" in page.lblStatus.text()
+# ── Keşif ucu ───────────────────────────────────────────────────────────────
+def kesif(mod):
+    return KesifUclari().kesif(mod)
 
 
-def test_page_shows_fallback_data(qtbot, fake_sources):
+def basliklar(sonuc):
+    return [k["baslik"] for k in sonuc["kartlar"]]
+
+
+def test_uc_yedek_veriyi_gosteriyor(fake_sources):
     """Jikan boş dönerse kullanıcı boş ekran değil AniList verisi görmeli."""
     fake_sources(trending=[], anilist=[make_item("AniList Anime")])
-
-    page = DiscoverPage("trending")
-    qtbot.addWidget(page)
-    page.refresh()
-
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-    assert page.cards()[0].lblTitle.text() == "AniList Anime"
+    assert basliklar(kesif("trending")) == ["AniList Anime"]
 
 
-def test_sezon_sayfasi_bos_kalinca_trend_verisi_gostermez(qtbot, fake_sources):
+def test_sezon_sayfasi_bos_kalinca_trend_verisi_gostermez(fake_sources):
     """ESKİ HATA: alt başlık "… sezonu • MyAnimeList" derken kartlar AniList
     TRENDİNDEN geliyor, durum etiketi de "{n} anime" diyordu."""
     fake_sources(season=[], anilist=[make_item("AniList Trend")])
 
-    page = DiscoverPage("season")
-    qtbot.addWidget(page)
-    page.refresh()
+    sonuc = kesif("season")
 
-    qtbot.waitUntil(lambda: page.btnRefresh.isEnabled(), timeout=5000)
-    assert [c.lblTitle.text() for c in page.cards()] == []
-    assert "sezonu" in page.lblSubtitle.text()
-    assert "Sezon verisi alınamadı" in page.lblStatus.text()
+    assert sonuc["kartlar"] == []
+    assert "sezonu" in sonuc["altbaslik"]
+    assert "Sezon verisi alınamadı" in sonuc["bos_mesaj"]
 
 
-def test_ana_sayfa_ve_trend_sayfalari_ayni_listeyi_gostermez(qtbot, fake_sources):
+def test_ana_sayfa_ve_trend_ayni_listeyi_gostermez(fake_sources):
     """ESKİ HATA: iki sekme aynı çağrıyı yapıyor, yalnızca kart sayısı farklıydı."""
     fake_sources(trending=[make_item(f"T{i}") for i in range(3)],
                  season=[make_item(f"S{i}") for i in range(3)])
 
-    home = DiscoverPage("home")
-    trending = DiscoverPage("trending")
-    qtbot.addWidget(home)
-    qtbot.addWidget(trending)
-    home.refresh()
-    trending.refresh()
+    ana, trend = basliklar(kesif("home")), basliklar(kesif("trending"))
 
-    qtbot.waitUntil(lambda: len(home.cards()) == 6, timeout=5000)
-    qtbot.waitUntil(lambda: len(trending.cards()) == 3, timeout=5000)
-
-    assert home.cards()[0].lblTitle.text() == "S0"
-    assert trending.cards()[0].lblTitle.text() == "T0"
+    assert len(ana) == 6 and ana[0] == "S0"
+    assert trend == ["T0", "T1", "T2"]
 
 
-def test_page_reports_empty_result(qtbot, fake_sources):
+def test_bos_sonuc_sebebiyle(fake_sources):
     fake_sources(trending=[], anilist=[])
-
-    page = DiscoverPage("home")
-    qtbot.addWidget(page)
-    page.refresh()
-
-    qtbot.waitUntil(lambda: page.btnRefresh.isEnabled(), timeout=5000)
-    assert page.cards() == []
-    assert "alınamadı" in page.lblStatus.text()
+    sonuc = kesif("home")
+    assert sonuc["kartlar"] == [] and "alınamadı" in sonuc["bos_mesaj"]
 
 
-def test_page_loads_once_on_first_show(qtbot, fake_sources):
+def test_bilinmeyen_kip_reddediliyor():
+    with pytest.raises(ValueError):
+        kesif("yok")
+
+
+# ── Sayfa davranışı ─────────────────────────────────────────────────────────
+def kartlar_js(mod):
+    return f"document.querySelectorAll('[data-sayfa={mod}] .izgara .kart:not(.iskelet-kart)')"
+
+
+def yenile_js(mod):
+    return (f"[...document.querySelectorAll('[data-sayfa={mod}] .sayfa-eylem button')]"
+            ".find(d => d.textContent.includes('Yenile'))")
+
+
+@pytest.mark.parametrize("mode", ["trending", "season"])
+def test_izgara_sayfasi_kartlari_kuruyor(main_window, web, fake_sources, mode):
+    items = [make_item(f"Anime {i}") for i in range(5)]
+    fake_sources(trending=items, season=items)
+
+    main_window.show_page(mode)
+
+    web.bekle(f"{kartlar_js(mode)}.length === 5")
+    assert web.js(f"{kartlar_js(mode)}[0].querySelector('.kart-baslik').textContent") \
+        == "Anime 0"
+    assert web.js(f"document.querySelector('[data-sayfa={mode}] .durum').textContent") \
+        == "5 anime"
+
+
+def test_sezon_bos_kalinca_sebep_ve_yenile(main_window, web, fake_sources):
+    fake_sources(season=[], anilist=[make_item("AniList Trend")])
+    main_window.show_page("season")
+    bos = "document.querySelector('[data-sayfa=season] .kesif-bos')"
+    web.bekle(f"{bos}.innerText.includes('Sezon verisi alınamadı')")
+    assert web.js(f"{kartlar_js('season')}.length") == 0
+    assert "sezonu" in web.js("document.querySelector('[data-sayfa=season] "
+                              ".sayfa-baslik p').textContent")
+    assert web.js(f"{yenile_js('season')}.disabled") is False
+
+
+def test_sayfa_ilk_gosterimde_bir_kez_yukleniyor(main_window, web, fake_sources):
     """Sekmeye her dönüşte yeniden ağ isteği atılmamalı."""
     calls = fake_sources(trending=[make_item("Anime")])
+    main_window.show_page("trending")
+    web.bekle(f"{kartlar_js('trending')}.length === 1")
+    once = calls["trending"]
 
-    page = DiscoverPage("trending")
-    qtbot.addWidget(page)
-    page.show()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+    main_window.show_page("season")
+    web.bekle("TA.aktif === 'season'")
+    main_window.show_page("trending")
+    web.bekle("TA.aktif === 'trending'")
+    web.qtbot.wait(100)
 
-    page.hide()
-    page.show()
-    qtbot.wait(50)
-    assert calls["trending"] == 1
+    assert calls["trending"] == once
+    assert web.js(f"{kartlar_js('trending')}.length") == 1
 
 
-def test_refresh_button_reloads(qtbot, fake_sources):
-    """`clicked` bool taşır; slot bunu yutmalı, aksi hâlde buton hiç çalışmaz."""
-    from PySide6.QtCore import Qt
-
+def test_yenile_dugmesi_yeniden_yukluyor(main_window, web, fake_sources):
     calls = fake_sources(trending=[make_item("Anime")])
+    main_window.show_page("trending")
+    web.bekle(f"{kartlar_js('trending')}.length === 1")
+    once = calls["trending"]
 
-    page = DiscoverPage("trending")
-    qtbot.addWidget(page)
-    page.show()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+    web.js(f"{yenile_js('trending')}.click()")
 
-    qtbot.mouseClick(page.btnRefresh, Qt.MouseButton.LeftButton)
-    qtbot.waitUntil(lambda: calls["trending"] == 2, timeout=5000)
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+    web.qtbot.waitUntil(lambda: calls["trending"] == once + 1, timeout=5000)
+    web.bekle(f"{kartlar_js('trending')}.length === 1")
 
 
-def test_score_badge_uses_score_color(qtbot, fake_sources):
+def test_puan_rozeti_puan_rengiyle(main_window, web, fake_sources):
     fake_sources(trending=[make_item("İyi", 90), make_item("Kötü", 20),
                            make_item("Puansız", None)])
+    main_window.show_page("trending")
+    web.bekle(f"{kartlar_js('trending')}.length === 3")
 
-    page = DiscoverPage("trending")
-    qtbot.addWidget(page)
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 3, timeout=5000)
-
-    good, bad, none = page.cards()
-    assert good.lblSource.text() == "★ 9.0"
-    assert ACCENT in good.lblSource.styleSheet()
-    assert DANGER in bad.lblSource.styleSheet()
-    assert none.lblSource.text() == "Puansız"
+    puanlar = web.js(f"[...{kartlar_js('trending')}].map(k => {{"
+                     "var p = k.querySelector('.kart-puan');"
+                     "return p ? [p.textContent, p.style.getPropertyValue('--renk')] : null; })")
+    iyi, kotu, puansiz = puanlar
+    assert iyi == ["9.0", "var(--yesil)"]
+    assert kotu == ["2.0", "var(--kirmizi)"]
+    assert puansiz is None
 
 
 def test_card_click_opens_detail_page(main_window, web, fake_sources):
@@ -346,217 +357,79 @@ def test_main_window_wires_all_discover_modes(main_window, web):
 
 
 # ── Izgara düzeni ───────────────────────────────────────────────────────────
-# Kullanıcının ekran görüntüsünde bildirdiği bozukluk: sütun genişlikleri
-# tutarsız, en sağdaki sütun dar. Kök neden ÖLÇÜLDÜ (bkz. `pages/_grid.py`
-# başlığı): eski ızgara sütun sayısını kendi genişliğinden hesaplıyordu, o
-# genişlik de kaydırma alanı yüzünden ızgaranın kendi asgarisinin altına
-# inemiyordu. Sonuç: sütun sayısı yalnızca ARTABİLİYOR, pencere daralınca
-# içerik görünen alandan taşıp kırpılıyordu.
+# Eski Qt ızgarasında kullanıcının bildirdiği bozukluk: sütun genişlikleri
+# tutarsız, en sağdaki sütun dar, pencere daralınca içerik kırpılıyordu.
+# Web'de ızgara CSS grid (`repeat(auto-fill, minmax(162px, 1fr))`); aynı
+# sözleşme tarayıcının gerçek yerleşimiyle sınanıyor.
+OLCUM = ("(() => { var iz = document.querySelector('[data-sayfa=trending] .izgara');"
+         " var r = iz.getBoundingClientRect();"
+         " return {izgara: [r.left, r.right, r.top],"
+         "  sayfa: document.documentElement.clientWidth,"
+         "  tasma: document.documentElement.scrollWidth - document.documentElement.clientWidth,"
+         "  kartlar: [...iz.querySelectorAll('.kart')].map(k => {"
+         "   var b = k.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; })}; })()")
 
 
-def _yerles(qtbot, widget, width, height=900):
-    """Widget'ı verilen genişliğe getir ve yerleşimin OTURMASINI bekle.
-
-    Sabit 10 ms beklemek yetmiyordu: poster kartında yükseklik genişlikten
-    türüyor, yani sütun sayısı değişince yerleşim birkaç tur sürüyor
-    (genişlik → poster yüksekliği → kart yüksekliği → ızgara). Ölçüldü:
-    sütun değişen adımlarda 10-25 ms. Kapaksız kartlar da artık poster
-    (çizilmiş yer tutucu) olduğu için tarama testleri sınırda kalıyordu.
-    Burada geometri iki ölçüm arasında değişmeyene kadar bekleniyor (en çok
-    ~1 sn); KALICI bir taşma yine yakalanır, geçici ara durum yakalanmaz.
-    """
-    from PySide6.QtWidgets import QWidget
-
-    widget.resize(width, height)
+def olc(web, main_window, genislik):
+    main_window.resize(genislik, 900)
     onceki = None
-    for _ in range(100):
-        qtbot.wait(10)
-        durum = [c.geometry().getRect() for c in widget.findChildren(QWidget)]
-        if durum == onceki:
-            break
-        onceki = durum
+    for _ in range(60):                   # yerleşim oturana kadar
+        web.qtbot.wait(25)
+        olcum = web.js(OLCUM)
+        if olcum == onceki:
+            return olcum
+        onceki = olcum
+    return onceki
 
 
-def _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200, kapak=None):
-    """`adet` kart yüklenmiş, `width` genişliğinde bir keşif sayfası.
-
-    `kapak` verilirse kartlar POSTER kipinde kurulur (kullanıcının gerçekte
-    gördüğü hâl); görsel indirme arka planda denenir ve ağ mandalına takılıp
-    sessizce vazgeçer — kart yine de poster geometrisiyle yerleşir.
-    """
-    fake_sources(trending=[make_item(f"Anime {i}", cover=kapak)
-                           for i in range(adet)])
-    page = DiscoverPage("trending")
-    qtbot.addWidget(page)
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == adet, timeout=5000)
-    page.show()
-    _yerles(qtbot, page, width)
-    return page
+def satirlar(olcum):
+    rows: dict = {}
+    for sol, ust, gen, yuk in olcum["kartlar"]:
+        rows.setdefault(round(ust), []).append((sol, gen, yuk))
+    return [sorted(rows[y]) for y in sorted(rows)]
 
 
-def _satirlar(page):
-    """Kartları y konumuna göre satırlara ayır (soldan sağa sıralı)."""
-    satirlar: dict = {}
-    for card in page.cards():
-        satirlar.setdefault(card.y(), []).append(card)
-    return [sorted(satirlar[y], key=lambda c: c.x()) for y in sorted(satirlar)]
+@pytest.fixture
+def izgara(main_window, web, fake_sources):
+    """12 kapaklı kart yüklü Trend sayfası."""
+    fake_sources(trending=[make_item(f"Anime {i}", cover="http://ornek/k.jpg")
+                           for i in range(12)])
+    main_window.show_page("trending")
+    web.bekle(f"{kartlar_js('trending')}.length === 12")
+    return web
 
 
-def test_izgara_sutunlari_esit_genislikte(qtbot, fake_sources):
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
-
-    genislikler = page.results.grid.column_widths()
-    assert len(genislikler) == page.results.columns() >= 2
-    # TAM eşitlik: bölünmeden artan pikseller sütunlara dağıtılmaz, sağdaki
-    # yutucu sütuna bırakılır.
-    assert len(set(genislikler)) == 1
-
-
-def test_izgara_bosluklari_sabit(qtbot, fake_sources):
-    """Fazla genişlik boşluğa değil sütunlara gider."""
-    from turkanime_api.gui.qt.pages._grid import GRID_GAP
-
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
-
-    ilk_satir = _satirlar(page)[0]
-    assert len(ilk_satir) >= 3
-    bosluklar = [sag.x() - (sol.x() + sol.width())
-                 for sol, sag in zip(ilk_satir, ilk_satir[1:])]
-    assert bosluklar == [GRID_GAP] * len(bosluklar)
-
-
-def test_son_satir_eksik_olsa_da_kart_genislikleri_ayni(qtbot, fake_sources):
-    """12 kart 5 sütuna dizilince son satırda 2 kart kalır; o ikisi de
-    üsttekilerle aynı genişlikte olmalı (kullanıcı "son sütun dar" diyordu)."""
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
-
-    satirlar = _satirlar(page)
-    assert len(satirlar) >= 2
-    assert len(satirlar[-1]) < len(satirlar[0])      # son satır gerçekten eksik
-
-    genislikler = {c.width() for satir in satirlar for c in satir}
-    assert len(genislikler) == 1
+def test_izgara_her_genislikte_tutarli(izgara, main_window):
+    """Genişlik taraması: eşit sütun, sabit aralık, taşma yok; fazla genişlik
+    kartları şişirmez yeni sütuna gider, daralınca sütun sayısı azalır."""
+    sutunlar = {}
+    for genislik in (1600, 1200, 1024, 900, 1400, 2000, 900):
+        olcum = olc(izgara, main_window, genislik)
+        rows = satirlar(olcum)
+        ilk = rows[0]
+        sutunlar[genislik] = len(ilk)
+        assert len(ilk) >= 2, genislik
+        genislikler = {round(g, 1) for satir in rows for _, g, _ in satir}
+        assert len(genislikler) == 1, (genislik, genislikler)   # son satır da
+        kart = genislikler.pop()
+        assert KART_ASGARI <= kart < 2 * KART_ASGARI, (genislik, kart)
+        bosluklar = {round(sag[0] - (sol[0] + sol[1])) for sol, sag in zip(ilk, ilk[1:])}
+        assert bosluklar == {SUTUN_ARALIGI}, (genislik, bosluklar)
+        # Aynı satırda aynı yükseklik (poster 2:3); satır kayması yok.
+        assert len(rows) == -(-12 // len(ilk)), genislik
+        assert len({round(y) for satir in rows for _, _, y in satir}) == 1, genislik
+        sag_kenar = max(sol + gen for satir in rows for sol, gen, _ in satir)
+        assert sag_kenar <= olcum["izgara"][1] + 0.5, genislik
+        assert olcum["tasma"] <= 0, f"{genislik}px'te yatay taşma"
+    assert sutunlar[2000] > sutunlar[1600] > sutunlar[1200] > sutunlar[900]
 
 
-def test_pencere_genisleyince_sutun_sayisi_artar(qtbot, fake_sources):
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=700)
-    dar = page.results.columns()
-
-    _yerles(qtbot, page, 1600)
-    genis = page.results.columns()
-
-    assert genis > dar >= 1
-
-
-def test_kartlar_genis_pencerede_orantisiz_buyumez(qtbot, fake_sources):
-    """Fazla genişlik kartları şişirmez, YENİ SÜTUNA gider.
-
-    Kart genişliği hiçbir pencere boyutunda asgari kart genişliğinin iki
-    katına çıkmamalı; çıkıyorsa ızgara yeni bir sütun açmalıydı.
-    """
-    from turkanime_api.gui.qt.widgets import CARD_MIN_WIDTH
-
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=700)
-
-    for width in (700, 900, 1200, 1600, 2000):
-        _yerles(qtbot, page, width)
-        assert page.results.columns() >= 2, width
-        for card in page.cards():
-            assert CARD_MIN_WIDTH <= card.width() < 2 * CARD_MIN_WIDTH, width
-
-
-def test_pencere_daralinca_sutun_sayisi_azalir(qtbot, fake_sources):
-    """GERİLEME TESTİ — mandal etkisi.
-
-    Eski ızgarada sütun sayısı bir kez arttı mı bir daha inmiyordu: 1600px'te
-    7 sütuna çıkan ızgara 900px'e indirildiğinde 1542px genişliğinde kalıyor,
-    yatay kaydırma da kapalı olduğu için son sütun ekran kenarında
-    kırpılıyordu.
-    """
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1600)
-    genis = page.results.columns()
-
-    _yerles(qtbot, page, 700)
-
-    assert page.results.columns() < genis
-
-
-def test_kartlar_gorunen_alani_asmaz(qtbot, fake_sources):
-    """Hiçbir genişlikte içerik viewport'tan taşmamalı (yatay kaydırma kapalı,
-    taşan sütun kırpılır)."""
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1600)
-
-    for width in (1600, 1200, 900, 700, 500, 1400):
-        _yerles(qtbot, page, width)
-        gorunen = page.results.available_width()
-        assert page.results.grid.width() <= gorunen
-        for card in page.cards():
-            assert card.x() + card.width() <= gorunen
-
-
-def test_izgara_her_genislikte_tutarli(qtbot, fake_sources):
-    """Genişlik taraması: büyürken de küçülürken de eşit sütun + taşma yok.
-
-    Tek tek genişlikleri denemek yetmiyordu; bu tarama gerçek bir hatayı
-    yakaladı: sütun sayısı düşünce, yeni yutucu sütun bir önceki turdan kalma
-    asgari genişliğini koruyor ve ızgarayı görünen alandan taşırıyordu
-    (320px pencerede gövde 531px).
-    """
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200)
-
-    genislikler = list(range(360, 1801, 120)) + list(range(1800, 359, -120))
-    for width in genislikler:
-        _yerles(qtbot, page, width)
-        gorunen = page.results.available_width()
-        assert page.results.grid.width() <= gorunen, width
-        assert len(set(page.results.grid.column_widths())) == 1, width
-        for card in page.cards():
-            assert card.x() + card.width() <= gorunen, width
-
-
-def test_poster_kartlari_ayni_satirda_ayni_hizada(qtbot, fake_sources):
-    """Poster kartında kart yüksekliği genişlikten türetiliyor (2:3), bu yüzden
-    sütunlar arasındaki 1px fark satırı dikeyde kaydırırdı. Sütunlar tam eşit
-    olduğu için aynı satırdaki kartların hepsi aynı y'de durmalı.
-    """
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200,
-                           kapak="http://ornek/kapak.jpg")
-
-    for width in (1200, 1340, 900, 1610):
-        _yerles(qtbot, page, width)
-        satirlar = _satirlar(page)
-        assert len(satirlar[0]) >= 2, width
-        # `_satirlar` kartları y'ye göre gruplar: satır kayması olsaydı tek bir
-        # görsel satır iki ayrı gruba bölünür ve grup sayısı artardı.
-        beklenen_satir = -(-len(page.cards()) // page.results.columns())
-        assert len(satirlar) == beklenen_satir, width
-        assert len({c.height() for c in page.cards()}) == 1, width
-
-
-def test_izgara_uste_hizali(qtbot, fake_sources):
-    """Az kart varken kartlar sayfaya yayılmaz; boş yer altta toplanır."""
-    page = _izgara_sayfasi(qtbot, fake_sources, adet=3, width=1200)
-
-    ilk_satir = _satirlar(page)[0]
-    assert [c.y() for c in ilk_satir] == [0] * len(ilk_satir)
-    # Izgara gövdesi kaydırma alanının tepesinde durur ve yalnızca kartların
-    # kapladığı yeri tutar.
-    assert page.results.grid.y() == 0
-    assert page.results.grid.height() < page.results.viewport().height()
-
-
-def test_sutun_hesabi_hicbir_genislikte_tasmaz():
-    """Sütun sayısı formülünün kendisi (Qt geometrisi olmadan)."""
-    from turkanime_api.gui.qt.pages._grid import GRID_GAP, CardGridBody
-
-    body = CardGridBody()
-    onceki = 0
-    for available in range(0, 2400, 7):
-        cols = body.columns_for(available)
-        assert cols >= 1
-        assert cols >= onceki                     # genişlikle birlikte artar
-        onceki = cols
-        if available >= body._min_item_width:
-            gereken = cols * body._min_item_width + (cols - 1) * GRID_GAP
-            assert gereken <= available           # asla taşmaz
+def test_izgara_uste_hizali(main_window, web, fake_sources):
+    """Az kart varken kartlar sayfaya yayılmaz; ilk satır ızgaranın tepesinde."""
+    fake_sources(trending=[make_item(f"Anime {i}") for i in range(3)])
+    main_window.show_page("trending")
+    web.bekle(f"{kartlar_js('trending')}.length === 3")
+    olcum = olc(web, main_window, 1200)
+    tepe = olcum["izgara"][2]
+    assert [round(k[1] - tepe) for k in olcum["kartlar"]] == [0, 0, 0]
+    assert len({round(k[2], 1) for k in olcum["kartlar"]}) == 1

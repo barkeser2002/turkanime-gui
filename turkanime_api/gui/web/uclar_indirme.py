@@ -1,6 +1,6 @@
 """İndirilenler sayfasının köprü uçları.
 
-İş `pages.downloads.DownloadManager`'da (kuyruk, duraklat/sürdür, kalıcı
+İş `gui.qt.indirme.DownloadManager`'da (kuyruk, duraklat/sürdür, kalıcı
 kuyruk dosyası). Buradaki `IndirmeUclari` yöneticinin sinyallerini dinleyip
 satırların son hâlini tutuyor — sayfa her açıldığında o anki tabloyu tek
 çağrıyla alsın (`indirmeler`) ve sonrası olaylarla gelsin:
@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List
 
 from PySide6.QtCore import QObject, QTimer, Slot
 
-from .kopru import Kopru, uc
+from .kopru import Kopru, UcHatasi, uc
 
 # yt-dlp ilerleme kancası saniyede onlarca kez çağrılabiliyor; sayfaya en
 # çok bu aralıkla, biriktirilmiş olarak gidiyor.
@@ -35,7 +35,7 @@ class IndirmeUclari(QObject):
                  indirme_dizini: Callable[[], str] = None):
         super().__init__()
         from ..qt import prefs
-        from ..qt.pages.downloads import klasoru_ac
+        from ..qt.indirme import klasoru_ac
         self._kopru = kopru
         self._yonetici = yonetici
         self._oynat = oynat
@@ -89,7 +89,7 @@ class IndirmeUclari(QObject):
 
     @Slot(str, str)
     def _durum_degisti(self, tid: str, durum: str) -> None:
-        from ..qt.pages.downloads import DURUM_BEKLIYOR
+        from ..qt.indirme import DURUM_BEKLIYOR
         satir = self._satirlar.get(tid)
         if satir is None:
             return
@@ -119,7 +119,7 @@ class IndirmeUclari(QObject):
     def indirme_eylem(self, id: str, eylem: str) -> bool:  # noqa: A002 (JS adı)
         y = self._yonetici
         if id not in self._satirlar:
-            raise ValueError("indirme bulunamadı")
+            raise UcHatasi("indirme bulunamadı")
         if eylem == "duraklat":
             return y.pause(id)
         if eylem == "devam":
@@ -128,29 +128,29 @@ class IndirmeUclari(QObject):
             return y.cancel(id)
         if eylem == "tekrar":
             if y.retry(id) is None:
-                raise ValueError("bu bölüm zaten yeniden kuyrukta")
+                raise UcHatasi("bu bölüm zaten yeniden kuyrukta")
             return True
         if eylem == "oynat":
             kayit = y.kayit(id)
             if not kayit:
-                raise ValueError("bölüm kaydı yok")
+                raise UcHatasi("bölüm kaydı yok")
             self._oynat(kayit)
             return True
         if eylem == "klasor":
             return self._klasor(y.klasor(id))
-        raise ValueError(f"bilinmeyen eylem: {eylem}")
+        raise UcHatasi(f"bilinmeyen eylem: {eylem}")
 
     def _klasor(self, yol: str) -> bool:
         import os
         if not (yol and os.path.isdir(yol)):
-            raise ValueError("klasör bulunamadı (taşınmış ya da silinmiş olabilir)")
+            raise UcHatasi("klasör bulunamadı (taşınmış ya da silinmiş olabilir)")
         if not self._klasor_ac(yol):
-            raise ValueError(f"klasör açılamadı: {yol}")
+            raise UcHatasi(f"klasör açılamadı: {yol}")
         return True
 
     @uc()
     def indirme_toplu(self, eylem: str) -> Dict[str, Any]:
-        from ..qt.pages.downloads import BITMIS_DURUMLAR
+        from ..qt.indirme import BITMIS_DURUMLAR
         y = self._yonetici
         if eylem == "surdur":
             return {"adet": y.resume_all()}
@@ -168,7 +168,7 @@ class IndirmeUclari(QObject):
         if eylem == "klasor":
             self._klasor(self._dizin())
             return {"adet": 1}
-        raise ValueError(f"bilinmeyen eylem: {eylem}")
+        raise UcHatasi(f"bilinmeyen eylem: {eylem}")
 
 
 __all__ = ["IndirmeUclari", "ARALIK_MS"]

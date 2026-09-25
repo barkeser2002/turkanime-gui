@@ -17,11 +17,11 @@ import threading
 
 import pytest
 
-import turkanime_api.gui.qt.pages.downloads as dl_mod
+import turkanime_api.gui.qt.indirme as dl_mod
 from turkanime_api.common.dosya_adi import bolum_hedefi
-from turkanime_api.gui.qt.pages.downloads import (
+from turkanime_api.gui.qt.indirme import (
     BITMIS_DURUMLAR, DURUM_BEKLIYOR, DURUM_DURAKLATILDI, DURUM_INDIRILIYOR,
-    DURUM_TAMAMLANDI, DownloadManager, DownloadsPage,
+    DURUM_TAMAMLANDI, DownloadManager,
 )
 from turkanime_api.sources import kayit
 
@@ -255,19 +255,18 @@ def test_surdurmede_aday_degisirse_yarim_dosya_siliniyor(
 
 
 def test_satir_duraklat_ve_devam_dugmeleri(qtbot, manager, baslatma, tmp_path):
-    page = DownloadsPage(manager)
-    qtbot.addWidget(page)
+    """Sayfanın satır eylemleri (web: `indirme_eylem`) yöneticinin yollarından."""
+    from turkanime_api.gui.web.kopru import Kopru
+    from turkanime_api.gui.web.uclar_indirme import IndirmeUclari
+    uclar = IndirmeUclari(Kopru(), manager, oynat=lambda e: None)
     tid = manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
-    satir = page._rows[tid]
-    assert satir.btnPause.isVisibleTo(satir) and not satir.btnResume.isVisibleTo(satir)
-    satir.btnPause.click()
+    assert uclar.indirme_eylem(tid, "duraklat") is True
     assert manager.durum(tid) == DURUM_DURAKLATILDI
-    assert satir.btnResume.isVisibleTo(satir) and satir.btnCancel.isVisibleTo(satir)
-    assert "duraklatıldı" in page.lblStatus.text()
-    satir.btnResume.click()
+    assert uclar.indirmeler()["satirlar"][0]["durum"] == DURUM_DURAKLATILDI
+    assert uclar.indirme_eylem(tid, "devam") is True
     assert manager.durum(tid) == DURUM_BEKLIYOR
-    satir.btnPause.click()
-    satir.btnCancel.click()
+    uclar.indirme_eylem(tid, "duraklat")
+    uclar.indirme_eylem(tid, "iptal")
     assert manager.durum(tid) == "iptal edildi"
 
 

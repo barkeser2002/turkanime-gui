@@ -251,7 +251,7 @@ def test_turetilen_listeler_kayittan_geliyor(izole_ev):
     from turkanime_api.cli import __main__ as ana
     from turkanime_api.common.adapters import SearchEngine
     from turkanime_api.gui.qt import sources_bridge as sb
-    from turkanime_api.gui.qt.pages import episodes
+    from turkanime_api.gui.web.uclar_genel import GenelUclar
     from turkanime_api.sources import PROVIDERS
     from turkanime_server.crawler.kaynaklar import KAYNAKLAR as TARAYICI
 
@@ -260,7 +260,11 @@ def test_turetilen_listeler_kayittan_geliyor(izole_ev):
     assert set(sb.FUNCTION_SOURCES) == set(sb.BUILDERS) == set(OYNATILABILIR)
     assert sb.METADATA_ONLY == set(METADATA)
     assert set(ana.SOURCE_TITLES) == {k.cli_kodu for k in kayit.cli_kaynaklari()}
-    assert set(episodes.SOURCE_COLORS) == set(episodes.SOURCE_SHORT) == set(TUM_KAYNAKLAR)
+    # Arayüzün rozet renkleri/kısaltmaları (web: `kaynaklar` ucu) kayıttan.
+    rozetler = {k["ad"]: k for k in GenelUclar(ac=lambda *a: None,
+                                               kabuk=lambda: {}).kaynaklar()}
+    assert set(rozetler) == set(TUM_KAYNAKLAR)
+    assert all(k["renk"] and k["kisaltma"] for k in rozetler.values())
     assert {v["name"] for v in PROVIDERS.values()} == set(OYNATILABILIR)
     assert set(TARAYICI) == {k.modul for k in kayit.tarayici_kaynaklari()}
 
@@ -474,55 +478,62 @@ def test_arsiv_arama_tablosu_onbellekte_ve_sifirlaniyor(yerel_arsiv):
 # ─────────────────────────────────────────────────────────────────────────────
 # 5) Arayüzde etiket, anahtar kanonik
 # ─────────────────────────────────────────────────────────────────────────────
-def test_arama_karti_etiketi_gosteriyor(qtbot):
-    from turkanime_api.gui.qt.pages.search import SearchPage
+def test_arama_karti_etiketi_gosteriyor(main_window, web, sahte_arama):
+    """Sonuç grubunda etiket; karta tıklayınca detay kanonik adla açılıyor."""
+    sahte_arama(sonuclar={"TürkAnime": [{"slug": "naruto", "title": "Naruto",
+                                         "image": None}]})
+    main_window.ara("naruto")
+    grup = "document.querySelector('.sonuc-grubu[data-kaynak=\"TürkAnime\"]')"
+    web.bekle(f"!!{grup} && {grup}.querySelectorAll('.kart').length === 1")
+    assert web.js(f"{grup}.querySelector('.kaynak-hap').textContent") == "TürkAnime (arşiv)"
+    web.js(f"{grup}.querySelector('.kart').click()")
+    web.bekle("TA.aktif === 'detail'")
+    assert main_window.detay.oturum.baglar == {"TürkAnime": "naruto"}
 
-    sayfa = SearchPage()
-    qtbot.addWidget(sayfa)
-    sayfa._on_results({"TürkAnime": [{"slug": "naruto", "title": "Naruto",
-                                      "image": None}]})
-    kart = sayfa.cards()[0]
-    assert kart.lblSource.text() == "TürkAnime (arşiv)"
-    assert kart.payload == ("TürkAnime", "naruto", "Naruto")
+
+def _detay_uclari():
+    from turkanime_api.gui.web.uclar_detay import DetayUclari
+    return DetayUclari(None, oynat=lambda e: None, indir=lambda e: None)
 
 
-def test_detay_kaynak_kutusu_etiket_gosterip_ad_tasiyor(qtbot):
-    from turkanime_api.gui.qt.pages.detail import DetailPage
-
-    sayfa = DetailPage()
-    qtbot.addWidget(sayfa)
-    sayfa.show_match("TürkAnime", "naruto", "Naruto")
-    assert sayfa.cmbSource.currentText() == "TürkAnime (arşiv)"
-    assert sayfa.current_source() == "TürkAnime"
-    assert sayfa.cmbSource.findText("AnimeDepo") < 0
+def test_detay_kaynak_etiketi_gosterip_ad_tasiyor():
+    uclar = _detay_uclari()
+    rid = uclar.ac_sonuc("TürkAnime", "naruto", "Naruto")
+    kaynaklar = uclar.detay(rid)["kaynaklar"]
+    assert [(k["ad"], k["etiket"]) for k in kaynaklar] == [("TürkAnime", "TürkAnime (arşiv)")]
+    assert "AnimeDepo" not in json.dumps(kaynaklar, ensure_ascii=False)
 
 
 def test_rozet_eski_adda_da_ayni():
-    from turkanime_api.gui.qt.pages.episodes import source_color, source_short
+    from turkanime_api.gui.web.uclar_detay import kaynak_bilgisi
 
-    assert source_short("AnimeDepo") == source_short("TürkAnime") == "TA"
-    assert source_color("AnimeDepo") == source_color("TürkAnime")
+    eski, yeni = kaynak_bilgisi("AnimeDepo"), kaynak_bilgisi("TürkAnime")
+    assert eski["kisaltma"] == yeni["kisaltma"] == "TA"
+    assert eski["renk"] == yeni["renk"]
 
 
-def test_detay_eski_ad_bagliyken_arsivi_ikinci_kez_baglamiyor(qtbot, monkeypatch):
+def test_detay_eski_ad_bagliyken_arsivi_ikinci_kez_baglamiyor(monkeypatch):
     """Eski "AnimeDepo" bağlantısı varken aramadan gelen "TürkAnime" aynı arşiv."""
     import turkanime_api.common.adapters as adapters_mod
-    from turkanime_api.gui.qt.pages.detail import DetailPage
+    from turkanime_api.gui.web import uclar_detay
+
+    arananlar: list = []
 
     class Motor:
         def search_all_sources_rich(self, query, limit_per_source=10):
+            arananlar.append(query)
             return {"TürkAnime": [{"slug": "naruto", "title": "Naruto"}]}
 
     monkeypatch.setattr(adapters_mod, "SearchEngine", Motor)
-    sayfa = DetailPage()
-    qtbot.addWidget(sayfa)
-    rid = sayfa.show_anime({"title": {"romaji": "Naruto"}}, source="AnimeDepo",
-                           slug="naruto")
-    yayilan = []
-    sayfa.sources_resolved.disconnect()
-    sayfa.sources_resolved.connect(yayilan.append)
-    sayfa._do_resolve(rid, "Naruto", {"AnimeDepo": "naruto"}, True, "AnimeDepo")
-    assert yayilan[0][1] == {"AnimeDepo": "naruto"}
+    monkeypatch.setattr(uclar_detay, "oynatilabilir_kaynaklar", lambda: ["TürkAnime"])
+    uclar = _detay_uclari()
+    rid = uclar.ac_sonuc("AnimeDepo", "naruto", "Naruto")
+
+    sonuc = uclar.eslestir(rid)
+
+    assert sonuc["yeni"] == [] and sonuc["eslesmeyen"] == []
+    assert uclar.oturum.baglar == {"AnimeDepo": "naruto"}
+    assert arananlar == [], "bağlı arşiv için arama yapılmamalı"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

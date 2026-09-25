@@ -9,8 +9,6 @@ import pytest
 
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.common import kutuphane
-from turkanime_api.gui.qt.pages import detail as detail_mod
-from turkanime_api.gui.qt.pages.detail import FAVORI_EKLE, FAVORI_VAR, DetailPage
 from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 
 
@@ -129,24 +127,30 @@ def test_cok_kaynakli_listede_tiklanan_kaynagin_kimligi(
 
 
 # ── Detay sayfası: kitaplığa ekle ────────────────────────────────────────────
-def test_detay_kitapliga_ekle_dugmesi(izole_ev, qtbot):
+FAVORI = "document.querySelector('.detay-eylemler .dugme.marka')"
+
+
+def test_detay_kitapliga_ekle_dugmesi(izole_ev, main_window, web, sahte_bolumler):
     d = Dosyalar()
     d.set_gecmis("07-ghost", "07-ghost-1-bolum", "izlendi")
     d.set_gecmis("07-ghost", "07-ghost-1-bolum", "indirildi")
     d.set_ilerleme("07-ghost", 1)
+    sahte_bolumler({"TürkAnime": [{"title": "1. Bölüm",
+                                   "obj": Bolum("07-ghost", "07-ghost-1-bolum")}]})
 
-    page = DetailPage()
-    qtbot.addWidget(page)
-    page.show_anime({"title": {"romaji": "07-Ghost"}})
-    assert not page.btnFavori.isEnabled(), "bağsız kayıtta kimlik yok"
+    main_window._on_discover_selected({"title": {"romaji": "07-Ghost"}})
+    web.bekle(f"TA.aktif === 'detail' && !!{FAVORI}")
+    assert web.js(f"{FAVORI}.disabled") is True, "bağsız kayıtta kimlik yok"
 
-    page.show_match("TürkAnime", "07-ghost", "07-Ghost",
-                    kayit={"image": "http://k/07.jpg"})
-    assert page.btnFavori.isEnabled()
-    assert page.btnFavori.text() == FAVORI_EKLE
+    main_window._on_anime_selected("TürkAnime", "07-ghost", "07-Ghost",
+                                   {"image": "http://k/07.jpg"})
+    web.detay_bekle("TürkAnime", 1)
+    assert web.js(f"{FAVORI}.disabled") is False
+    assert "Kitaplığa Ekle" in web.js(f"{FAVORI}.textContent")
 
-    page.btnFavori.click()
-    assert page.btnFavori.text() == FAVORI_VAR
+    web.js(f"{FAVORI}.click()")
+    web.bekle(f"{FAVORI}.textContent.includes('Kitaplıkta')")
+    qtbot = web.qtbot
     qtbot.waitUntil(lambda: kutuphane.favori_mi("TürkAnime", "07-ghost"), timeout=5000)
     seri = kutuphane.favoriler()[0]
     assert (seri["baslik"], seri["kapak"]) == ("07-Ghost", "http://k/07.jpg")
@@ -155,14 +159,17 @@ def test_detay_kitapliga_ekle_dugmesi(izole_ev, qtbot):
     assert gecmis["izlendi"] == {"07-ghost": ["07-ghost-1-bolum"]}
     assert gecmis["indirildi"] == {"07-ghost": ["07-ghost-1-bolum"]}
     assert gecmis["ilerleme"] == {"07-ghost": 1}
-    Dosyalar().set_gecmis("07-ghost", "07-ghost-2-bolum", "izlendi")
 
-    # Yeni sayfa aynı kaydı açınca düğme dolu gelir; tekrar basınca çıkar.
-    page.show_match("TürkAnime", "07-ghost", "07-Ghost")
-    assert page.btnFavori.isChecked()
-    page.btnFavori.click()
+    # Aynı kayıt yeniden açılınca düğme dolu gelir; tekrar basınca çıkar.
+    main_window._on_discover_selected({"title": {"romaji": "Başka"}})
+    web.bekle(f"{FAVORI}.disabled === true")
+    main_window._on_anime_selected("TürkAnime", "07-ghost", "07-Ghost", None)
+    web.detay_bekle("TürkAnime", 1)
+    web.bekle(f"{FAVORI}.classList.contains('secili')")
+    web.js(f"{FAVORI}.click()")
     qtbot.waitUntil(lambda: not kutuphane.favori_mi("TürkAnime", "07-ghost"),
                     timeout=5000)
+    web.bekle(f"{FAVORI}.textContent.includes('Kitaplığa Ekle')")
 
 
 # ── Kitaplığım sayfası ve ana sayfa şeridi ───────────────────────────────────

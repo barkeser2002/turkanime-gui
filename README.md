@@ -195,7 +195,7 @@ python -m turkanime_api.gui.qt
 1. **İlk açılışta** ffmpeg/mpv/aria2c/yt-dlp denetlenir; eksik varsa kurulum
    sihirbazı açılır (hazır pakette hepsi gömülü gelir).
 2. **TürkAnime'yi internetsiz** kullanmak istiyorsan Ayarlar →
-   **Çevrimdışı arşiv (TürkAnime)** → **"Tüm arşivi indir (~230 MB)"**.
+   **Çevrimdışı Arşiv (TürkAnime)** → **"Tüm arşivi indir (~230 MB)"**.
    Ayrıntı: [Çevrimdışı Arşiv](#-çevrimdışı-arşiv-türkanime).
 3. **TRAnimeİzle** kullanmak istiyorsan Ayarlar → TRAnimeİzle Cookie →
    **"Tarayıcıdan Al"** düğmesine bas. Uygulama içindeki tarayıcı açılır, bot
@@ -245,7 +245,7 @@ ilk konum kullanılır; geçersiz klasör atlanır ve Ayarlar'da uyarı çıkar:
 çalıştırılıyorsa depo kökü (indirilenler bu yüzden `arsiv/` değil
 `cevrimdisi_arsiv/` adıyla durur ve `.gitignore`'dadır).
 
-**Ayarlar'dan indirme:** Ayarlar → **Çevrimdışı arşiv (TürkAnime)** bölümü
+**Ayarlar'dan indirme:** Ayarlar → **Çevrimdışı Arşiv (TürkAnime)** bölümü
 etkin konumu, yolunu ya da adresini, anime sayısını ve dizinin son güncelleme
 tarihini gösterir. Bu bilgi sayfa açılınca arka planda okunur; ağa çıkılmaz.
 

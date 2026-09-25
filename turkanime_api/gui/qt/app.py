@@ -28,7 +28,7 @@ from . import prefs
 from .anilist import AniListService
 from .discord import DiscordService
 from .fansub import FansubSecici
-from .pages.downloads import DURUM_IPTAL, DownloadManager
+from .indirme import DURUM_IPTAL, DownloadManager
 from .progress_dialog import ProgressDialog, anime_adi
 from .requirements import RequirementsDialog, RequirementsService
 from .theme import apply_theme

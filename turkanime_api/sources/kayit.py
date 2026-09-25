@@ -5,7 +5,7 @@ NEDEN VAR: Kaynak listesi eskiden altı ayrı yerde elle tutuluyordu:
     sources/__init__.py              PROVIDERS
     common/adapters.py               SearchEngine.adapters
     gui/qt/sources_bridge.py         FUNCTION_SOURCES / BUILDERS
-    gui/qt/pages/episodes.py         SOURCE_COLORS / SOURCE_SHORT
+    gui/qt/pages/episodes.py         SOURCE_COLORS / SOURCE_SHORT (arayüz rozeti)
     cli/__main__.py                  SOURCE_TITLES + "Kaynak seç" menüsü
     turkanime_server/crawler/kaynaklar.py   KAYNAKLAR
 

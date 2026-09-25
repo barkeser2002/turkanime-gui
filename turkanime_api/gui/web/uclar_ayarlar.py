@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QObject
 
-from .kopru import Kopru, uc
+from .kopru import Kopru, UcHatasi, uc
 
 # Etkin arşiv konumunun (`animedepo.ArsivKonumu.kaynak`) kullanıcıya görünen adı.
 ARSIV_KONUM_ADLARI = {
@@ -293,7 +293,7 @@ class AyarlarUclari(QObject):
                 try:
                     yazilacak[anahtar] = max(alt, min(ust, int(ham)))
                 except (TypeError, ValueError):
-                    raise ValueError(f"geçersiz sayı: {ham!r}") from None
+                    raise UcHatasi(f"geçersiz sayı: {ham!r}") from None
         self._dosya().set_ayar(ayar_list=yazilacak)
         # Bypass oturumu adresi kurulumda okuyor; sıfırlanmazsa değişiklik
         # ancak yeniden başlatınca etkili olurdu.
@@ -307,9 +307,9 @@ class AyarlarUclari(QObject):
             if not prefs.anilist_yaz(anilist.get("client_id", ""),
                                      anilist.get("client_secret", ""),
                                      anilist.get("redirect_uri", "")):
-                raise ValueError("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı")
+                raise UcHatasi("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı")
         if not self._kimlikleri_uygula():
-            raise ValueError("Ayarlar kaydedildi ama kaynak çerez/jetonları uygulanamadı")
+            raise UcHatasi("Ayarlar kaydedildi ama kaynak çerez/jetonları uygulanamadı")
         return {"mesaj": "Ayarlar kaydedildi."}
 
     @uc()
@@ -323,7 +323,7 @@ class AyarlarUclari(QObject):
     def cerez_al(self) -> bool:
         from ..qt.cookie_browser import CookieBrowserWorker, is_available
         if not is_available():
-            raise ValueError("QtWebEngine yok (PySide6-Addons kurulu mu?)")
+            raise UcHatasi("QtWebEngine yok (PySide6-Addons kurulu mu?)")
         if self._cerez_isci is not None and self._cerez_isci.is_running:
             self._durum("Tarayıcı zaten açık.")
             return False
@@ -431,7 +431,7 @@ class AyarlarUclari(QObject):
         """Anlık etkili ("Kaydet"i beklemez)."""
         from ..qt import prefs
         if not prefs.ayar_yaz(discord_rich_presence=bool(acik)):
-            raise ValueError("Discord ayarı kaydedilemedi")
+            raise UcHatasi("Discord ayarı kaydedilemedi")
         if self.discord is not None:
             self.discord.ayar_uygula()
         return {"metin": self._discord_metni(),
@@ -462,7 +462,7 @@ class AyarlarUclari(QObject):
         """Önce ekrandaki OAuth bilgilerini kaydet, sonra tarayıcıyı aç."""
         from ..qt import prefs
         if not prefs.anilist_yaz(client_id, client_secret, redirect_uri):
-            raise ValueError("AniList yapılandırması kaydedilemedi")
+            raise UcHatasi("AniList yapılandırması kaydedilemedi")
         if self.anilist.giris_yap():
             self._durum("Tarayıcıda AniList girişini tamamlayın…")
             return True
@@ -478,7 +478,12 @@ class AyarlarUclari(QObject):
     def arsiv_durumu(self) -> Dict[str, Any]:
         """Etkin konum ve içerik (ağa ÇIKMAZ; dizin.json'ı diske yükleyebilir)."""
         from ...sources import animedepo
-        durum = animedepo.arsiv_durumu()
+        try:
+            durum = animedepo.arsiv_durumu()
+        except Exception as exc:
+            # Sebep olduğu gibi: genel çevirici `PermissionError`ı "indirme
+            # klasörüne yazılamıyor" diye anlatıyor, burada yanlış olurdu.
+            raise UcHatasi(str(exc) or type(exc).__name__) from exc
         self._arsiv_indirilen_var = bool(durum.indirilen_var)
         return {
             "konum": ARSIV_KONUM_ADLARI.get(durum.kaynak, durum.kaynak),
@@ -499,7 +504,7 @@ class AyarlarUclari(QObject):
 
     def _mesgul_mu(self) -> None:
         if self._arsiv_mesgul is not None:
-            raise ValueError("Bir arşiv işlemi zaten sürüyor.")
+            raise UcHatasi("Bir arşiv işlemi zaten sürüyor.")
 
     @uc()
     def arsiv_indir(self) -> bool:
@@ -637,7 +642,7 @@ class AyarlarUclari(QObject):
         Onayı sayfa soruyor (kendi penceresiyle); ``onay`` olmadan silinmez.
         """
         if not onay:
-            raise ValueError("silme onaylanmadı")
+            raise UcHatasi("silme onaylanmadı")
         self._mesgul_mu()
         self._arsiv_mesgul = "islem"
         from ..qt.workers import run_bg

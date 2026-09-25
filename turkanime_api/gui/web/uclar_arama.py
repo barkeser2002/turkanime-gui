@@ -18,7 +18,7 @@ import itertools
 from typing import Any, Dict, List, Optional
 
 from ...sources import kayit as kaynak_kaydi
-from .kopru import Kopru, uc
+from .kopru import Kopru, UcHatasi, uc
 
 # Kaynak başına gösterilecek azami sonuç (eski Qt sayfasıyla aynı).
 LIMIT_PER_SOURCE = 10
@@ -98,7 +98,7 @@ class AramaUclari:
         ``kaynak`` verilirse yalnızca o kaynakta aranır (üst çubuktaki seçim)."""
         sorgu = " ".join(str(sorgu or "").split())
         if not sorgu:
-            raise ValueError("arama metni boş")
+            raise UcHatasi("arama metni boş")
         istek = self.son_istek = int(istek) if istek is not None else next(self._sayac)
         from ..qt.workers import run_bg
         run_bg(self._ara, istek, sorgu, str(kaynak or ""))

@@ -3,8 +3,8 @@
 Eski CustomTkinter GUI'de bu iş ~400 satıra dağılmıştı: her parça kendi
 `threading.Thread`'ini açıyor, sonucu `after(0, ...)` ile widget'a yazıyordu.
 Burada tek bir servis var; ağ işleri `run_bg` ile havuza gider, sonuç Qt
-sinyaliyle GUI thread'ine taşınır. Sayfalar (`WatchlistPage`, `SettingsPage`)
-yalnızca sinyal dinler, ağ görmez.
+sinyaliyle GUI thread'ine taşınır. Web sayfalarının uçları (`gui.web.uclar_izleme`,
+`uclar_ayarlar`) yalnızca sinyal dinler, ağ görmez.
 
 `turkanime_api.anilist_client` singleton'ı OLDUĞU GİBİ kullanılır: token ve
 OAuth yapılandırması onun kendi dosyalarında duruyor, yolları değiştirmek

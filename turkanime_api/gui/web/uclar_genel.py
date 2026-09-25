@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List
 
 from ...sources import kayit as kaynak_kaydi
-from .kopru import uc
+from .kopru import UcHatasi, uc
 
 # Sayfanın isteyebileceği gezinti hedefleri. `ac` bunları pencereye iletiyor;
 # listede olmayan hedef reddediliyor (sayfa hatası sessiz kalmasın).
@@ -28,7 +28,7 @@ class GenelUclar:
     def ac(self, hedef: str, veri: Dict[str, Any] = None) -> bool:
         """Sayfadan gezinti isteği: menü/"Geri" durumu pencerede tutuluyor."""
         if hedef not in HEDEFLER:
-            raise ValueError(f"bilinmeyen hedef: {hedef}")
+            raise UcHatasi(f"bilinmeyen hedef: {hedef}")
         self._ac(hedef, dict(veri or {}))
         return True
 
@@ -36,7 +36,7 @@ class GenelUclar:
     def disari_ac(self, adres: str) -> bool:
         """http(s) adresini sistem tarayıcısında aç."""
         if not str(adres).startswith(("http://", "https://")):
-            raise ValueError("yalnızca http(s) adresi açılabilir")
+            raise UcHatasi("yalnızca http(s) adresi açılabilir")
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
         return bool(QDesktopServices.openUrl(QUrl(adres)))

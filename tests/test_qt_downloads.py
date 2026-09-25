@@ -15,9 +15,9 @@ import time
 
 import pytest
 
-from turkanime_api.gui.qt.pages.downloads import (
+from turkanime_api.gui.qt.indirme import (
     BITMIS_DURUMLAR, DURUM_BEKLIYOR, DURUM_HATA, DURUM_INDIRILIYOR, DURUM_IPTAL,
-    DURUM_TAMAMLANDI, MAX_DENEME, DownloadManager, DownloadRow, DownloadsPage,
+    DURUM_TAMAMLANDI, MAX_DENEME, DownloadManager,
 )
 
 
@@ -208,7 +208,7 @@ def test_aria2c_basarisiz_donerse_hata(qtbot, manager, ayarla, monkeypatch, tmp_
 def test_paralel_indirme_sayisi_havuz_boyutunu_belirliyor(manager, ayarla,
                                                           monkeypatch, tmp_path):
     """"paralel indirme sayisi" sabit 3 yerine havuz boyutunu belirlemeli."""
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    import turkanime_api.gui.qt.indirme as dl_mod
     from turkanime_api.gui.qt.workers import long_task_pool
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)  # iş başlamasın
@@ -254,7 +254,7 @@ def test_calisan_indirme_iptal_edilebiliyor(qtbot, manager, ayarla, tmp_path):
 
 def test_bekleyen_is_aninda_iptal_ediliyor(manager, ayarla, monkeypatch, tmp_path):
     """Havuz doluysa iş dakikalarca başlamaz; iptal geri bildirimi beklememeli."""
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    import turkanime_api.gui.qt.indirme as dl_mod
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     ayarla(**{"aria2c kullan": False})
@@ -268,7 +268,7 @@ def test_bekleyen_is_aninda_iptal_ediliyor(manager, ayarla, monkeypatch, tmp_pat
 
 
 def test_cancel_all_bekleyen_isleri_kapatiyor(manager, ayarla, monkeypatch, tmp_path):
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    import turkanime_api.gui.qt.indirme as dl_mod
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     ayarla(**{"aria2c kullan": False})
@@ -285,7 +285,7 @@ def test_cancel_all_bekleyen_isleri_kapatiyor(manager, ayarla, monkeypatch, tmp_
 @pytest.fixture
 def baslamayan(monkeypatch):
     """`run_bg` sahte: işler "bekliyor"da kalsın, çağrılar sayılsın."""
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    import turkanime_api.gui.qt.indirme as dl_mod
     cagrilar = []
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: cagrilar.append(a))
     return cagrilar
@@ -321,7 +321,7 @@ def test_ayni_hedefe_giden_baska_nesne_de_ayni_is(manager, ayarla, baslamayan, t
 @pytest.mark.parametrize("bitir", ["iptal", "hata", "tamam"])
 def test_bitmis_isten_sonra_yeniden_kuyruga_alinabiliyor(manager, ayarla, baslamayan,
                                                         tmp_path, bitir):
-    from turkanime_api.gui.qt.pages import downloads as dl_mod
+    from turkanime_api.gui.qt import indirme as dl_mod
 
     bolum = SahteBolum()
     ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
@@ -501,77 +501,86 @@ def test_basarisiz_indirme_gecmise_yazilmiyor(qtbot, manager, ayarla, tmp_path):
     assert "naruto-test-9-bolum" not in indirildi.get("naruto-test", [])
 
 
-# ── Satır / sayfa ────────────────────────────────────────────────────────────
-def test_satir_butonlari_duruma_gore(qtbot):
-    row = DownloadRow("dl1", "Naruto 1")
-    qtbot.addWidget(row)
-
-    row.set_state(DURUM_INDIRILIYOR)
-    assert row.btnCancel.isVisibleTo(row) and not row.btnRetry.isVisibleTo(row)
-
-    row.set_state(DURUM_HATA)
-    assert row.is_finished and not row.is_ok
-    assert row.btnRetry.isVisibleTo(row) and not row.btnCancel.isVisibleTo(row)
-
-    row.set_state(DURUM_TAMAMLANDI)
-    assert row.is_ok
-    assert not row.btnRetry.isVisibleTo(row)
+# ── Sayfanın satır tablosu (web: `uclar_indirme.IndirmeUclari`) ─────────────
+def _uclar(manager):
+    import json
+    from turkanime_api.gui.web.kopru import Kopru
+    from turkanime_api.gui.web.uclar_indirme import IndirmeUclari
+    kopru = Kopru()
+    olaylar: list = []
+    kopru.olay.connect(lambda ad, js: olaylar.append((ad, json.loads(js))))
+    uclar = IndirmeUclari(kopru, manager, oynat=lambda e: None,
+                          klasor_ac=lambda yol: True, indirme_dizini=lambda: "/tmp")
+    return uclar, olaylar
 
 
-def test_satir_yeniden_denemede_temizleniyor(qtbot):
-    """Yeniden denenen satırda eski hata metni kalmamalı."""
-    row = DownloadRow("dl1", "Naruto 1")
-    qtbot.addWidget(row)
-    row.set_state(DURUM_HATA)
-    row.set_done(False, "hata: bağlantı koptu")
-
-    row.set_state(DURUM_BEKLIYOR)
-    assert row.lblDetail.text() == DURUM_BEKLIYOR
-    assert row.bar.value() == 0
-    assert not row.is_finished
+def _satir(uclar, tid):
+    return next(s for s in uclar.indirmeler()["satirlar"] if s["id"] == tid)
 
 
-def test_sayfa_satirlari_yonetiyor(qtbot, manager):
-    page = DownloadsPage(manager)
-    qtbot.addWidget(page)
-
+def test_satir_durumlari_ve_yeniden_denemede_temizlik(qtbot, manager):
+    """Yeniden denenen satırda eski hata metni ve ilerleme kalmamalı."""
+    uclar, olaylar = _uclar(manager)
     manager.added.emit("dl1", "Naruto 1")
     manager.state.emit("dl1", DURUM_INDIRILIYOR)
-    assert "1 aktif" in page.lblStatus.text()
+    manager.progress.emit("dl1", 30, "3 MB / 10 MB")
+    manager.state.emit("dl1", DURUM_HATA)
+    manager.finished.emit("dl1", False, "hata: bağlantı koptu")
+    satir = _satir(uclar, "dl1")
+    assert (satir["durum"], satir["mesaj"], satir["ok"]) == (DURUM_HATA, "hata: bağlantı koptu", False)
 
-    manager.progress.emit("dl1", 40, "yarısı")
-    assert page._rows["dl1"].bar.value() == 40
+    manager.state.emit("dl1", DURUM_BEKLIYOR)
+    satir = _satir(uclar, "dl1")
+    assert (satir["yuzde"], satir["mesaj"], satir["detay"]) == (0, "", "")
+    # Her durum değişikliği sayfaya hemen gidiyor.
+    assert [o for o, _v in olaylar].count("indirme_satir") >= 4
 
+
+def test_ilerleme_toplu_ve_seyrek_gidiyor(qtbot, manager):
+    uclar, olaylar = _uclar(manager)
+    manager.added.emit("dl1", "Naruto 1")
+    for yuzde in range(0, 41, 2):
+        manager.progress.emit("dl1", yuzde, f"%{yuzde}")
+    assert _satir(uclar, "dl1")["yuzde"] == 40          # tablo hemen güncel
+    qtbot.waitUntil(lambda: any(o == "indirme_ilerleme" for o, _v in olaylar), timeout=2000)
+    ilerlemeler = [v for o, v in olaylar if o == "indirme_ilerleme"]
+    assert len(ilerlemeler) == 1, "21 kanca çağrısı tek toplu olaya inmeli"
+    assert ilerlemeler[0]["satirlar"] == [{"id": "dl1", "yuzde": 40, "detay": "%40"}]
+
+
+def test_tamamlananlari_temizle(qtbot, manager):
+    uclar, olaylar = _uclar(manager)
+    manager.added.emit("dl1", "Naruto 1")
+    manager.added.emit("dl2", "Naruto 2")
     manager.state.emit("dl1", DURUM_TAMAMLANDI)
     manager.finished.emit("dl1", True, DURUM_TAMAMLANDI)
-    assert "tamamlandı" in page.lblStatus.text()
+    assert _satir(uclar, "dl1")["yuzde"] == 100
+    assert uclar.indirme_toplu("temizle") == {"adet": 1}
+    assert [s["id"] for s in uclar.indirmeler()["satirlar"]] == ["dl2"]
+    assert ("indirme_silindi", {"idler": ["dl1"]}) in olaylar
 
-    page._clear_finished()
-    assert page._rows == {}
 
-
-def test_sayfa_iptal_dugmesi_yoneticiye_gidiyor(qtbot, manager, monkeypatch):
-    page = DownloadsPage(manager)
-    qtbot.addWidget(page)
+def test_toplu_iptal_yoneticiye_gidiyor(qtbot, manager, monkeypatch):
+    uclar, _ = _uclar(manager)
     cagrildi = []
     monkeypatch.setattr(manager, "cancel_all", lambda: cagrildi.append(True) or 2)
-
-    page.btnCancelAll.click()
+    assert uclar.indirme_toplu("iptal") == {"adet": 2}
     assert cagrildi == [True]
+    with pytest.raises(ValueError):
+        uclar.indirme_toplu("yok-boyle")
 
 
-def test_satir_dugmeleri_yoneticiye_bagli(qtbot, manager, monkeypatch, ayarla,
-                                          tmp_path):
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+def test_satir_iptali_yoneticiye_bagli(qtbot, manager, monkeypatch, ayarla, tmp_path):
+    import turkanime_api.gui.qt.indirme as dl_mod
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
-    page = DownloadsPage(manager)
-    qtbot.addWidget(page)
-
+    uclar, _ = _uclar(manager)
     task_id = manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
-    page._rows[task_id].btnCancel.click()
+    assert uclar.indirme_eylem(task_id, "iptal") is True
     assert manager.durum(task_id) == DURUM_IPTAL
-    assert page._rows[task_id].btnRetry.isVisibleTo(page._rows[task_id])
+    assert _satir(uclar, task_id)["durum"] == DURUM_IPTAL
+    with pytest.raises(ValueError):
+        uclar.indirme_eylem("yok", "iptal")
 
 
 # ── Yok edilmiş pencere ──────────────────────────────────────────────────────

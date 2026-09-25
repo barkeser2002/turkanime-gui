@@ -167,7 +167,7 @@ def _giris(no: int):
 @pytest.fixture
 def indirme_penceresi(izole_ev, main_window, monkeypatch, tmp_path):
     """İndirme işleri başlamaz (bekliyor'da kalır)."""
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    import turkanime_api.gui.qt.indirme as dl_mod
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     monkeypatch.setattr(MainWindow, "_download_dir",

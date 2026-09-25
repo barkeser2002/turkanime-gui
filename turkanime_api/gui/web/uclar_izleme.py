@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .kopru import Kopru, uc
+from .kopru import Kopru, UcHatasi, uc
 from .veri import kart
 
 
@@ -72,9 +72,9 @@ class IzlemeUclari:
         """Listeyi iste; sonuç `izleme_listesi` olayıyla gelir."""
         from ..qt.anilist import DURUM_ETIKETI
         if durum not in DURUM_ETIKETI:
-            raise ValueError(f"bilinmeyen liste durumu: {durum}")
+            raise UcHatasi(f"bilinmeyen liste durumu: {durum}")
         if not self._servis.giris_var_mi():
-            raise ValueError("AniList girişi yok")
+            raise UcHatasi("AniList girişi yok")
         self._son_durum = durum
         return bool(self._servis.liste_getir(durum))
 

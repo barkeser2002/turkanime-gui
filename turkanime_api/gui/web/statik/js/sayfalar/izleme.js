@@ -52,7 +52,16 @@
           eylem: { etiket: "Tekrar dene", fn: function () { self.yenile(); } } }));
       });
       TA.dinle("izleme_senkron", function (v) {
-        TA.bildir(v.sayi ? v.sayi + " serinin ilerlemesi yerele işlendi." : "Yerel ilerleme zaten güncel.", "tamam");
+        var metin = v.sayi ? v.sayi + " serinin ilerlemesi yerele işlendi." : "Yerel ilerleme zaten güncel.";
+        if (self.senkronIstendi) {
+          self.senkronIstendi = false;
+          self.durumYaz(metin, "tamam");
+          TA.bildir(metin, "tamam");
+        } else if (v.sayi) {
+          // Girişten sonraki kendiliğinden senkron: durum satırı ("12 anime")
+          // kullanıcının; yalnızca değişiklik olduysa haber ver.
+          TA.bildir(metin, "tamam");
+        }
       });
       TA.dinle("anilist_giris", function (d) {
         self.durumUygula(d);
@@ -127,7 +136,9 @@
     senkron: function () {
       var self = this;
       TA.cagir("izleme_senkron").then(function (ok) {
-        if (ok) self.durumYaz("Senkronize ediliyor…", "suruyor");
+        if (!ok) return;
+        self.senkronIstendi = true;
+        self.durumYaz("Senkronize ediliyor…", "suruyor");
       });
     }
   };

@@ -145,7 +145,7 @@ def test_elle_secim_otomatigi_eziyor_ve_eski_adi_dusuruyor(monkeypatch):
     monkeypatch.setattr(uclar_detay, "kaynaklari_esle",
                         lambda b, h, bagli=None, limit=None: (
                             {k: "oto-" + k for k in h}, {k: "Oto" for k in h}, []))
-    import turkanime_api.gui.qt.pages.detail as detail_mod
+    import turkanime_api.gui.web.eslestirme as detail_mod
     monkeypatch.setattr(detail_mod, "save_match", lambda *a: True)
     rid = uclar.ac_sonuc("AnimeDepo", "eski", "Naruto")      # eski ad
     uclar.elle_eslestir(rid, "TürkAnime", "naruto", "Naruto")
@@ -275,7 +275,7 @@ def test_eslesme_yoksa_elle_secim_penceresi(main_window, web, sahte_bolumler,
     monkeypatch.setattr(uclar_detay, "arsiv_yerel_mi", lambda: False)
     monkeypatch.setattr(uclar_detay, "kaynaklari_esle",
                         lambda b, h, bagli=None, limit=None: ({}, {}, list(h)))
-    import turkanime_api.gui.qt.pages.detail as detail_mod
+    import turkanime_api.gui.web.eslestirme as detail_mod
     kaydedilen = []
     monkeypatch.setattr(detail_mod, "save_match", lambda *a: kaydedilen.append(a) or True)
     sahte_arama(sonuclar={"AnimeciX": [{"slug": "77", "title": "Bleach"}],
@@ -354,3 +354,61 @@ def test_yeni_anime_eskisinin_gec_bolumlerini_ezmiyor(main_window, web, sahte_bo
     web.qtbot.wait(300)
     assert web.js("document.querySelectorAll('.akordiyon').length") == 1
     assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Yeni"
+
+
+# ── Bölüm yükleme hataları: sebep, "bulunamadı" değil ────────────────────────
+def test_desteklenmeyen_kaynak_mesaji_oldugu_gibi(main_window, web, sahte_bolumler):
+    """Kaynağın kendi cümlesi "beklenmeyen hata" önekiyle bozulmadan gelir."""
+    from turkanime_api.gui.qt.sources_bridge import UnsupportedSource
+    sahte_bolumler({"AnimeciX": UnsupportedSource(
+        "AnimeciX sayısal kimlik bekliyor, 'cowboy-bebop' geçersiz.")})
+    ac(main_window, "AnimeciX", "cowboy-bebop", "Cowboy Bebop")
+    web.bekle("!!document.querySelector('.bolum-hata')")
+    metin = web.js("document.querySelector('.bolum-hata').innerText")
+    assert metin.startswith("AnimeciX sayısal kimlik bekliyor")
+    assert "beklenmeyen" not in metin
+
+
+def test_bos_liste_bulunamadi_diyor(main_window, web, sahte_bolumler):
+    sahte_bolumler({"TürkAnime": []})
+    ac(main_window, "TürkAnime", "yok", "Yok")
+    web.bekle("!!document.querySelector('.bolum-bos')")
+    assert "bölüm bulunamadı" in web.js("document.querySelector('.bolum-bos').innerText")
+
+
+def test_okunamayan_arsiv_sebebini_soyluyor(main_window, web, tmp_path, monkeypatch):
+    """ESKİ HATA: arşive ulaşılamayınca bölüm okuyucusu hatayı boş listeye
+    çeviriyor, sayfa "bölüm bulunamadı" diyordu. Gerçek köprü + gerçek arşiv
+    istemcisi: ağ conftest'te kapalı, disk önbelleğinde yalnızca dizin var."""
+    import json
+    from turkanime_api.sources import animedepo
+
+    onbellek = tmp_path / "onbellek"
+    onbellek.mkdir()
+    (onbellek / "dizin.json").write_text(json.dumps(
+        {"index": {"N": {"naruto": {"title": "Naruto"}}}}), "utf-8")
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: onbellek)
+    animedepo.sifirla()
+    assert animedepo.search_animedepo("naruto") == [("naruto", "Naruto")]
+
+    ac(main_window, "TürkAnime", "naruto", "Naruto")
+    web.bekle("!!document.querySelector('.bolum-hata')", timeout=10000)
+    metin = web.js("document.querySelector('.bolum-hata').innerText")
+    assert "okunamadı" in metin and "bulunamadı" not in metin
+
+
+def test_arama_sonucu_detayi_bagli_aciyor_ve_geri(main_window, web, sahte_bolumler):
+    """Arama sonucu detayı kaynağa bağlı açar; "Geri" aramaya döner."""
+    cagrilar = sahte_bolumler({"TürkAnime": bolumler("cowboy-bebop", 2)})
+    main_window.show_page("trending")
+    main_window._web_ac("sonuc", {
+        "kaynak": "TürkAnime", "slug": "cowboy-bebop", "baslik": "Cowboy Bebop",
+        "kayit": {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None}})
+    assert main_window._current_page == "detail"
+    web.detay_bekle("TürkAnime", 2)
+    assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
+    assert main_window.detay.oturum.baglar == {"TürkAnime": "cowboy-bebop"}
+    assert cagrilar == [("TürkAnime", "cowboy-bebop")]
+    main_window._web_ac("geri", {})
+    assert main_window._current_page == "trending"
+    assert main_window.web.rota == "trending"

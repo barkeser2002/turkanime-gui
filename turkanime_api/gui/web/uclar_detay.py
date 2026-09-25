@@ -10,9 +10,9 @@ Durum Python'da, OTURUM olarak tutuluyor (`Oturum`): bölüm nesneleri
 yeni anime yeni bir oturum numarası (``rid``) alıyor; eski oturumun geç
 dönen işi `EskiIstek` fırlatıyor ve sayfa onu sessizce atıyor.
 
-Eşleştirme kuralları eski detay sayfasıyla aynı (`pages.detail`):
-başlık varyantları, eşik (0.95), elle seçimin otomatiği ezmesi, AniList'in
-(yalnızca bilgi) hiç bağlanmaması.
+Eşleştirme kuralları `eslestirme` modülünde: başlık varyantları, eşik
+(0.95), elle seçimin otomatiği ezmesi, AniList'in (yalnızca bilgi) hiç
+bağlanmaması.
 """
 from __future__ import annotations
 
@@ -22,7 +22,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...common import kutuphane
 from ...sources import kayit as kaynak_kaydi
-from .kopru import Kopru, uc
+from .eslestirme import eslesme_basliklari, kaynaklari_esle
+from .kopru import Kopru, UcHatasi, uc
+from .kunye import (
+    STATUS_LABELS, anime_title, clean_html, cover_url, genre_names,
+    kunye_birlestir, meta_line, score_of, studio_names,
+)
 
 # Arşiv kaynağı: künyesi arşivin kendisinde, yerel arşivde eşleştirme ağsız.
 ARSIV_KAYNAGI = "TürkAnime"
@@ -61,10 +66,6 @@ def dis_baglanti(anime: Dict[str, Any]) -> Optional[Dict[str, str]]:
 
 def kunye_verisi(anime: Dict[str, Any]) -> Dict[str, Any]:
     """Sayfanın künye bölümü: gösterime hazır alanlar."""
-    from ..qt.pages.detail import (
-        STATUS_LABELS, clean_html, genre_names, meta_line, studio_names,
-    )
-    from ..qt.pages.discover import anime_title, cover_url, score_of
     from .veri import tur_adi
 
     basliklar = anime.get("title") if isinstance(anime.get("title"), dict) else {}
@@ -102,54 +103,6 @@ def kaynak_bilgisi(ad: str) -> Dict[str, Any]:
 def oynatilabilir_kaynaklar() -> List[str]:
     from ..qt.sources_bridge import METADATA_ONLY, supported_sources
     return [ad for ad in supported_sources() if ad not in METADATA_ONLY]
-
-
-def kaynaklari_esle(basliklar: List[str], hedefler: List[str],
-                    bagli: Optional[set] = None, limit: Optional[int] = None
-                    ) -> Tuple[Dict[str, str], Dict[str, str], List[str]]:
-    """Kaynak başına EŞİĞİ GEÇEN en iyi adayı bul.
-
-    Dönüş ``(bağlar, eşleşen başlıklar, eşleşmeyenler)``. Yalnızca istenen
-    kaynaklar aranır (`arama_motoru`); eşleşme çıkmayan ama CEVAP veren
-    kaynaklar sıradaki başlık varyantıyla yeniden aranır (hata veren kaynağa
-    ikinci tur yalnızca bekleme demek). İlk tur tümden patlarsa istisna
-    çağırana gider. Kural eski detay sayfasının `_do_resolve`'uyla aynı.
-    """
-    from ...common.adapters import arama_motoru
-    from ..qt.pages.detail import (
-        AUTO_MATCH_LIMIT, ESLESME_SORGU_SINIRI, en_iyi_aday,
-    )
-    limit = limit or AUTO_MATCH_LIMIT
-    bagli = set(bagli or ())
-    baglar: Dict[str, str] = {}
-    eslesen: Dict[str, str] = {}
-    aranacak = [h for h in hedefler if kaynak_kaydi.kanonik_ad(h) not in bagli]
-    for tur, sorgu in enumerate([b for b in basliklar if b][:ESLESME_SORGU_SINIRI]):
-        if not aranacak:
-            break
-        try:
-            sonuc = arama_motoru(aranacak).search_all_sources_rich(
-                sorgu, limit_per_source=limit)
-        except Exception:
-            if tur == 0:
-                raise
-            break
-        hatalar = getattr(sonuc, "hatalar", None) or {}
-        cevaplayan = set()
-        for kaynak, kayitlar in (sonuc or {}).items():
-            if kaynak not in aranacak or kaynak_kaydi.kanonik_ad(kaynak) in bagli:
-                continue
-            if kaynak not in hatalar:
-                cevaplayan.add(kaynak)
-            slug, bulunan, _skor = en_iyi_aday(kayitlar, basliklar)
-            if slug:
-                baglar[kaynak] = slug
-                eslesen[kaynak] = bulunan
-                bagli.add(kaynak_kaydi.kanonik_ad(kaynak))
-        aranacak = [k for k in aranacak if k in cevaplayan and k not in baglar]
-    eslesmeyen = [h for h in hedefler if h not in baglar
-                  and kaynak_kaydi.kanonik_ad(h) not in bagli]
-    return baglar, eslesen, eslesmeyen
 
 
 def arsiv_yerel_mi() -> bool:
@@ -194,7 +147,6 @@ class DetayUclari:
 
     def ac_kesif(self, anime: Dict[str, Any]) -> int:
         """Keşif/izleme listesi kartı: tam künye, kaynağa bağlı değil."""
-        from ..qt.pages.discover import anime_title
         return self._yeni(anime, anime_title(anime or {}))
 
     def ac_sonuc(self, kaynak: str, slug: str, baslik: str,
@@ -322,7 +274,6 @@ class DetayUclari:
         if arsiv:
             try:
                 from ...sources import animedepo
-                from ..qt.pages.detail import kunye_birlestir
                 bilgi = animedepo.anime_bilgisi(arsiv)
                 if bilgi:
                     with self._kilit:
@@ -342,15 +293,19 @@ class DetayUclari:
     @uc("bolumler", arka=True)
     def bolumler(self, rid: int, kaynak: str) -> Dict[str, Any]:
         """Bağlı kaynağın bölümleri (+ geçmiş rozetleri, kaldığın yer)."""
-        from ..qt.sources_bridge import fetch_episodes
+        from ..qt import sources_bridge
         from ...common.episode_parser import extract_episode_info
         oturum = self._oturum(rid)
         kimlik = oturum.baglar.get(kaynak)
         if not kimlik:
-            raise ValueError(f"{kaynak_kaydi.gorunen_ad(kaynak)} bu animeye bağlı değil")
-        bolumler = [e for e in (fetch_episodes(kaynak, kimlik, oturum.baslik) or [])
-                    if isinstance(e, dict)]
-        from ..qt.pages.discover import cover_url
+            raise UcHatasi(f"{kaynak_kaydi.gorunen_ad(kaynak)} bu animeye bağlı değil")
+        try:
+            ham = sources_bridge.fetch_episodes(kaynak, kimlik, oturum.baslik)
+        except sources_bridge.UnsupportedSource as exc:
+            # "AniList yalnızca metadata kaynağı", "AnimeciX sayısal kimlik
+            # bekliyor": kullanıcıya yazılmış cümleler, olduğu gibi gitsin.
+            raise UcHatasi(str(exc)) from None
+        bolumler = [e for e in (ham or []) if isinstance(e, dict)]
         kapak = cover_url(oturum.anime) or ""
         for entry in bolumler:
             # Kitaplık anahtarı (bkz. `prefs.kitaplik_kimligi`): kaynak ve
@@ -396,7 +351,6 @@ class DetayUclari:
         Elle seçilen kaynağa DOKUNULMAZ: arama sürerken kullanıcı "İstediğin
         anime değil mi?"den doğru kaydı seçmiş olabilir.
         """
-        from ..qt.pages.detail import eslesme_basliklari
         oturum = self._oturum(rid)
         tum = kaynaklar is None
         hedefler = [k for k in (kaynaklar if kaynaklar is not None
@@ -425,10 +379,10 @@ class DetayUclari:
         from ..qt.sources_bridge import METADATA_ONLY
         oturum = self._oturum(rid)
         if kaynak_kaydi.kanonik_ad(kaynak) in METADATA_ONLY:
-            raise ValueError(f"{kaynak_kaydi.gorunen_ad(kaynak)} yalnızca bilgi "
+            raise UcHatasi(f"{kaynak_kaydi.gorunen_ad(kaynak)} yalnızca bilgi "
                              "kaynağı; bölüm için başka bir kaynaktan seçin")
         if not slug:
-            raise ValueError("kayıt seçilmedi")
+            raise UcHatasi("kayıt seçilmedi")
         with self._kilit:
             # Aynı arşivin eski adıyla ikinci bağ kalmasın.
             for eski in [a for a in oturum.baglar
@@ -440,16 +394,17 @@ class DetayUclari:
             oturum.oto.pop(kaynak, None)
             if not oturum.ilk_kaynak:
                 oturum.ilk_kaynak = kaynak
-        from ..qt.pages.detail import save_match
         from ..qt.workers import run_bg
-        run_bg(save_match, kaynak, str(slug), baslik or oturum.baslik)
+        from . import eslestirme
+        # Modülden çağrı anında okunuyor (testler sahteleyebilsin).
+        run_bg(eslestirme.save_match, kaynak, str(slug), baslik or oturum.baslik)
         return {"kaynak": kaynak, "kaynaklar": self._kaynaklar(oturum)}
 
     def _kayit(self, oturum: Oturum, kaynak: str, sira: int) -> Dict[str, Any]:
         try:
             return oturum.bolumler[kaynak][int(sira)]
         except (KeyError, IndexError, TypeError, ValueError):
-            raise ValueError("bölüm bulunamadı (liste yenilenmiş olabilir)") from None
+            raise UcHatasi("bölüm bulunamadı (liste yenilenmiş olabilir)") from None
 
     @uc("oynat")
     def oynat(self, rid: int, kaynak: str, sira: int) -> bool:
@@ -476,12 +431,11 @@ class DetayUclari:
 
     @uc("favori")
     def favori(self, rid: int, kaynak: str, deger: bool) -> bool:
-        from ..qt.pages.discover import cover_url
         from ..qt.workers import run_bg
         oturum = self._oturum(rid)
         kimlik = oturum.baglar.get(kaynak)
         if not kimlik:
-            raise ValueError("kitaplığa eklemek için anime bir kaynağa bağlanmalı")
+            raise UcHatasi("kitaplığa eklemek için anime bir kaynağa bağlanmalı")
         run_bg(kutuphane.favori_ayarla, kaynak, kimlik, bool(deger),
                oturum.baslik, cover_url(oturum.anime) or "")
         return bool(deger)

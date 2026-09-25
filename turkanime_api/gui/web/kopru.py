@@ -28,6 +28,15 @@ from typing import Any, Callable, Dict, Optional
 from PySide6.QtCore import QObject, Signal, Slot
 
 
+class UcHatasi(ValueError):
+    """Ucun kullanıcıya yazılmış hata cümlesi: sayfaya OLDUĞU GİBİ gider.
+
+    Tanınmayan istisnalar `insanlastir`'dan geçip "beklenmeyen hata: …"
+    oluyor; "bu anime bir kaynağa bağlı değil" gibi bilinen durumlar o önekle
+    hata gibi değil, bilgi gibi okunmalı.
+    """
+
+
 def uc(ad: Optional[str] = None, *, arka: bool = False):
     """Metodu köprü ucu olarak işaretle (ad verilmezse metodun adı)."""
     def isaretle(fn):
@@ -122,6 +131,8 @@ class Kopru(QObject):
                 return
             from ...common.hatalar import insanlastir
             kisa, ayrinti = insanlastir(exc)
+            if isinstance(exc, UcHatasi):
+                kisa = str(exc)
             print(f"[Web] {kayit.ad}: {ayrinti}")
             if isinstance(exc, (TypeError, AttributeError, KeyError)):
                 traceback.print_exc()     # büyük ihtimalle hata bizde
@@ -148,4 +159,4 @@ class Kopru(QObject):
             pass
 
 
-__all__ = ["Kopru", "uc", "json_metni"]
+__all__ = ["Kopru", "UcHatasi", "uc", "json_metni"]

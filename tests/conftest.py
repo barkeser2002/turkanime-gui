@@ -121,7 +121,7 @@ def _qt_env():
 def _stub_discover_sources(request, monkeypatch):
     """Keşif ve AniList ağ uçlarını varsayılan olarak sustur.
 
-    `DiscoverPage` ilk gösterimde veri çeker; `main_window` fixture'ı pencereyi
+    Ana sayfa (web) ilk gösterimde veri çeker; `main_window` fixture'ı pencereyi
     `show()` ettiği için ana sayfa açılır ve bu, hiçbir şey yapmayan testleri
     bile Jikan/AniList'e çıkarır. Kural 1 gereği bunu kesiyoruz; gerçek veri
     isteyen testler kendi sahtelerini bu fixture'ın üstüne yazabilir.
@@ -273,7 +273,7 @@ def _indirme_kuyrugu_yalitimi(monkeypatch, tmp_path_factory):
     her `MainWindow` açılışı da onu "duraklatıldı" işler olarak geri yüklerdi.
     `izole_ev` kullanan testler etkilenmez: onların kökü zaten geçici.
     """
-    from turkanime_api.gui.qt.pages import downloads
+    from turkanime_api.gui.qt import indirme as downloads
 
     asil = downloads.kuyruk_yolu
     gecici_kok = tmp_path_factory.getbasetemp().resolve()
@@ -486,6 +486,61 @@ def sahte_bolumler(monkeypatch):
 def web(qtbot, main_window):
     """Ana penceredeki web görünümünün sürücüsü (sayfa yüklenmiş)."""
     return WebSurucu(qtbot, main_window.web).hazir()
+
+
+# ── Köprü uçları (web sayfası olmadan) ───────────────────────────────────────
+class SahteKopru:
+    """`Kopru.yay` olaylarını kaydeden ikame (her thread'den güvenli)."""
+
+    def __init__(self):
+        self.olaylar: list = []
+        self._kilit = threading.Lock()
+
+    def yay(self, ad, veri=None):
+        with self._kilit:
+            self.olaylar.append((ad, veri))
+
+    def hepsi(self, ad: str) -> list:
+        with self._kilit:
+            return [v for a, v in self.olaylar if a == ad]
+
+    def son(self, ad: str):
+        olaylar = self.hepsi(ad)
+        return olaylar[-1] if olaylar else None
+
+
+@pytest.fixture
+def ayar_uclari(qtbot, monkeypatch):
+    """Ayarlar sayfasının Python tarafı (`AyarlarUclari`), sahte köprüyle.
+
+    ``kur(anilist=None, **servisler)``; dönen nesnenin ``kopru`` alanı olay
+    kaydıdır. Kurulumdaki kaynak kimliği uygulaması gerçekte koşar (ayar
+    dosyası testte zaten geçici).
+    """
+    from PySide6.QtCore import QObject, Signal
+    from turkanime_api.gui.web.uclar_ayarlar import AyarlarUclari
+
+    class SahteAniList(QObject):
+        auth_changed = Signal(object)
+        kullanici = None
+
+        def giris_var_mi(self):
+            return False
+
+    kurulanlar: list = []
+
+    def kur(anilist=None, **servisler):
+        kopru = SahteKopru()
+        uclar = AyarlarUclari(kopru, anilist=anilist or SahteAniList(), **servisler)
+        uclar.kopru = kopru
+        kurulanlar.append(uclar)
+        return uclar
+
+    yield kur
+    from PySide6.QtCore import QThreadPool
+    for uclar in kurulanlar:
+        uclar.arsiv_indirmeyi_durdur()
+    QThreadPool.globalInstance().waitForDone(5000)
 
 
 # ── Yerel HTTP sunucusu (dış servis yerine) ──────────────────────────────────
