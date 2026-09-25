@@ -247,14 +247,22 @@ def test_animecix_non_numeric_slug_message(qtbot, page, fake_fetch):
     qtbot.waitUntil(lambda: "AnimeciX sayısal" in page.lblStatus.text(), timeout=5000)
 
 
-def test_unbound_anime_opens_match_dialog(page, monkeypatch):
-    """Keşiften gelen kayıtta slug yok: kullanıcı çıkmaza girmemeli."""
+def test_unbound_anime_opens_match_dialog(qtbot, page, monkeypatch, fake_engine):
+    """Keşiften gelen kayıtta slug yok: kullanıcı çıkmaza girmemeli.
+
+    ESKİ DAVRANIŞ: diyalog aramadan ÖNCE, her seferinde açılıyordu. Artık önce
+    otomatik eşleştirme deneniyor; eşiği geçen aday yoksa diyalog açılıyor.
+    """
+    fake_engine({"TürkAnime": [{"slug": "baska", "title": "Bambaşka Bir Anime"}]})
     opened: list = []
     monkeypatch.setattr(page, "open_match_dialog", lambda: opened.append(True))
     page.show_anime(make_anime())          # kaynak/slug verilmedi
 
     page.load_episodes()
-    assert opened == [True]
+    qtbot.waitUntil(lambda: opened == [True], timeout=5000)
+    assert page._bindings == {}, "eşiği geçmeyen aday bağlandı"
+    assert "bağlı değil" in page.lblStatus.text()
+    assert page.btnEpisodes.isEnabled()
 
 
 # ── Yarış koruması ──────────────────────────────────────────────────────────

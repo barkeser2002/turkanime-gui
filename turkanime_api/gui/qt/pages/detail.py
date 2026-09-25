@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ....common.episode_parser import merge_episodes
+from ....common.title_match import baslik_normalize, siralama_skoru
 from ....sources.kayit import gorunen_ad, kanonik_ad
 from ..sources_bridge import (
     METADATA_ONLY, UnsupportedSource, fetch_episodes, supported_sources,
@@ -52,9 +53,28 @@ MAX_BADGES = 8
 # bulmak, tam listeyi taramak değil.
 MATCH_LIMIT_PER_SOURCE = 8
 
-# "Tüm kaynaklar" otomatik eşleştirmesinde kaynak başına aday sayısı. Kullanıcı
-# seçmiyor, en iyi adayı biz alıyoruz; fazlasını çekmek yalnızca bekleme demek.
-AUTO_MATCH_LIMIT = 1
+# Otomatik eşleştirmede kaynak başına aday sayısı. ESKİDEN 1'di ve bu, kaynağın
+# HAM ilk sonucunun bağlanması demekti: `Kaynak.ara` listeyi alaka sırasından
+# (`adapters._alakaya_gore_sirala`) ÖNCE kesiyor, sıralama tek elemanlı listeyi
+# sıralıyordu. "One Piece" araması AnimeciX'te "Koisuru One Piece"e bağlanıyordu.
+# Diyalogla aynı sayı: kaynakların çoğu zaten tek sayfa çekiyor, fazlası yalnızca
+# kesilmiyor; birebir başlık aday listesine girip sıralamayı kazanıyor.
+AUTO_MATCH_LIMIT = MATCH_LIMIT_PER_SOURCE
+
+# Otomatik bağlama eşiği (`siralama_skoru`, 0..1). Ölçümler (bkz. denetim):
+#   birebir / "One Piece (TV)" / "One Piece İzle"    1.00 / 0.99 / 0.99
+#   "[Oshi no Ko]" → arşivde "Hoshi no Koe"           0.91   ← başka anime
+#   "One Piece Fan Letter" / "ONE PIECE (Live Action)" 0.87 / 0.85
+#   "Koisuru One Piece" / "Naruto: Shippuuden"         0.74 / 0.77
+# Yanlış ve doğru adaylar 0.79-0.91 bandında iç içe; o bantta sessizce bağlamak
+# kullanıcıya YANLIŞ animenin bölümlerini oynatmak demek. 0.95 yalnızca
+# birebir ve ek-almış ("(TV)", "İzle") başlıkları geçiriyor; geçmeyen kaynak
+# bağlanmıyor, gerekirse diyalog açılıyor (bir tık, yanlış anime değil).
+OTOMATIK_ESLESME_ESIGI = 0.95
+
+# Eşleşme bulunamayınca sıradaki başlık varyantıyla (İngilizce, eş anlamlı…)
+# en çok kaç sorgu atılır. Ağ kaynağında her tur 25 sn'ye kadar sürebilir.
+ESLESME_SORGU_SINIRI = 3
 
 # Künyesi arşivin kendisinde duran kaynak (bkz. `animedepo.anime_bilgisi`).
 ARSIV_KAYNAGI = "TürkAnime"
@@ -210,11 +230,77 @@ def kunye_birlestir(anime: Dict[str, Any], ek: Dict[str, Any]) -> Dict[str, Any]
 
 
 def first_slug(items: Any) -> str:
-    """Arama sonucundan ilk geçerli slug (otomatik eşleştirme için)."""
+    """Arama sonucundan ilk geçerli slug (skorsuz; eşleştirmede KULLANILMIYOR).
+
+    Otomatik eşleştirme artık `en_iyi_slug` ile eşik uyguluyor; bu yardımcı
+    geriye dönük uyumluluk için duruyor.
+    """
     for item in (items or []):
         if isinstance(item, dict) and item.get("slug"):
             return str(item["slug"])
     return ""
+
+
+def eslesme_basliklari(anime: Dict[str, Any], yedek: str = "") -> List[str]:
+    """Otomatik eşleştirmede denenecek başlıklar (sıralı, tekrarsız).
+
+    Sıra: ekrandaki başlık (arama sorgusu/`_match_title`), romaji, İngilizce,
+    eş anlamlılar (AniList `synonyms`), Japonca. Arşiv başlıkları çoğunlukla
+    MAL/AniList romajisi; diğer siteler İngilizce ya da Türkçe adı
+    kullanabiliyor ("Frieren: Beyond Journey's End" romajiye karşı 0.31).
+    Normalize biçimi aynı olanlar ("Dr. Stone" / "Dr Stone") bir kez sayılır;
+    normalize edilince boş kalanlar (Japonca yazı: `siralama_skoru` onlara
+    zaten 0 veriyor) hiç girmez — ağ kaynağında boşa bir sorgu turu olurdu.
+    """
+    adaylar: List[Any] = [yedek]
+    basliklar = anime.get("title") if isinstance(anime, dict) else None
+    if isinstance(basliklar, dict):
+        adaylar += [basliklar.get("romaji"), basliklar.get("english")]
+    elif isinstance(basliklar, str):
+        adaylar.append(basliklar)
+    esler = anime.get("synonyms") if isinstance(anime, dict) else None
+    if isinstance(esler, list):
+        adaylar += esler
+    if isinstance(basliklar, dict):
+        adaylar.append(basliklar.get("native"))
+
+    out: List[str] = []
+    gorulen = set()
+    for aday in adaylar:
+        if not isinstance(aday, str) or not aday.strip():
+            continue
+        anahtar = baslik_normalize(aday)
+        if anahtar and anahtar not in gorulen:
+            gorulen.add(anahtar)
+            out.append(aday.strip())
+    return out
+
+
+def en_iyi_aday(items: Any, basliklar: List[str],
+                esik: float = OTOMATIK_ESLESME_ESIGI) -> Tuple[str, str, float]:
+    """Eşiği geçen en iyi aday: ``(slug, başlık, skor)``; yoksa ``("", "", skor)``.
+
+    Aday skoru, başlık varyantlarının EN İYİSİ (romajiyle değil İngilizce
+    adla birebir eşleşen de bağlanır). Eşit skorda kaynağın kendi sırası
+    korunur (ilk gelen kazanır).
+    """
+    en_iyi: Tuple[str, str, float] = ("", "", 0.0)
+    for item in (items or []):
+        if not isinstance(item, dict) or not item.get("slug"):
+            continue
+        baslik = str(item.get("title") or "")
+        skor = max((siralama_skoru(b, baslik) for b in basliklar if b), default=0.0)
+        if skor > en_iyi[2]:
+            en_iyi = (str(item["slug"]), baslik, skor)
+    if en_iyi[2] >= esik:
+        return en_iyi
+    return "", "", en_iyi[2]
+
+
+def en_iyi_slug(items: Any, basliklar: List[str],
+                esik: float = OTOMATIK_ESLESME_ESIGI) -> str:
+    """`en_iyi_aday`'ın yalnızca slug'ı: eşiği geçen aday yoksa ``""``."""
+    return en_iyi_aday(items, basliklar, esik)[0]
 
 
 def save_match(source: str, slug: str, title: str) -> bool:
@@ -246,11 +332,14 @@ def _badge(text: str) -> QLabel:
 class AnimeMatchDialog(QDialog):
     """Çok kaynakta arayıp doğru kaydı elle seçtiren diyalog.
 
-    Otomatik eşleştirme (kaynak başına `limit=1`) sık sık yanlış sezonu ya da
-    OVA'yı seçiyor; kullanıcıya kaçış yolu bırakmak eski GUI'de de vardı.
+    Otomatik eşleştirme eşiği geçen aday bulamazsa ya da kullanıcı başka
+    sezonu/OVA'yı istiyorsa kaçış yolu. ``ara=True``: diyalog açılır açılmaz
+    aramaya başlar — eskiden boş bir listeyle açılıp "Ara"ya basılmasını
+    bekliyordu, oysa sorgu (animenin adı) zaten dolu geliyordu.
     """
 
-    def __init__(self, query: str = "", parent: Optional[QWidget] = None):
+    def __init__(self, query: str = "", parent: Optional[QWidget] = None,
+                 ara: bool = False):
         super().__init__(parent)
         self.setWindowTitle("İstediğin anime değil mi?")
         self.resize(560, 480)
@@ -302,6 +391,9 @@ class AnimeMatchDialog(QDialog):
         layout.addLayout(buttons)
 
         self.lblStatus.info("Aramak için “Ara”ya basın.")
+        if ara:
+            # Sonuçlar kuyruklu sinyalle gelir; `exec()` döngüsü başlayınca işlenir.
+            self.search()
 
     # ── Arama ───────────────────────────────────────────────────────────────
     def search(self) -> None:
@@ -407,6 +499,10 @@ class DetailPage(QWidget):
         self._pending: Dict[str, Any] = {}
         # Bu istek için otomatik eşleştirme yapıldı mı (aynı aramayı tekrarlama)
         self._resolved_for = -1
+        # Otomatik bağlanan kaynak → eşleşen başlık ("Eşleşme: X → Y" bildirimi)
+        self._oto_eslesme: Dict[str, str] = {}
+        # Son "Tüm kaynaklar" eşleştirmesinde aday bulunamayan kaynaklar
+        self._eslesmeyen: List[str] = []
         # Yarış koruması: her yeni anime bu sayacı artırır, arka plandan dönen
         # her sonuç kendi kimliğiyle gelir ve eskiyse sessizce atılır.
         self._request_id = 0
@@ -518,6 +614,13 @@ class DetailPage(QWidget):
             lambda _index: self._on_source_changed(self.current_source()))
         actions.addWidget(self.cmbSource)
 
+        # Varsayılan kaynak arşiv: kayıtlı ilk kaynak alfabetik sırayla
+        # AnimeciX'ti (deneysel) ve bağsız her anime oraya düşüyordu. Arşiv
+        # yerel/önbellekli, eşleştirmesi ağsız ve kataloğu en geniş olanı.
+        varsayilan = self.cmbSource.findData(ARSIV_KAYNAGI)
+        if varsayilan >= 0:
+            self.cmbSource.setCurrentIndex(varsayilan)
+
         # Varsayılan KAPALI: tek kaynak, tek istek. İşaretlenince bütün
         # kaynaklarda otomatik eşleşme aranır ve bölümler tek listede birleşir —
         # bu, kaynak sayısı kadar ağ isteği demek, kullanıcı istemeden olmamalı.
@@ -597,6 +700,8 @@ class DetailPage(QWidget):
         self._busy = False           # önceki isteğin sonucu artık geçersiz
         self._pending = {}           # yarıda kalan toplama durumu da geçersiz
         self._resolved_for = -1
+        self._oto_eslesme = {}
+        self._eslesmeyen = []
         self.btnEpisodes.setEnabled(True)
         self._anime = dict(anime or {})
         self._match_title = anime_title(self._anime)
@@ -631,13 +736,22 @@ class DetailPage(QWidget):
         gorsel = (kayit or {}).get("image") if isinstance(kayit, dict) else None
         if isinstance(gorsel, str) and gorsel:
             anime["coverImage"] = {"large": gorsel}
+        if kanonik_ad(source) in METADATA_ONLY:
+            # AniList kartı bir METADATA kaydı: oynatılacak bir kaynak değil.
+            # Eskiden "AniList"e bağlanıyor, kutuya ekleniyor ve "Bölümleri
+            # Getir" metadata hatasıyla bitiyordu. Artık keşif kartı gibi
+            # açılıyor: bağ yok, bölümler istenince seçili oynatma kaynağında
+            # (varsayılan arşiv) başlığa göre otomatik eşleşme aranıyor.
+            rid = self.show_anime(anime)
+            self._match_title = title
+            self.lblStatus.info(
+                f"{gorunen_ad(source)} kaydı. Bölümleri getirince "
+                f"{gorunen_ad(self.current_source())} kaynağında eşleşme aranacak.")
+            return rid
         rid = self.show_anime(anime, source=source, slug=slug)
         self._match_title = title
-        # METADATA_ONLY kaynaklarda `_select_source` zaten uyarı yazdı; onu
-        # "bölümleri getirebilirsiniz" ile değiştirmek yanlış yönlendirme olur.
-        if source not in METADATA_ONLY:
-            self.lblStatus.info(
-                f"{gorunen_ad(source)} kaydı seçildi. Bölümleri getirebilirsiniz.")
+        self.lblStatus.info(
+            f"{gorunen_ad(source)} kaydı seçildi. Bölümleri getirebilirsiniz.")
         return rid
 
     def apply_match(self, source: str, slug: str, title: str) -> None:
@@ -800,15 +914,14 @@ class DetailPage(QWidget):
 
     # ── Bölüm yükleme ───────────────────────────────────────────────────────
     def load_episodes(self) -> None:
-        """Seçili kaynak(lar)dan bölümleri arka planda getir."""
-        if not self._bindings:
-            # Keşiften gelen kayıtta kaynak/slug yok (MyAnimeList/AniList kimliği
-            # TürkAnime kaynaklarına karşılık gelmiyor). Kullanıcıyı çıkmaza
-            # sokmak yerine eşleştirme diyaloğunu başlık dolu açıyoruz.
-            self.lblStatus.info("Bu anime bir kaynağa bağlı değil, eşleştirin.")
-            self.open_match_dialog()
-            if not self._bindings:
-                return
+        """Seçili kaynak(lar)dan bölümleri arka planda getir.
+
+        Kaynağa bağlı olmayan kayıt (keşif/izleme listesi kartı, AniList arama
+        sonucu) ÖNCE otomatik eşleştirmeden geçer: eskiden diyalog her seferinde
+        açılıyor, boş listeyle "Ara"ya basılmasını bekliyordu. Diyalog artık
+        yalnızca hiçbir kaynakta eşiği geçen aday çıkmazsa, dolu ve aramaya
+        başlamış olarak açılıyor (bkz. `_elle_eslestir`).
+        """
         if self._busy:
             self.lblStatus.info("Önceki istek sürüyor, lütfen bekleyin…")
             return
@@ -826,9 +939,14 @@ class DetailPage(QWidget):
         self._busy = True
         self.btnEpisodes.setEnabled(False)
         if need_resolve:
-            self.lblStatus.info("Kaynaklarda eşleşme aranıyor…")
+            self.lblStatus.info(
+                "Kaynaklarda eşleşme aranıyor…" if want_all
+                else f"{gorunen_ad(source)} kaynağında eşleşme aranıyor…")
+            # Başlık varyantları GUI thread'inde, `_anime`'nin o anki hâlinden;
+            # arka plan işi sayfanın durumuna dokunmaz.
             run_bg(self._do_resolve, rid, self._match_title,
-                   dict(self._bindings), want_all, source)
+                   dict(self._bindings), want_all, source,
+                   eslesme_basliklari(self._anime, self._match_title))
             return
         self._dispatch(rid, self._targets(want_all, source))
 
@@ -862,36 +980,65 @@ class DetailPage(QWidget):
             run_bg(self._do_load, rid, source, slug, self._match_title)
 
     def _do_resolve(self, rid: int, title: str, known: Dict[str, str],
-                    want_all: bool, wanted: str) -> None:
-        """Arka plan: kaynak başına en iyi adayı bulup slug'a bağla."""
-        from ....common.adapters import SearchEngine
+                    want_all: bool, wanted: str,
+                    basliklar: Optional[List[str]] = None) -> None:
+        """Arka plan: kaynak başına EŞİĞİ GEÇEN en iyi adayı bulup slug'a bağla.
 
-        try:
-            results = SearchEngine().search_all_sources_rich(
-                title, limit_per_source=AUTO_MATCH_LIMIT)
-        except Exception as exc:
-            self.signals.emit_error_item((rid, f"Kaynak araması başarısız: {exc}"))
-            return
+        Yalnızca bağlanması istenen kaynaklar aranır (`arama_motoru`): tek
+        kaynakta o kaynak, "Tüm kaynaklar"da henüz bağlı olmayan oynatılabilir
+        kaynaklar — AniList (metadata) hiçbir zaman. Eşiği geçen aday yoksa
+        kaynak BAĞLANMAZ (eskiden ham ilk sonuç bağlanıyordu); sıradaki başlık
+        varyantıyla yalnızca cevap verip eşleşme çıkmayan kaynaklar yeniden
+        aranır — hata veren/yanıtsız kaynağa ikinci tur yalnızca bekleme demek.
+        """
+        from ....common.adapters import arama_motoru
 
+        basliklar = [b for b in (basliklar or [title]) if b] or [title]
         bindings = dict(known)
         supported = set(supported_sources())
         # Kanonik adla da bak: eski "AnimeDepo" bağlantısı varken aramadan
         # gelen "TürkAnime" aynı arşiv — ikinci kez bağlanırsa aynı bölümler
         # "Tüm kaynaklar" listesine iki kaynakmış gibi girer.
         bagli = {kanonik_ad(b) for b in bindings}
-        for source, items in (results or {}).items():
-            if source in bindings or source in METADATA_ONLY:
-                continue
-            if kanonik_ad(source) in bagli:
-                continue
-            if source not in supported:
-                continue                      # aramada var ama oynatması yok
-            if not want_all and source != wanted:
-                continue
-            slug = first_slug(items)
-            if slug:
-                bindings[source] = slug
-        self.sources_resolved.emit((rid, bindings, want_all, wanted))
+        if want_all:
+            hedefler = sorted(s for s in supported if s not in METADATA_ONLY)
+        else:
+            hedefler = [wanted]
+        hedefler = [s for s in hedefler if s in supported and s not in bindings
+                    and s not in METADATA_ONLY and kanonik_ad(s) not in bagli]
+
+        aranacak = list(hedefler)
+        eslesen: Dict[str, str] = {}
+        for tur, sorgu in enumerate(basliklar[:ESLESME_SORGU_SINIRI]):
+            if not aranacak:
+                break
+            try:
+                results = arama_motoru(aranacak).search_all_sources_rich(
+                    sorgu, limit_per_source=AUTO_MATCH_LIMIT)
+            except Exception as exc:
+                if tur == 0:
+                    self.signals.emit_error_item(
+                        (rid, f"Kaynak araması başarısız: {exc}"))
+                    return
+                break                    # yedek sorgu patladı: eldekiyle dön
+            hatalar = getattr(results, "hatalar", None) or {}
+            cevaplayan = set()
+            for source, items in (results or {}).items():
+                if source not in aranacak or kanonik_ad(source) in bagli:
+                    continue
+                if source not in hatalar:
+                    cevaplayan.add(source)
+                slug, eslesen_baslik, _skor = en_iyi_aday(items, basliklar)
+                if slug:
+                    bindings[source] = slug
+                    eslesen[source] = eslesen_baslik
+                    bagli.add(kanonik_ad(source))
+            aranacak = [s for s in aranacak
+                        if s in cevaplayan and s not in bindings]
+
+        eslesmeyen = [s for s in hedefler if s not in bindings]
+        self.sources_resolved.emit((rid, bindings, want_all, wanted,
+                                    {"eslesen": eslesen, "eslesmeyen": eslesmeyen}))
 
     def _on_sources_resolved(self, payload) -> None:
         """GUI thread'i: çözülen bağlantıları sakla ve yüklemeyi başlat.
@@ -902,22 +1049,53 @@ class DetailPage(QWidget):
         aynı anime içindeki bu yarışı `_manual` korur.
         """
         try:
-            rid, bindings, want_all, wanted = payload
+            rid, bindings, want_all, wanted, *ek = payload
         except (TypeError, ValueError):
             return
         if rid != self._request_id:
             return
+        rapor = ek[0] if ek and isinstance(ek[0], dict) else {}
         for source, slug in (bindings or {}).items():
             if source in self._manual:
                 continue               # kullanıcının seçimi üstündür
             self._bindings[source] = slug
+        for source, baslik in (rapor.get("eslesen") or {}).items():
+            if source not in self._manual:
+                self._oto_eslesme[source] = baslik
+        self._eslesmeyen = [s for s in (rapor.get("eslesmeyen") or [])
+                            if s not in self._bindings]
         if want_all:
             self._resolved_for = rid       # aynı anime için bir daha arama
         # Tek kaynak modunda elle eşleştirme kaynağı da değiştirmiş olabilir;
         # istek, isteği başlatan eski seçime değil kullanıcının seçtiğine gider.
         if not want_all and self.current_source() in self._manual:
             wanted = self.current_source()
-        self._dispatch(rid, self._targets(want_all, wanted))
+        targets = self._targets(want_all, wanted)
+        if not targets and not self._bindings:
+            # Hiçbir kaynakta eşiği geçen aday yok ve anime hiçbir yere bağlı
+            # değil: tahmin edip yanlış animeyi oynatmak yerine kullanıcıya sor.
+            self._elle_eslestir(rid)
+            return
+        self._dispatch(rid, targets)
+
+    def _elle_eslestir(self, rid: int) -> None:
+        """Otomatik eşleşme yok: diyaloğu dolu ve aramaya başlamış aç.
+
+        Kullanıcı bir kayıt seçerse yükleme kaldığı yerden sürer; `_manual`
+        ve `_resolved_for` ayarlı olduğu için ikinci bir otomatik arama yok.
+        """
+        self._busy = False
+        self.btnEpisodes.setEnabled(True)
+        self.lblStatus.info("Otomatik eşleşme bulunamadı; doğru kaydı seçin.")
+        self.open_match_dialog()
+        if rid != self._request_id:
+            return                     # diyalog açıkken başka animeye geçildi
+        if not self._bindings:
+            self.lblStatus.error(
+                "Bu anime bir kaynağa bağlı değil: “İstediğin anime değil mi?” "
+                "ile eşleştirin.")
+            return
+        self.load_episodes()
 
     def _do_load(self, rid: int, source: str, slug: str, title: str) -> None:
         """Arka plan thread'i — sonucu KENDİ istek kimliğiyle geri yollar.
@@ -985,9 +1163,17 @@ class DetailPage(QWidget):
                        f"{len(episodes)} kaynaktan {len(loaded)} tanesi yüklendi.")
             if failed:
                 message += f" Yüklenemeyen: {', '.join(gorunen_ad(s) for s in failed)}."
-            self.lblStatus.ok(message)
         else:
-            self.lblStatus.ok(f"{total} bölüm bulundu.")
+            message = f"{total} bölüm bulundu."
+        if self._eslesmeyen:
+            # Sessizce atlanan kaynak "orada yok" mu "bulunamadı" mı belli olsun.
+            message += (" Eşleşme bulunamayan: "
+                        f"{', '.join(gorunen_ad(s) for s in self._eslesmeyen)}.")
+        if source in self._oto_eslesme and source not in self._manual:
+            # Otomatik bağlanan kaydı göster: yanlışsa kullanıcı "İstediğin
+            # anime değil mi?" ile düzeltebileceğini bilsin.
+            message += f" Eşleşme: {gorunen_ad(source)} → {self._oto_eslesme[source]}"
+        self.lblStatus.ok(message)
         self.episodes_ready.emit(source, slug, title, episodes)
 
     def _on_failed(self, payload) -> None:
@@ -1003,12 +1189,16 @@ class DetailPage(QWidget):
 
     # ── Eşleşme diyaloğu ────────────────────────────────────────────────────
     def open_match_dialog(self) -> None:
-        dialog = AnimeMatchDialog(self._match_title or anime_title(self._anime), self)
+        # Sorgu dolu geliyor; diyalog aramaya kendiliğinden başlar (fazladan
+        # "Ara" tıklaması yok). Kullanıcı sorguyu değiştirip yeniden arayabilir.
+        dialog = AnimeMatchDialog(self._match_title or anime_title(self._anime),
+                                  self, ara=True)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selection:
             self.apply_match(*dialog.selection)
 
 
 __all__ = ["DetailPage", "AnimeMatchDialog", "clean_html", "studio_names",
            "genre_names", "meta_line", "tarih_metni", "kunye_birlestir",
-           "save_match", "episode_total", "first_slug",
-           "MATCH_LIMIT_PER_SOURCE", "AUTO_MATCH_LIMIT", "ARSIV_KAYNAGI"]
+           "save_match", "episode_total", "first_slug", "en_iyi_slug",
+           "en_iyi_aday", "eslesme_basliklari", "MATCH_LIMIT_PER_SOURCE",
+           "AUTO_MATCH_LIMIT", "OTOMATIK_ESLESME_ESIGI", "ARSIV_KAYNAGI"]

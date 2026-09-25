@@ -10,7 +10,7 @@ arama ucuna (`objects.Anime.arama_yap`) gidiyordu. TürkAnime artık sitenin
 statik arşivinde, ağsız aranıyor (`sources/animedepo.py`).
 """
 
-from typing import Callable, List, Tuple, Optional, Dict, Any
+from typing import Callable, Iterable, List, Tuple, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
@@ -140,6 +140,9 @@ class SearchEngine:
         if timeout is None:
             timeout = OVERALL_SEARCH_TIMEOUT
         sonuc: Dict[str, Any] = {}
+        if not self.adapters:
+            # Boş kaynak kümesi (bkz. `arama_motoru`): `max_workers=0` hata verir.
+            return sonuc
         havuz = ThreadPoolExecutor(max_workers=len(self.adapters))
         try:
             futures = {havuz.submit(gorev, name): name for name in self.adapters}
@@ -237,3 +240,28 @@ class SearchEngine:
 
         sonuc = self._paralel_ara(_one)
         return AramaSonuclari(sonuc, hatalar=dict(hatalar))
+
+
+def arama_motoru(kaynaklar: Optional[Iterable[str]] = None) -> "SearchEngine":
+    """`SearchEngine` örneği; ``kaynaklar`` verilirse YALNIZCA onlar aranır.
+
+    Detay sayfasının otomatik eşleştirmesi tek kaynak (ya da henüz bağlanmamış
+    birkaç kaynak) için eşleşme arıyor; eskiden her seferinde bütün kaynaklar
+    aranıyor, istenmeyenlerin sonucu atılıyordu — yani 25 sn'ye kadar süren
+    ağ turu çoğunlukla hiç kullanılmayan kaynaklar için yapılıyordu. Arşiv
+    (TürkAnime) tek başına istendiğinde arama ağa hiç çıkmıyor.
+
+    Adlar kanonik ada çevrilerek karşılaştırılır ("AnimeDepo" → TürkAnime).
+    `SearchEngine` modül özniteliği ÇAĞRI anında okunuyor: testler sınıfı
+    sahte bir motorla değiştirebiliyor. Sahte motorun `adapters` sözlüğü
+    yoksa kısıt uygulanmaz (sahte zaten kendi sonucunu döndürüyor).
+    """
+    motor = SearchEngine()
+    if kaynaklar is None:
+        return motor
+    adaptorler = getattr(motor, "adapters", None)
+    if isinstance(adaptorler, dict):
+        istenen = {kayit.kanonik_ad(ad) for ad in kaynaklar}
+        motor.adapters = {ad: adaptor for ad, adaptor in adaptorler.items()
+                          if kayit.kanonik_ad(ad) in istenen}
+    return motor

@@ -540,6 +540,10 @@ def test_baglanmamis_kaynak_secilince_eslesme_araniyor(qtbot, detail, fake_engin
         detail.load_episodes()
 
     assert searches == [("Cowboy Bebop", detail_mod.AUTO_MATCH_LIMIT)]
+    # ESKİ HATA: limit 1'di; kaynak listeyi alaka sıralamasından ÖNCE kestiği
+    # için ham ilk sonuç ("Koisuru One Piece") bağlanıyordu. Birden çok aday
+    # gelmeli ki birebir başlık sıralamayı kazanabilsin.
+    assert detail_mod.AUTO_MATCH_LIMIT > 1
     assert calls == [("AnimeciX", "17")], "yanlış kaynağın slug'ı kullanıldı"
     assert set(blocker.args[3]) == {"AnimeciX"}
 
