@@ -44,16 +44,18 @@ def log_error(e):
 
 
 def _hata_sebebi(e: BaseException) -> None:
-    """Arşiv hatasının Türkçe sebebini göster ("uzak aynalar yanıt vermedi…").
+    """Kaynak hatasının Türkçe sebebini göster ("uzak aynalar yanıt vermedi…",
+    "TRAnimeİzle çerez gerekli…", "AnimeciX: … zaman aşımı").
 
-    Yalnızca arşiv hataları (`ArsivHatasi` ailesi): mesajları kullanıcıya
-    yazılmış Türkçe cümleler. Rastgele bir istisnanın metni ("division by
-    zero") kullanıcıya bir şey anlatmaz, o yalnızca error.log'a gider.
+    Yalnızca kaynak hataları (`common.hatalar.KaynakHatasi` ailesi; arşivin
+    `ArsivHatasi`'sı da onun alt sınıfı): mesajları kullanıcıya yazılmış
+    Türkçe cümleler. Rastgele bir istisnanın metni ("division by zero")
+    kullanıcıya bir şey anlatmaz, o yalnızca error.log'a gider.
     Kaçış şart: mesajda yol ve "[...]" olabilir, rich onu biçim etiketi sanar.
     """
     from rich.markup import escape
-    from ..common.arsiv_paketi import ArsivHatasi
-    if isinstance(e, ArsivHatasi):
+    from ..common.hatalar import KaynakHatasi
+    if isinstance(e, KaynakHatasi):
         rprint(f"[yellow]{escape(str(e))}[/yellow]")
 
 

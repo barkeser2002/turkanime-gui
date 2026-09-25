@@ -19,6 +19,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 # sınır: dolduğunda arama elindeki sonuçlarla döner (bkz. `_paralel_ara`).
 OVERALL_SEARCH_TIMEOUT = 25
 from ..sources import kayit
+from .hatalar import sebep_metni
 from .title_match import siralama_skoru
 
 
@@ -61,7 +62,14 @@ class AramaSonuclari(dict):
 
 
 def _hata_metni(exc: BaseException) -> str:
-    return str(exc) or type(exc).__name__
+    """Arama sayfasının "aranamayan" satırı için kısa Türkçe sebep.
+
+    Kaynak hatası (`KaynakHatasi`: arşiv, çerez, engel) metniyle aynen geçer;
+    ham ağ hatası ("HTTPSConnectionPool(...): Max retries exceeded…")
+    "sunucuya ulaşılamadı", "zaman aşımı", "Cloudflare engeli" gibi sebebe
+    çevrilir — kullanıcı sorunun kendi ağında mı sitede mi olduğunu görsün.
+    """
+    return sebep_metni(exc)
 
 
 class KaynakAdaptoru:

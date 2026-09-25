@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from ....common import kutuphane
 from ....common.episode_parser import merge_episodes
+from ....common.hatalar import ham_metin, sebep_metni
 from ....common.title_match import baslik_normalize, siralama_skoru
 from ....sources.kayit import gorunen_ad, kanonik_ad
 from ..sources_bridge import (
@@ -1035,7 +1036,7 @@ class DetailPage(QWidget):
             except Exception as exc:
                 if tur == 0:
                     self.signals.emit_error_item(
-                        (rid, f"Kaynak araması başarısız: {exc}"))
+                        (rid, f"Kaynak araması başarısız: {sebep_metni(exc)}"))
                     return
                 break                    # yedek sorgu patladı: eldekiyle dön
             hatalar = getattr(results, "hatalar", None) or {}
@@ -1128,7 +1129,11 @@ class DetailPage(QWidget):
             self.source_loaded.emit((rid, source, [], str(exc)))
             return
         except Exception as exc:
-            self.source_loaded.emit((rid, source, [], f"Bölümler alınamadı: {exc}"))
+            # Ham metin ("HTTPSConnectionPool(host=…): Max retries exceeded …
+            # (Caused by ProxyError(…))") Türkçe sebebe çevrilir; konsolda kalır.
+            print(f"[Detay] {source} bölümleri alınamadı: {ham_metin(exc)}")
+            self.source_loaded.emit(
+                (rid, source, [], f"Bölümler alınamadı: {sebep_metni(exc)}"))
             return
         self.source_loaded.emit((rid, source, list(episodes or []), ""))
 

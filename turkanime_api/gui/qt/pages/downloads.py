@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ....common.dosya_adi import (
     bolum_hedefi, oynatilabilir_dosya, yarim_dosyalari_sil,
 )
+from ....common.hatalar import insanlastir
 from .. import prefs
 from ..widgets import StatusLabel
 from ..workers import run_bg, set_long_task_limit
@@ -39,6 +40,9 @@ DURUM_IPTAL = "iptal edildi"
 
 # Bitmiş sayılan durumlar: satır temizlenebilir, yeniden denenebilir.
 BITMIS_DURUMLAR = (DURUM_TAMAMLANDI, DURUM_HATA, DURUM_IPTAL)
+
+# Satırdaki hata metninin üst sınırı; ham metnin tamamı araç ipucunda.
+HATA_METNI_SINIRI = 120
 
 # Eski GUI ile aynı: bir otomatik tekrar hakkı. Kaynak sunucuları sık sık
 # geçici 5xx/timeout veriyor; ikinci deneme çoğu zaman tutuyor.
@@ -117,6 +121,8 @@ class _Is:
         # Bitişte diskte doğrulanan dosya ("Oynat" onu açar) ve serinin klasörü.
         self.dosya: Optional[str] = None
         self.klasor: str = ""
+        # Son hatanın ham metni (satırın araç ipucu); satırda kısa Türkçe sebep.
+        self.ayrinti: str = ""
         # Bitişi iki thread de yazabiliyor (iptal GUI'den, sonuç işçiden);
         # kilit olmadan aynı iş iki kez "bitti" diye raporlanabilir.
         self.kilit = threading.Lock()
@@ -256,6 +262,11 @@ class DownloadManager(QObject):
         job = self._jobs.get(task_id)
         return job.klasor if job else ""
 
+    def ayrinti(self, task_id: str) -> str:
+        """Başarısız işin ham hata metni (satırın araç ipucu)."""
+        job = self._jobs.get(task_id)
+        return job.ayrinti if job else ""
+
     def kayit(self, task_id: str) -> Optional[Dict[str, Any]]:
         """İşin bölüm kaydı (`entry`); "Oynat" bununla oynatma yoluna gider."""
         job = self._jobs.get(task_id)
@@ -339,7 +350,7 @@ class DownloadManager(QObject):
             video = bolum.best_video(by_res=tercih.max_res,
                                      early_subset=tercih.aday_sayisi)
         except Exception as exc:
-            self._bitir(job, False, DURUM_HATA, f"video hatası: {exc}")
+            self._hata_bitir(job, exc)
             return
         if video is None:
             self._bitir(job, False, DURUM_HATA, "çalışan video bulunamadı")
@@ -389,8 +400,23 @@ class DownloadManager(QObject):
 
         if job.iptal.is_set():
             self._bitir(job, False, DURUM_IPTAL)
+        elif son_hata is not None:
+            self._hata_bitir(job, son_hata)
         else:
-            self._bitir(job, False, DURUM_HATA, f"hata: {son_hata}")
+            self._bitir(job, False, DURUM_HATA, "indirme tamamlanamadı")
+
+    def _hata_bitir(self, job: _Is, exc: BaseException) -> None:
+        """İşi hatayla bitir: satıra kısa Türkçe sebep, ham metin araç ipucuna.
+
+        Eskiden satırda "hata: HTTP Error 403: Forbidden" ya da sayfa dolusu
+        "HTTPSConnectionPool(...)" yazıyordu; kaynak hatası (Cloudflare, çerez,
+        arşivde kayıt yok) ise "video hatası: …" önekine gömülüyordu.
+        """
+        kisa, ayrinti = insanlastir(exc)
+        if len(kisa) > HATA_METNI_SINIRI:
+            kisa = kisa[:HATA_METNI_SINIRI - 1] + "…"
+        job.ayrinti = ayrinti
+        self._bitir(job, False, DURUM_HATA, kisa)
 
     @staticmethod
     def _siradaki_aday(bolum, video, tercih, basarisiz: set, output: str):
@@ -589,6 +615,9 @@ class DownloadsPage(QWidget):
         row = self._rows.get(task_id)
         if row is not None:
             row.set_done(ok, message)
+            # Ham metin (yt-dlp/requests) araç ipucunda: hata bildirimi için
+            # kopyalanabilsin, satırı doldurmasın.
+            row.lblDetail.setToolTip("" if ok else self.manager.ayrinti(task_id))
         self._refresh_status()
 
     def _oynat(self, task_id: str) -> None:

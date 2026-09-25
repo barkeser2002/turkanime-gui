@@ -36,6 +36,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, TypeVar
 
+# `hatalar` da yalnızca standart kütüphane: bu modülün sunucu imajındaki
+# hafifliği bozulmaz.
+from .hatalar import KaynakHatasi
+
 DIZIN_DOSYASI = "dizin.json"
 MANIFEST_DOSYASI = "KAYNAK.json"
 
@@ -70,8 +74,13 @@ ASAMA_ACMA = "aciliyor"
 ASAMA_YERLESTIRME = "yerlestiriliyor"
 
 
-class ArsivHatasi(RuntimeError):
-    """Arşiv indirilemedi, açılamadı ya da geçersiz çıktı."""
+class ArsivHatasi(KaynakHatasi):
+    """Arşiv indirilemedi, açılamadı ya da geçersiz çıktı.
+
+    `KaynakHatasi` (dolayısıyla hâlâ `RuntimeError`): arşiv mesajları
+    kullanıcıya yazılmış cümleler; arayüz ve CLI kaynak hatalarını tek
+    aileyle (`common.hatalar`) tanıyıp metnini olduğu gibi gösteriyor.
+    """
 
 
 class GuvensizUye(ArsivHatasi):

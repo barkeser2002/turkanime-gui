@@ -120,6 +120,12 @@ class Kaynak:
     deneysel: bool = False
     # `sources.<modul>` içindeki eski adaptör sınıfı (PROVIDERS["adapter"]).
     adaptor_sinifi: Optional[str] = None
+    # Akış listesi BOŞ geldiğinde kullanıcıya söylenecek sebep (bkz.
+    # `akis_saglayici`). Yalnızca boş listenin anlamı KESİN olan kaynakta
+    # dolu: arşiv okunduysa ve bölümün oynatılabilir kaydı yoksa bu bir
+    # "hata" değil gerçek. Canlı sitelerde boş liste "site bozuldu" da
+    # olabilir; orada eski "çalışan video bulunamadı" kalır.
+    bos_akis_mesaji: str = ""
 
     # ── Uçlar ───────────────────────────────────────────────────────────────
     def uclar(self) -> KaynakUclari:
@@ -234,10 +240,33 @@ def _tranime() -> KaynakUclari:
     def bolumler(slug: str) -> List[Tuple[str, str]]:
         return [(e.slug, e.title) for e in (get_anime_episodes(slug) or [])]
 
+    def ara(sorgu: str, limit: int = 10) -> List[Tuple[str, str]]:
+        sonuc = search_tranime(sorgu, limit)
+        if not sonuc and not _tranime_cerezi_var():
+            # Çerezsiz yalnızca harf listesinde bulanık arama yapılabiliyor;
+            # "0 sonuç" demek yanlış olur, arama sayfası sebebi göstersin.
+            from ..common.hatalar import OturumGerekli
+            raise OturumGerekli(
+                "TRAnimeİzle çerez istiyor: çerezsiz tam arama yapılamıyor. "
+                "Ayarlar > Kaynaklar'dan TRAnimeİzle çerezini girin.")
+        return sonuc
+
     def akislar(ep_slug: str) -> List[Dict[str, Any]]:
         detay = get_episode_details(ep_slug)
         if not detay:
-            return []
+            # `get_episode_details` bot kontrolünü (ve ağ hatasını) konsola
+            # basıp None dönüyor; boş liste "video yok" diye raporlanıyordu.
+            # Kaynak modülüne dokunmadan (kaynak işi durduruldu) sebep burada
+            # çerezin varlığından çıkarılıyor.
+            from ..common.hatalar import KaynakHatasi, OturumGerekli
+            if not _tranime_cerezi_var():
+                raise OturumGerekli(
+                    "TRAnimeİzle çerez gerekli: bölüm sayfası bot kontrolüne "
+                    "takıldı. Ayarlar > Kaynaklar'dan TRAnimeİzle çerezini girin.")
+            raise KaynakHatasi(
+                "TRAnimeİzle bölüm sayfası okunamadı: çerezin süresi dolmuş, "
+                "bot kontrolü ya da ağ hatası olabilir. Ayarlar'dan çerezi "
+                "yenileyip yeniden deneyin (ayrıntı konsolda).")
         out: List[Dict[str, Any]] = []
         for s in detay.get_sources():
             iframe = s.get_iframe()
@@ -245,7 +274,13 @@ def _tranime() -> KaynakUclari:
                 out.append({"url": iframe, "label": s.name, "type": "iframe"})
         return out
 
-    return KaynakUclari(search_tranime, bolumler, akislar)
+    return KaynakUclari(ara, bolumler, akislar)
+
+
+def _tranime_cerezi_var() -> bool:
+    """TRAnimeİzle oturum çerezi süreçte yüklü mü (`kimlikler` basıyor)."""
+    from . import tranime
+    return bool(getattr(tranime, "SESSION_COOKIE", None))
 
 
 def _openani() -> KaynakUclari:
@@ -286,7 +321,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("TürkAnime", "TürkAnime (arşiv)", "TA", "#ffd93d", "ANIMEDEPO",
            _turkanime_arsivi, modul="animedepo", cli_kodu="turkanime",
            takma_adlar=("AnimeDepo",), bolum_slugu=_arsiv_bolum_slugu,
-           hazirlik=_arsiv_hazirligi),
+           hazirlik=_arsiv_hazirligi,
+           bos_akis_mesaji="arşivde bu bölüm için oynatılabilir kayıt yok; "
+                           "başka bir kaynak deneyin"),
     Kaynak("AnimeciX", "AnimeciX", "CX", "#ff6b6b", "ANIMECIX", _animecix,
            modul="animecix", cli_kodu="animecix",
            kimlik_hatasi=_animecix_kimlik_hatasi, taranabilir=True, deneysel=True),
@@ -448,33 +485,45 @@ def kaydet(kaynak: Kaynak) -> None:
     KAYNAKLAR = yeni
 
 
-def akis_saglayici(akislar: Akislar, bolum_id: str) -> Callable[[str], List[Dict[str, Any]]]:
-    """Bölüm kimliğini kapatan akış sağlayıcı; kaynak hatası boş listeye döner.
+def akis_saglayici(akislar: Akislar, bolum_id: str, etiket: str = "",
+                   bos_mesaji: str = "") -> Callable[[str], List[Dict[str, Any]]]:
+    """Bölüm kimliğini kapatan akış sağlayıcı; hata SEBEBİYLE yükselir.
 
     `AdapterBolum` sağlayıcıyı kendi `url`'siyle çağırıyor; bazı kaynaklarda
     url ile kimlik farklı (OpenAnime: tam adres ↔ "anime/bolum"), bu yüzden
-    kimlik burada kapatılıp url yok sayılıyor. Bozuk bir kaynak bölüm
-    listesini ya da oynatma akışını çökertmesin diye hata yutuluyor —
-    `best_video` boş listeyi "hiçbiri çalışmıyor" olarak raporluyor.
+    kimlik burada kapatılıp url yok sayılıyor.
 
-    İSTİSNA: arşiv hataları (`common.arsiv_paketi.ArsivHatasi` ailesi,
-    TürkAnime'nin `ArsivOkunamadi`'sı) yutulmaz. Onlar "bu bölümün videosu
-    yok" değil "arşive ulaşılamadı" demek ve mesajları kullanıcıya yazılmış
-    Türkçe cümleler; yutulunca çevrimdışı kullanıcı her bölümde "çalışan
-    video bulunamadı" görüyordu. Arayüz (`_play_blocking`, indirme işçisi)
-    ve CLI bu hatayı yakalayıp metnini gösteriyor. Import fonksiyon içinde:
-    `arsiv_paketi` yalnızca standart kütüphane kullanıyor, ama bu modül
-    bilerek hafif (sunucu imajı; bkz. modül başlığı) ve import anında
-    hiçbir şey çekmiyor.
+    ESKİDEN arşiv dışındaki her hata boş listeye çevriliyordu: `best_video`
+    boş listeyi "hiçbiri çalışmıyor" diye raporluyor, kullanıcı süresi dolmuş
+    çerezle, Cloudflare engeliyle ve zaman aşımıyla aynı "çalışan video
+    bulunamadı"yı görüyordu. Artık:
+
+    * `common.hatalar.KaynakHatasi` ailesi (arşivin `ArsivOkunamadi`'sı dahil)
+      olduğu gibi geçer — mesajı kullanıcıya yazılmış Türkçe cümle.
+    * Başka her hata sınıflandırılıp ``etiket``'li bir `KaynakHatasi`'na
+      çevrilir ("AnimeciX: video listesi alınamadı — zaman aşımı: …"); asıl
+      istisna ``__cause__``'da kalır.
+    * Liste boşsa ve ``bos_mesaji`` verildiyse (`Kaynak.bos_akis_mesaji`:
+      yalnızca arşiv) `VideoYok` yükselir; verilmediyse boş liste döner.
+
+    Bölüm LİSTESİ bundan etkilenmez: listeyi kurarken akış istenmiyor, ve
+    `AdapterBolum.fansubs` sağlayıcı hatasını kendisi yutuyor.
+
+    Import fonksiyon içinde: `common.hatalar` yalnızca standart kütüphane,
+    ama bu modül bilerek hafif (sunucu imajı; bkz. modül başlığı) ve import
+    anında hiçbir şey çekmiyor.
     """
     def saglayici(_url: str) -> List[Dict[str, Any]]:
+        from ..common.hatalar import KaynakHatasi, VideoYok, kaynak_hatasi
         try:
-            return akislar(bolum_id) or []
+            sonuc = akislar(bolum_id) or []
+        except KaynakHatasi:
+            raise
         except Exception as hata:
-            from ..common.arsiv_paketi import ArsivHatasi
-            if isinstance(hata, ArsivHatasi):
-                raise
-            return []
+            raise kaynak_hatasi(hata, etiket) from hata
+        if not sonuc and bos_mesaji:
+            raise VideoYok(f"{etiket}: {bos_mesaji}." if etiket else f"{bos_mesaji}.")
+        return sonuc
     return saglayici
 
 

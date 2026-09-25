@@ -73,6 +73,10 @@ class _AdayGunlugu:
         self._ilet = ilet
         self.calismayan: List[str] = []
         self.yoklanan = 0
+        # `best_video`'nun "neden aday yok" notu (ör. kaynak hiç video
+        # vermedi). Aday yoklanmadıysa özet bu olur: "çalışan video
+        # bulunamadı." tek başına "denendi ve düştü" gibi okunuyordu.
+        self.sebep = ""
 
     def __call__(self, hook: Dict[str, Any]) -> None:
         if isinstance(hook, dict) and hook.get("status") == "çalışmıyor":
@@ -80,12 +84,14 @@ class _AdayGunlugu:
             ad = str(hook.get("player") or "").strip()
             if ad and ad not in self.calismayan:
                 self.calismayan.append(ad)
+        if isinstance(hook, dict) and hook.get("sebep"):
+            self.sebep = str(hook["sebep"])
         if self._ilet is not None:
             self._ilet(hook)
 
     def ozet(self) -> str:
         if not self.calismayan:
-            return ""
+            return self.sebep
         return (f"{self.yoklanan} aday denendi: "
                 f"{', '.join(self.calismayan)} çalışmıyor")
 
@@ -110,8 +116,10 @@ def yedekli_oynat(
 
     ``bildir``: ara durum metinleri ("2. aday deneniyor (MAIL)…").
 
-    `bul`un hatası YÜKSELİR: arşiv okunamadıysa sebebi çağıran söyler,
-    "çalışan video yok" demek yanlış olurdu.
+    `bul`un hatası YÜKSELİR: kaynak okunamadıysa (`common.hatalar.
+    KaynakHatasi`: arşive ulaşılamadı, Cloudflare engeli, zaman aşımı, çerez
+    gerekli, arşivde kayıt yok) sebebi çağıran söyler — "çalışan video yok"
+    demek yanlış olurdu. Arayüz `hatalar.insanlastir` ile gösteriyor.
     """
     gunluk = _AdayGunlugu(callback)
     denenen: List[str] = []

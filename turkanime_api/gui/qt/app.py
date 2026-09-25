@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ...common import kutuphane, mpv_oynatici
 from ...common.episode_parser import extract_episode_info
+from ...common.hatalar import insanlastir
 from ...common.oynatma import yedekli_oynat
 from . import prefs
 from .anilist import AniListService
@@ -424,6 +425,15 @@ class MainWindow(QMainWindow):
         """Durum çubuğuna yaz (her thread'den güvenli)."""
         self.ui.post(lambda: self.statusBar().showMessage(msg, timeout))
 
+    def _hata_durumu(self, msg: str) -> None:
+        """Hatayı durum çubuğuna SÜRESİZ yaz; bir sonraki mesaj onu değiştirir.
+
+        Bilgi mesajları 6 sn'de siliniyor, hatalar da öyleydi: mpv'nin
+        açılmasını bekleyip başka pencereye bakan kullanıcı "neden
+        oynamadı?"nın cevabını hiç görmüyordu.
+        """
+        self._status(msg, 0)
+
     def _on_play(self, entry) -> None:
         bolum = (entry or {}).get("obj")
         if bolum is None:
@@ -501,7 +511,7 @@ class MainWindow(QMainWindow):
                                              and not (tercih.dakika_hatirla
                                                       and baslangic)))
             if not sonuc.basarili:
-                self._status(f"{title} — {sonuc.sebep}", 10000)
+                self._hata_durumu(f"{title} — {sonuc.sebep}")
                 return
             # Buraya gelindiyse mpv düzgün kapandı. Kitaplık: "izlemeye devam
             # et" + bölüm geçmişi (kaynaksız kayıt yazılmaz, bkz. prefs).
@@ -531,7 +541,13 @@ class MainWindow(QMainWindow):
                     self._status(f"{title} — oynatma kapatıldı.")
                 self.ui.post(lambda: self._on_play_finished(bolum, title, ""))
         except Exception as exc:
-            self._status(f"{title} — oynatma hatası: {exc}")
+            # Kaynak hatası (`common.hatalar.KaynakHatasi`) kullanıcıya yazılmış
+            # cümle, olduğu gibi; ham requests/yt-dlp metni Türkçe sebebe
+            # çevrilir ("HTTPSConnectionPool(...) Max retries…" kimseye bir
+            # şey anlatmıyordu). Ham metin konsolda kalır.
+            kisa, ayrinti = insanlastir(exc)
+            print(f"[Oynatma] {title}: {ayrinti}")
+            self._hata_durumu(f"{title} — oynatılamadı: {kisa}")
         finally:
             self._playing = False
 
@@ -663,7 +679,11 @@ class MainWindow(QMainWindow):
         self.discord.indiriyor(self._dl_titles.get(task_id, "Bölüm"), yuzde)
 
     def _on_download_finished(self, task_id: str, ok: bool, mesaj: str) -> None:
-        self._status(("İndirme: " if ok else "İndirme başarısız: ") + mesaj)
+        # İptal hata değil (kullanıcı kesti); yalnızca gerçek hata kalıcı.
+        if ok or self.downloads.durum(task_id) == DURUM_IPTAL:
+            self._status("İndirme: " + mesaj)
+        else:
+            self._hata_durumu("İndirme başarısız: " + mesaj)
         self._dl_titles.pop(task_id, None)
         # Toplu indirmenin özeti: iptal hata sayılmaz, kullanıcı kendisi kesti.
         if ok:

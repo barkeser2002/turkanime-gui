@@ -18,7 +18,7 @@ from rich.progress import (
     TransferSpeedColumn
 )
 
-from ..common.arsiv_paketi import ArsivHatasi
+from ..common.hatalar import KaynakHatasi
 from ..common.dosya_adi import guvenli_ad, guvenli_alt_yol
 
 def clear():
@@ -128,9 +128,10 @@ def indirme_task_cli(bolum,table,dosya):
             callback=vid_cli.callback)
     except Exception as e:
         # Bu fonksiyon iş parçacığında koşuyor; yakalanmayan hata future'da
-        # kalır ve ekrana hiç çıkmaz. Arşiv hatasının (TürkAnime arşivine
-        # ulaşılamadı) metni kullanıcıya yazılmış bir cümle, o gösterilir.
-        sebep = f": {e}" if isinstance(e, ArsivHatasi) else "."
+        # kalır ve ekrana hiç çıkmaz. Kaynak hatasının (arşive ulaşılamadı,
+        # çerez gerekli, Cloudflare engeli…) metni kullanıcıya yazılmış bir
+        # cümle, o gösterilir.
+        sebep = f": {e}" if isinstance(e, KaynakHatasi) else "."
         print(f"  (!) Video aranırken bir hata oluştu{sebep}")
         return
     if not best_video:

@@ -1694,7 +1694,10 @@ def test_yerel_arsiv_sonradan_kaybolursa_okunamadi(tmp_path, monkeypatch, ag_yas
         animedepo.get_anime_episodes("naruto")
 
 
-def test_akis_saglayici_arsiv_hatasini_gecirir_digerlerini_yutar():
+def test_akis_saglayici_arsiv_hatasini_gecirir_digerlerini_etiketler():
+    """Arşiv hatası aynen geçer; başka kaynağın hatası artık YUTULMUYOR, kaynak
+    etiketiyle `KaynakHatasi` olur (eskiden `[]` → "çalışan video yok")."""
+    from turkanime_api.common.hatalar import KaynakHatasi
     from turkanime_api.sources import kayit
 
     def arsiv(_b):
@@ -1705,7 +1708,10 @@ def test_akis_saglayici_arsiv_hatasini_gecirir_digerlerini_yutar():
 
     with pytest.raises(animedepo.ArsivOkunamadi):
         kayit.akis_saglayici(arsiv, "a/a-1")("adres")
-    assert kayit.akis_saglayici(bozuk_site, "a/a-1")("adres") == []
+    with pytest.raises(KaynakHatasi, match="Site: video listesi alınamadı") as bilgi:
+        kayit.akis_saglayici(bozuk_site, "a/a-1", etiket="Site")("adres")
+    assert "site değişti" in str(bilgi.value)
+    assert isinstance(bilgi.value.__cause__, RuntimeError)
 
 
 def test_cevrimdisi_oynatma_sebebi_soyluyor(tmp_path, monkeypatch, denenen):

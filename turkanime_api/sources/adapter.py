@@ -398,9 +398,9 @@ class AdapterBolum:
         bozuk videoyu açıyor, çalışan diğerlerine hiç geçmiyordu. (Eski
         `objects.Bolum` videolarını sakladığı için bu sorun orada yoktu.)
 
-        Kaynak okunamadıysa (TürkAnime arşivine ulaşılamadı) sağlayıcının
-        hatası YÜKSELİR, "hiçbiri çalışmıyor" denmez; bkz.
-        `kayit.akis_saglayici`.
+        Kaynak okunamadıysa (arşive ulaşılamadı, Cloudflare engeli, zaman
+        aşımı, çerez gerekli…) sağlayıcının `common.hatalar.KaynakHatasi`'sı
+        YÜKSELİR, "hiçbiri çalışmıyor" denmez; bkz. `kayit.akis_saglayici`.
         """
         # URL kontrolü
         if not self.url:
@@ -423,11 +423,14 @@ class AdapterBolum:
                 raise
             self._fansublari_not_et(streams or [])
         if not streams:
+            # "sebep": denenecek aday HİÇ yoktu; `common.oynatma` bunu
+            # "N aday denendi" özetinden ayırıp kullanıcıya söylüyor.
             callback({
                 "current": 1,
                 "total": 1,
                 "player": player_label,
-                "status": "hiçbiri çalışmıyor"
+                "status": "hiçbiri çalışmıyor",
+                "sebep": "kaynak bu bölüm için hiç video vermedi",
             })
             return None
 
@@ -535,7 +538,9 @@ def kayittan_bolumler(kaynak: Any, slug: str, title: str) -> List[AdapterBolum]:
             url=kaynak.bolum_adresi(bolum_id),
             title=bolum_basligi,
             anime=anime,
-            stream_provider=akis_saglayici(uclar.akislar, bolum_id),
+            stream_provider=akis_saglayici(uclar.akislar, bolum_id,
+                                           etiket=kaynak.etiket,
+                                           bos_mesaji=kaynak.bos_akis_mesaji),
             player_name=kaynak.oynatici,
             slug=kaynak.bolum_slugu(bolum_id) if kaynak.bolum_slugu else None,
         ))
