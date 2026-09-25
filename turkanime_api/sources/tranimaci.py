@@ -18,6 +18,7 @@ import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 try:
     from curl_cffi import requests as _curl_requests
@@ -208,7 +209,9 @@ def search_tranimaci(query: str, limit: int = 20) -> List[Tuple[str, str]]:
     """
     if not query or not query.strip():
         return []
-    q = query.strip()
+    # Sorgu kodlanıyor: "Tom & Jerry" eskiden `q=Tom ` olarak gidiyordu
+    # (`&` yeni parametre, `#` parça başlatıyor); "Steins;Gate #0" da kesiliyordu.
+    q = quote(query.strip(), safe="")
     try:
         r = _request("GET", f"/arama?q={q}")
         if r.status_code != 200 or CHALLENGE_MARKER in r.text[:5000]:

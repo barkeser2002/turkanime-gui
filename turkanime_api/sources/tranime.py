@@ -468,6 +468,12 @@ def get_episode_details(episode_slug: str) -> Optional[TRAnimeEpisode]:
         return None
 
 
+def _harf_anahtari(harf: str) -> str:
+    """Harf sayfaları için dosya adına uygun, süreçten bağımsız önbellek anahtarı."""
+    kod = harf if harf.isascii() and harf.isalnum() else f"u{ord(harf[:1] or '#'):04x}"
+    return f"harf_{kod.lower()}_s1-5"
+
+
 def search_by_letter(letter: str, page: int = 1) -> List[Tuple[str, str]]:
     """
     Harfe göre anime ara.
@@ -618,11 +624,15 @@ def search_anime(query: str, limit: int = 10) -> List[Tuple[str, str]]:
     if not first_letter.isalpha():
         first_letter = '#'
     
-    # Cache kontrol (aynı harfle başlayan farklı sorgular için unique key)
-    query_hash = str(hash(query_lower))[-8:]  # Hash'in son 8 karakteri
-    cache_key = f"search_{first_letter}_{query_hash}"
+    # Önbellek anahtarı HARF (ve sabit 1-5 sayfa aralığı): indirilen şey
+    # harfin sayfaları, sorgu değil. Eskiden anahtar `hash(sorgu)` idi;
+    # Python bunu süreç başına rastgeleliyor (üç süreçte "one piece" üç ayrı
+    # anahtar), yani 30 dakikalık önbellek yeniden başlatmadan sonra hiç
+    # tutmuyor, aynı harfle başlayan her yeni sorgu 5 sayfayı yeniden
+    # indiriyor ve ~/.turkanime/tranime_cache'e dosya yığılıyordu.
+    cache_key = _harf_anahtari(first_letter)
     cached = _get_cache(cache_key)
-    
+
     if cached is None:
         # Tüm sayfaları çek (max 5 sayfa)
         all_results = []
@@ -632,8 +642,12 @@ def search_anime(query: str, limit: int = 10) -> List[Tuple[str, str]]:
                 break
             all_results.extend(results)
             time.sleep(0.3)  # Rate limit
-        
-        _save_cache(cache_key, all_results)
+
+        # Boş sonuç yazılmaz: bot kontrolüne takılan (ya da çerezi dolmuş)
+        # istek boş liste döndürüyor; yazılırsa çerez yenilense bile 30 dk
+        # boyunca "sonuç yok" denirdi.
+        if all_results:
+            _save_cache(cache_key, all_results)
         cached = all_results
     
     # Fuzzy matching ile filtrele ve skorla
