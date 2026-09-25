@@ -293,6 +293,15 @@ def _tranimaci() -> KaynakUclari:
     return KaynakUclari(search_tranimaci, get_anime_episodes, get_episode_streams)
 
 
+def _animexe() -> KaynakUclari:
+    # Arama kartları kapak görseli taşıyor; zengin arama onu arayüze taşır.
+    from .animexe import (
+        get_anime_episodes, get_episode_streams, search_animexe, search_animexe_zengin,
+    )
+    return KaynakUclari(search_animexe, get_anime_episodes, get_episode_streams,
+                        zengin_ara=search_animexe_zengin)
+
+
 def _arsiv_bolum_slugu(bolum_id: str) -> str:
     """"anime_slug/bolum_slug" → "bolum_slug" (turkanime.tv'nin kendi slug'ı).
 
@@ -310,6 +319,11 @@ def _openani_adresi(bolum_id: str) -> str:
 
 def _tranimaci_adresi(bolum_id: str) -> str:
     return f"https://tranimaci.com/video/{bolum_id}"
+
+
+def _animexe_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği "slug/sezon/bölüm"; izleme sayfası tam olarak bu yolda.
+    return f"https://animexe.com/watch/{bolum_id}"
 
 
 # ── Tablo ───────────────────────────────────────────────────────────────────
@@ -337,6 +351,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
            taranabilir=True, adaptor_sinifi="OpenAniAdapter"),
     Kaynak("Tranimaci", "Tranimaci", "TC", "#0984e3", "TRANIMACI", _tranimaci,
            modul="tranimaci", cli_kodu="tranimaci", bolum_adresi=_tranimaci_adresi,
+           taranabilir=True),
+    Kaynak("Animexe", "Animexe", "AX", "#00b894", "ANIMEXE", _animexe,
+           modul="animexe", cli_kodu="animexe", bolum_adresi=_animexe_adresi,
            taranabilir=True),
 )
 
