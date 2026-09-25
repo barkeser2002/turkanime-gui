@@ -205,8 +205,10 @@ class SettingsPage(QWidget):
         lform.addRow("", self.chkWatchedIcon)
         self.chkManualFansub = QCheckBox("Fansub'u kendim seçeyim")
         lform.addRow("", self.chkManualFansub)
-        fansubIpucu = QLabel("Fansub seçimi şimdilik yalnızca komut satırı "
-                             "arayüzünde soruluyor; ayar dosyası ikisinde ortak.")
+        fansubIpucu = QLabel("Bölümün birden çok çeviri grubu varsa oynatmadan/"
+                             "indirmeden önce oynatıcı ve kaliteleriyle sorulur; "
+                             "seçim seri boyunca (toplu indirme dahil) hatırlanır. "
+                             "Kapalıyken en iyi çalışan video otomatik seçilir.")
         fansubIpucu.setObjectName("Muted")
         fansubIpucu.setWordWrap(True)
         lform.addRow("", fansubIpucu)

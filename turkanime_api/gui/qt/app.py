@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
@@ -30,6 +30,7 @@ from .anilist import AniListService
 from .discord import DiscordService
 from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
+from .fansub import FansubSecici
 from .pages.downloads import DURUM_IPTAL, DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
 from .pages.library import LibraryPage
@@ -119,6 +120,8 @@ class MainWindow(QMainWindow):
         # Arka plan işlerinden UI'ya güvenli geçiş köprüsü (eski `after(0, ...)`)
         self.ui = UiBridge(self)
         self.downloads = DownloadManager(self)
+        # "Fansub'u kendim seçeyim": seri başına tek soru (bkz. `fansub`).
+        self.fansub = FansubSecici(self)
         self.downloads.finished.connect(self._on_download_finished)
 
         # AniList tek bir servisten yürür: ayar sayfası girişi yapar, izleme
@@ -442,15 +445,31 @@ class MainWindow(QMainWindow):
             self._status("Zaten bir bölüm açılıyor, lütfen bekleyin.")
             return
         self._playing = True
+        title = entry.get("title") or ""
         self._status(f"{entry.get('title')} — video aranıyor…")
-        self.discord.izliyor(anime_adi(bolum, ""), entry.get("title") or "")
-        # playback: oynatma mpv kapanana kadar thread'i tutar ama İNDİRME
-        # havuzuna girmemeli — kuyrukta 30 bölüm varsa mpv hiç açılmaz ve
-        # `_playing` açık kaldığı için kullanıcı yeniden de deneyemez.
-        run_bg(self._play_blocking, bolum, entry.get("title") or "", entry,
-               playback=True)
+        self.discord.izliyor(anime_adi(bolum, ""), title)
 
-    def _play_blocking(self, bolum, title: str, entry=None) -> None:
+        def devam(tamam: bool, fansub: Optional[str]) -> None:
+            if not tamam:
+                self._playing = False
+                self._status(f"{title} — oynatma iptal edildi (fansub seçilmedi).")
+                return
+            # playback: oynatma mpv kapanana kadar thread'i tutar ama İNDİRME
+            # havuzuna girmemeli — kuyrukta 30 bölüm varsa mpv hiç açılmaz ve
+            # `_playing` açık kaldığı için kullanıcı yeniden de deneyemez.
+            run_bg(self._play_blocking, bolum, title, entry, fansub,
+                   playback=True)
+
+        tercih = prefs.oku()
+        # İndirilmiş bölüm diskten oynuyor: fansub sormanın anlamı yok.
+        if tercih.manuel_fansub and not prefs.yerel_dosya(
+                bolum, tercih, str(entry.get("yerel_dosya") or "")):
+            self.fansub.iste(entry, devam)
+        else:
+            devam(True, None)
+
+    def _play_blocking(self, bolum, title: str, entry=None,
+                       fansub: Optional[str] = None) -> None:
         # NOT: Bu gövde arka plan thread'inde; hata yutulursa kullanıcı sonsuza
         # kadar "video aranıyor…" görür. Bu yüzden her çıkış yolu raporlanır.
         #
@@ -471,9 +490,10 @@ class MainWindow(QMainWindow):
             def bul(atla, callback):
                 if yerel and os.path.abspath(yerel) not in atla:
                     return prefs.YerelVideo(yerel)
+                ek = {"by_fansub": fansub} if fansub else {}
                 return bolum.best_video(by_res=tercih.max_res,
                                         early_subset=tercih.aday_sayisi,
-                                        callback=callback, atla=atla)
+                                        callback=callback, atla=atla, **ek)
 
             # Kaldığı yer bölümün KENDİ anahtarıyla (kaynak + kimlik + bölüm):
             # mpv'nin adrese bağlı kaydı token'lı adreslerde ve başka aday
@@ -654,9 +674,24 @@ class MainWindow(QMainWindow):
         if self.downloads.kuyruktaki_is(entry, output) is not None:
             self.statusBar().showMessage(f"{baslik} zaten kuyrukta.", 6000)
             return
-        self.downloads.enqueue(entry, output=output)
-        self.statusBar().showMessage(
-            f"{baslik} indirme sırasına alındı — ilerleme: İndirilenler.", 6000)
+
+        def devam(tamam: bool, fansub: Optional[str]) -> None:
+            if not tamam:
+                self._status(f"{baslik} — indirme iptal edildi (fansub seçilmedi).")
+                return
+            # Soru sürerken aynı bölüm başka yoldan kuyruğa girmiş olabilir;
+            # `enqueue` o durumda mevcut işin kimliğini döndürüp yeni iş açmaz.
+            self.downloads.enqueue(entry, output=output, fansub=fansub)
+            self.statusBar().showMessage(
+                f"{baslik} indirme sırasına alındı — ilerleme: İndirilenler.", 6000)
+
+        # Toplu indirmede her bölüm buraya ayrı gelir; `FansubSecici` aynı
+        # serinin isteklerini biriktirip TEK soru soruyor ve seçimi hepsine
+        # uyguluyor.
+        if prefs.oku().manuel_fansub:
+            self.fansub.iste(entry, devam)
+        else:
+            devam(True, None)
 
     def _kuyrukta_mi(self, entry) -> bool:
         """`EpisodePage` toplu indirmesi için: bölümün bitmemiş işi var mı?"""

@@ -86,6 +86,12 @@ def klasoru_ac(yol: str) -> bool:
     return bool(QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(yol))))
 
 
+def _fansub_arg(fansub: Optional[str]) -> Dict[str, str]:
+    """`best_video`'ya yalnızca SEÇİLDİYSE `by_fansub`: eski/sahte bölüm
+    nesnelerinin imzası bu argümanı tanımıyor."""
+    return {"by_fansub": fansub} if fansub else {}
+
+
 class IndirmeIptal(Exception):
     """Hook'tan fırlatılan iptal sinyali.
 
@@ -108,11 +114,16 @@ def _fmt_size(num: Optional[float]) -> str:
 class _Is:
     """Tek bir indirme işinin paylaşılan durumu (GUI + arka plan)."""
 
-    def __init__(self, task_id: str, entry: Dict[str, Any], title: str, output: str):
+    def __init__(self, task_id: str, entry: Dict[str, Any], title: str, output: str,
+                 fansub: Optional[str] = None):
         self.task_id = task_id
         self.entry = entry
         self.title = title
         self.output = output
+        # Kullanıcının seçtiği fansub ("Fansub'u kendim seçeyim"); None =
+        # otomatik. Kayda (`entry`) YAZILMIYOR: kayıt bölüm listesindeki
+        # satırla paylaşılıyor, oynatma da aynı kaydı kullanıyor.
+        self.fansub = fansub
         self.iptal = threading.Event()
         self.durum = DURUM_BEKLIYOR
         # Çözülmüş disk hedefi: aynı bölümün ikinci kez kuyruğa girmesini
@@ -187,8 +198,12 @@ class DownloadManager(QObject):
                 return task_id
         return None
 
-    def enqueue(self, entry: Dict[str, Any], output: str = "") -> Optional[str]:
-        """Bölümü kuyruğa al; aynı hedefe bitmemiş iş varsa ONUN kimliği döner."""
+    def enqueue(self, entry: Dict[str, Any], output: str = "",
+                fansub: Optional[str] = None) -> Optional[str]:
+        """Bölümü kuyruğa al; aynı hedefe bitmemiş iş varsa ONUN kimliği döner.
+
+        ``fansub``: `best_video(by_fansub=)`; None otomatik seçim.
+        """
         bolum = (entry or {}).get("obj")
         if bolum is None:
             return None
@@ -204,7 +219,7 @@ class DownloadManager(QObject):
         self._seq += 1
         task_id = f"dl{self._seq}"
         title = satir_basligi(entry)
-        job = _Is(task_id, entry, title, output)
+        job = _Is(task_id, entry, title, output, fansub=fansub)
         job.hedef = self._hedef(bolum, output)
         try:
             job.klasor = os.path.dirname(bolum_hedefi(output, bolum))
@@ -348,7 +363,8 @@ class DownloadManager(QObject):
 
         try:
             video = bolum.best_video(by_res=tercih.max_res,
-                                     early_subset=tercih.aday_sayisi)
+                                     early_subset=tercih.aday_sayisi,
+                                     **_fansub_arg(job.fansub))
         except Exception as exc:
             self._hata_bitir(job, exc)
             return
@@ -368,7 +384,7 @@ class DownloadManager(QObject):
             if deneme > 1:
                 self._yay("progress", task_id, 0, f"{deneme}. deneme…")
                 video = self._siradaki_aday(bolum, video, tercih, basarisiz,
-                                            job.output)
+                                            job.output, job.fansub)
             try:
                 prefs.indir(video, hook, job.output, tercih)
             except IndirmeIptal:
@@ -419,7 +435,8 @@ class DownloadManager(QObject):
         self._bitir(job, False, DURUM_HATA, kisa)
 
     @staticmethod
-    def _siradaki_aday(bolum, video, tercih, basarisiz: set, output: str):
+    def _siradaki_aday(bolum, video, tercih, basarisiz: set, output: str,
+                       fansub: Optional[str] = None):
         """İkinci deneme için `atla` ile başka bir aday iste.
 
         Başka aday yoksa (ya da arama patlarsa) AYNI video yeniden denenir:
@@ -433,7 +450,8 @@ class DownloadManager(QObject):
         try:
             yeni = bolum.best_video(by_res=tercih.max_res,
                                     early_subset=tercih.aday_sayisi,
-                                    atla=frozenset(basarisiz))
+                                    atla=frozenset(basarisiz),
+                                    **_fansub_arg(fansub))
         except Exception:
             return video
         if yeni is None or getattr(yeni, "url", None) in basarisiz:
