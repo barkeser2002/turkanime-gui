@@ -321,3 +321,66 @@ def test_indir_animesiz_bolumde_seri_klasoru_acmiyor(gecici_kok, tmp_path, sahte
     _video(anime=None).indir(output=str(hedef))
 
     assert (hedef / "naruto-1-bolum.mp4").is_file()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# aria2c log dosyası sızıntısı (cli_tools.indir_aria2c)
+# ─────────────────────────────────────────────────────────────────────────────
+class _Aria2cVideo:
+    """`indir_aria2c`'nin dokunduğu kadar: slug'lar, ydl_opts, indir()."""
+
+    def __init__(self, hata=None):
+        anime = type("A", (), {"slug": "naruto"})()
+        self.bolum = type("B", (), {"slug": "naruto-1-bolum", "anime": anime})()
+        self.ydl_opts = {}
+        self.hata = hata
+        self.cagri = 0
+
+    def indir(self, callback=None, output=""):
+        self.cagri += 1
+        if self.hata is not None:
+            raise self.hata
+
+
+@pytest.fixture
+def aria2c_ortami(monkeypatch):
+    """`which` sonucunu sabitle; ilerleme iş parçacığı saniyelerce uyumasın."""
+    import shutil
+    import time
+
+    from turkanime_api.cli import cli_tools
+
+    monkeypatch.setattr(cli_tools, "sleep", lambda _s: time.sleep(0.01))
+
+    def _kur(aria2c_yolu):
+        monkeypatch.setattr(shutil, "which", lambda _ad: aria2c_yolu)
+        return cli_tools
+    return _kur
+
+
+@pytest.mark.parametrize("aria2c_yolu", [None, "/usr/bin/aria2c"])
+def test_aria2c_log_dosyasi_birakmiyor(gecici_kok, tmp_path, aria2c_ortami, aria2c_yolu):
+    """ESKİ HATA: log dosyası aria2c kontrolünden ÖNCE açılıyordu ve
+    `finally: del tmp` yalnızca referansı düşürüyordu — "aria2c kullan"
+    açıkken her indirme (aria2c kurulu olsun olmasın) bir dosya bırakıyordu."""
+    cli_tools = aria2c_ortami(aria2c_yolu)
+
+    assert cli_tools.indir_aria2c(_Aria2cVideo(), callback=lambda _d: None,
+                                  output=str(tmp_path / "out")) is True
+
+    assert _kalanlar(gecici_kok) == []
+
+
+def test_aria2c_yokken_indirme_hatasi_ikinci_kez_indirmiyor(gecici_kok, tmp_path,
+                                                          aria2c_ortami):
+    """ESKİ HATA: aria2c yokken `indir` `which` ile aynı `try`daydı; indirme
+    hatası `except`e düşüp aynı indirmeyi ikinci kez başlatıyordu."""
+    cli_tools = aria2c_ortami(None)
+    video = _Aria2cVideo(hata=RuntimeError("HTTP Error 403"))
+
+    with pytest.raises(RuntimeError, match="403"):
+        cli_tools.indir_aria2c(video, callback=lambda _d: None,
+                               output=str(tmp_path / "out"))
+
+    assert video.cagri == 1
+    assert _kalanlar(gecici_kok) == []

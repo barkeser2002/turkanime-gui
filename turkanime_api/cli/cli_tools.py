@@ -1,4 +1,4 @@
-from os import name,system,path,listdir
+from os import name,system,path,listdir,remove
 from tempfile import NamedTemporaryFile
 import re
 from time import sleep
@@ -165,16 +165,27 @@ def indir_aria2c(video, callback, output):
     # temizlikten geçmezse parça dosyalarını hiç bulamaz (bkz. common.dosya_adi).
     subdir = guvenli_alt_yol(output, video.bolum.anime.slug if video.bolum.anime else "",
                              yedek="bolum")
-    tmp = NamedTemporaryFile(delete=False)
-    # aria2c mevcut mu? yoksa direkt yt-dlp ile indir
+    # aria2c mevcut mu? yoksa direkt yt-dlp ile indir. `indir` bu `try`ın
+    # DIŞINDA: eskiden içindeydi ve indirme hatası `except`e düşüp aynı
+    # indirmeyi ikinci kez başlatıyordu (artık `indir` HTTP hatasında
+    # gerçekten yükseliyor).
     try:
         from shutil import which as _which
-        if not _which('aria2c'):
-            video.indir(callback, output)
-            return True
+        aria2c_var = bool(_which('aria2c'))
     except Exception:
+        aria2c_var = False
+    if not aria2c_var:
         video.indir(callback, output)
         return True
+
+    # aria2c'nin log dosyası; toplam boyut buradan okunuyor. Kontrolden SONRA
+    # açılıp hemen kapatılıyor: eskiden aria2c yokken de açılıyordu ve
+    # `finally: del tmp` yalnızca referansı düşürüyordu — "aria2c kullan"
+    # açıkken her indirme geçici dizinde bir tmpXXXXXXXX dosyası bırakıyordu.
+    # delete=False: aria2c dosyayı adıyla açıyor (Windows'ta açık kalan
+    # NamedTemporaryFile ikinci kez açılamaz), silmeyi `finally` yapıyor.
+    with NamedTemporaryFile("w", delete=False, suffix=".aria2c.log") as tmp:
+        log_yolu = tmp.name
 
     old_opts = dict(video.ydl_opts)
     video.ydl_opts = {
@@ -189,7 +200,7 @@ def indir_aria2c(video, callback, output):
             '--min-split-size=1M',
             '--max-connection-per-server=16',
             '--summary-interval=0',
-            '--log='+tmp.name,
+            '--log='+log_yolu,
             '--log-level=info']}
     }
     is_finished = False
@@ -200,7 +211,7 @@ def indir_aria2c(video, callback, output):
             sleep(1)
             # Try to get estimated file size from aria2c log.
             try:
-                with open(tmp.name,encoding="utf-8") as fp:
+                with open(log_yolu,encoding="utf-8") as fp:
                     log = fp.read()
                 sizes = re.findall(r'Content-Type: video.*\n?Content-Length: (\d+)',log)
                 total = max([int(i) for i in sizes])
@@ -232,7 +243,7 @@ def indir_aria2c(video, callback, output):
     file_size_thread.start()
     def _last_log_line():
         try:
-            with open(tmp.name, encoding="utf-8", errors="ignore") as fp:
+            with open(log_yolu, encoding="utf-8", errors="ignore") as fp:
                 lines = [ln.strip() for ln in fp.readlines()]
             for ln in reversed(lines):
                 if ln:
@@ -271,7 +282,14 @@ def indir_aria2c(video, callback, output):
         callback({"status": "finished"})
         ok = True
     finally:
-        del tmp
+        # İki dal da iş parçacığını zaten bekliyor; `BaseException` (Ctrl+C)
+        # yolunda da beklensin ki silinen log'u okumaya çalışmasın.
+        is_finished = True
+        file_size_thread.join()
+        try:
+            remove(log_yolu)
+        except OSError:
+            pass
     return ok
 
 
