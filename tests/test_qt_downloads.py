@@ -213,12 +213,14 @@ def test_paralel_indirme_sayisi_havuz_boyutunu_belirliyor(manager, ayarla,
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)  # iş başlamasın
 
+    # Farklı bölümler: aynı bölüm ikinci kez kuyruğa girmiyor (bkz.
+    # test_ayni_bolum_ikinci_kez_kuyruga_girmiyor).
     ayarla(**{"paralel indirme sayisi": 6})
-    manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    manager.enqueue(_entry(SahteBolum(slug="naruto-test-1-bolum")), output=str(tmp_path))
     assert long_task_pool().maxThreadCount() == 6
 
     ayarla(**{"paralel indirme sayisi": 2})
-    manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    manager.enqueue(_entry(SahteBolum(slug="naruto-test-2-bolum")), output=str(tmp_path))
     assert long_task_pool().maxThreadCount() == 2
 
 
@@ -271,11 +273,78 @@ def test_cancel_all_bekleyen_isleri_kapatiyor(manager, ayarla, monkeypatch, tmp_
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     ayarla(**{"aria2c kullan": False})
 
-    ids = [manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
-           for _ in range(3)]
+    ids = [manager.enqueue(_entry(SahteBolum(slug=f"naruto-test-{i}-bolum")),
+                           output=str(tmp_path))
+           for i in range(3)]
     assert manager.cancel_all() == 3
     assert all(manager.durum(i) == DURUM_IPTAL for i in ids)
     assert manager.active_ids() == []
+
+
+# ── Aynı bölüm iki kez kuyruğa girmiyor ────────────────────────────────────
+@pytest.fixture
+def baslamayan(monkeypatch):
+    """`run_bg` sahte: işler "bekliyor"da kalsın, çağrılar sayılsın."""
+    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    cagrilar = []
+    monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: cagrilar.append(a))
+    return cagrilar
+
+
+def test_ayni_bolum_ikinci_kez_kuyruga_girmiyor(manager, ayarla, baslamayan, tmp_path):
+    """ESKİ HATA: `enqueue` her çağrıda yeni iş kuruyordu; iki yt-dlp aynı
+    dosyaya yazıyor, ikisi de "tamamlandı" diyor, dosya bozuk çıkıyordu."""
+    eklenen = []
+    manager.added.connect(lambda tid, _t: eklenen.append(tid))
+    bolum = SahteBolum()
+
+    ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    ikinci = manager.enqueue(_entry(bolum), output=str(tmp_path))
+
+    assert ikinci == ilk
+    assert manager.active_ids() == [ilk]
+    assert len(baslamayan) == 1 and eklenen == [ilk]
+    assert manager.kuyruktaki_is(_entry(bolum), output=str(tmp_path)) == ilk
+
+
+def test_ayni_hedefe_giden_baska_nesne_de_ayni_is(manager, ayarla, baslamayan, tmp_path):
+    """Anahtar nesne değil hedef yol: yeniden getirilmiş liste yeni nesne verir."""
+    ilk = manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    assert manager.enqueue(_entry(SahteBolum()), output=str(tmp_path)) == ilk
+
+    baska_bolum = manager.enqueue(_entry(SahteBolum(slug="naruto-test-2-bolum")),
+                                  output=str(tmp_path))
+    baska_klasor = manager.enqueue(_entry(SahteBolum()), output=str(tmp_path / "b"))
+    assert len({ilk, baska_bolum, baska_klasor}) == 3
+
+
+@pytest.mark.parametrize("bitir", ["iptal", "hata", "tamam"])
+def test_bitmis_isten_sonra_yeniden_kuyruga_alinabiliyor(manager, ayarla, baslamayan,
+                                                        tmp_path, bitir):
+    from turkanime_api.gui.qt.pages import downloads as dl_mod
+
+    bolum = SahteBolum()
+    ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    is_ = manager._jobs[ilk]
+    if bitir == "iptal":
+        manager.cancel(ilk)
+    else:
+        manager._bitir(is_, bitir == "tamam",
+                       dl_mod.DURUM_TAMAMLANDI if bitir == "tamam" else DURUM_HATA)
+
+    yeni = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    assert yeni is not None and yeni != ilk
+
+
+def test_yeniden_dene_ayni_bolum_kuyruktayken_ikinci_is_acmiyor(
+        manager, ayarla, baslamayan, tmp_path):
+    bolum = SahteBolum()
+    ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    manager.cancel(ilk)
+    ikinci = manager.enqueue(_entry(bolum), output=str(tmp_path))
+
+    assert manager.retry(ilk) is None, "aynı dosyaya ikinci yazıcı olmamalı"
+    assert manager.active_ids() == [ikinci]
 
 
 # ── Yeniden deneme ───────────────────────────────────────────────────────────

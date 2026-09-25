@@ -10,6 +10,7 @@ slot GUI thread'inde çalışır).
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -75,6 +76,9 @@ class _Is:
         self.output = output
         self.iptal = threading.Event()
         self.durum = DURUM_BEKLIYOR
+        # Çözülmüş disk hedefi: aynı bölümün ikinci kez kuyruğa girmesini
+        # engelleyen anahtar (bkz. `DownloadManager.kuyruktaki_is`).
+        self.hedef: Optional[str] = None
         # Bitişi iki thread de yazabiliyor (iptal GUI'den, sonuç işçiden);
         # kilit olmadan aynı iş iki kez "bitti" diye raporlanabilir.
         self.kilit = threading.Lock()
@@ -111,11 +115,44 @@ class DownloadManager(QObject):
             return False
 
     # ── Kuyruk ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _hedef(bolum, output: str) -> Optional[str]:
+        """İşin disk hedefi (`bolum_hedefi`); kurulamıyorsa None."""
+        try:
+            return os.path.normcase(bolum_hedefi(output, bolum))
+        except (ValueError, TypeError):
+            return None
+
+    def kuyruktaki_is(self, entry: Dict[str, Any], output: str = "") -> Optional[str]:
+        """Bu bölüm için BİTMEMİŞ bir iş varsa kimliği, yoksa None.
+
+        Anahtar nesne değil çözülmüş HEDEF YOL: aynı bölüm yeniden getirilmiş
+        başka bir `AdapterBolum` nesnesiyle de gelebiliyor, iki kaynağın
+        slug'ları da aynı yola düşebiliyor. İki yt-dlp aynı `outtmpl`'e
+        yazınca ikisi de "tamamlandı" diyor ama dosya bozuk çıkıyordu
+        (ölçüldü: 2.000.000 baytlık akıştan 2.429.184 baytlık dosya).
+        """
+        bolum = (entry or {}).get("obj")
+        if bolum is None:
+            return None
+        hedef = self._hedef(bolum, output or prefs.indirme_dizini())
+        if hedef is None:
+            return None
+        for task_id, job in self._jobs.items():
+            if job.durum not in BITMIS_DURUMLAR and job.hedef == hedef:
+                return task_id
+        return None
+
     def enqueue(self, entry: Dict[str, Any], output: str = "") -> Optional[str]:
+        """Bölümü kuyruğa al; aynı hedefe bitmemiş iş varsa ONUN kimliği döner."""
         bolum = (entry or {}).get("obj")
         if bolum is None:
             return None
         tercih = prefs.oku()
+        output = output or prefs.indirme_dizini(tercih)
+        mevcut = self.kuyruktaki_is(entry, output)
+        if mevcut is not None:
+            return mevcut
         # Eşzamanlılık "paralel indirme sayisi" ayarından; her kuyruğa girişte
         # tazeleniyor ki kullanıcı ayarı değiştirince yeniden başlatmak gerekmesin.
         set_long_task_limit(tercih.paralel)
@@ -123,7 +160,8 @@ class DownloadManager(QObject):
         self._seq += 1
         task_id = f"dl{self._seq}"
         title = entry.get("title") or "Bölüm"
-        job = _Is(task_id, entry, title, output or prefs.indirme_dizini(tercih))
+        job = _Is(task_id, entry, title, output)
+        job.hedef = self._hedef(bolum, output)
         self._jobs[task_id] = job
         self._yay("added", task_id, title)
         self._basla(job)
@@ -133,6 +171,10 @@ class DownloadManager(QObject):
         """Başarısız/iptal edilmiş işi aynı satırda yeniden kuyruğa al."""
         job = self._jobs.get(task_id)
         if job is None or job.durum not in (DURUM_HATA, DURUM_IPTAL):
+            return None
+        # Bu iş bitince aynı bölüm yeniden kuyruğa alınmış olabilir; ikisi
+        # birden aynı dosyaya yazmasın.
+        if self.kuyruktaki_is(job.entry, job.output) is not None:
             return None
         set_long_task_limit(prefs.oku().paralel)
         self._basla(job)
