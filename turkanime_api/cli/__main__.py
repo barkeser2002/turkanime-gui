@@ -15,6 +15,7 @@ import questionary as qa
 
 from ..common import requirements as gereksinim   # modül olarak: testler sahteleyebilsin
 from ..common.cf_qt_solver import SOLVER_FLAG
+from ..common.oynatma import yedekli_oynat
 from ..sources import kayit
 from ..sources.adapter import kayittan_bolumler
 from .dosyalar import Dosyalar
@@ -223,47 +224,43 @@ def _bolum_izle(bolumler: List[Any], dosya: Dosyalar) -> bool:
             ).ask(kbi_msg="")
             if not sub:
                 return False
-    success = False
-    # Oynatılamayan videoların adresleri. `best_video` her çağrıda videoları
-    # akışlardan YENİDEN kuruyor; `is_working = False` bir sonraki çağrıya
-    # taşınmıyor ve üç denemenin üçü de aynı (ilk sıradaki) bozuk videoyu
-    # açıyordu. Adres `atla` ile verilince sıradaki aday denenir.
-    denenen: set = set()
-    for _ in range(3):
+    # Aday döngüsü Qt ile ORTAK (`common.oynatma`): başarısız adres `atla`
+    # ile geri veriliyor, `best_video` videoları her çağrıda yeniden kurduğu
+    # için aksi hâlde üç denemenin üçü de aynı bozuk videoyu açıyordu. mpv'nin
+    # çıkış kodu da orada yorumlanıyor: yalnızca 2/3 ("oynatılamadı") başka
+    # adaya geçer; mpv yoksa (None) ya da kullanıcı kestiyse (4) yeniden
+    # denemek aynı sonucu ya da istenmeyen yeni bir pencereyi getirirdi.
+    def _bul(atla, gunluk):
         vid_cli = VidSearchCLI()
-        try:
-            with vid_cli.progress:
-                best_video = bolum.best_video(
-                    by_res=dosya.ayarlar["max resolution"],
-                    by_fansub=sub,
-                    callback=vid_cli.callback,
-                    atla=denenen,
-                )
-        except Exception as e:
-            # Arşiv okunamadı (TürkAnime çevrimdışı) ya da kaynak hatası:
-            # "çalışan video yok" değil, sebebiyle söylenir; CLI kapanmaz.
-            log_error(e)
-            rprint("[red][strong]Video aranırken bir hata oluştu.[/strong][/red]")
-            _hata_sebebi(e)
-            sleep(1.5)
-            break
-        if not best_video:
-            print("  (!) Hiçbir çalışan video bulunamadı.")
-            break
+
+        def _cb(hook):
+            gunluk(hook)
+            vid_cli.callback(hook)
+        with vid_cli.progress:
+            return bolum.best_video(
+                by_res=dosya.ayarlar["max resolution"],
+                by_fansub=sub,
+                callback=_cb,
+                atla=atla,
+            )
+
+    def _oynat(video):
         print("  Video başlatılacak..")
-        proc = best_video.oynat(dakika_hatirla=dosya.ayarlar["dakika hatirla"])
-        if proc is None:
-            print("  Video oynatıcı başlatılamadı!")
-            best_video.is_working = False
-            denenen.add(best_video.url)
-            continue
-        if proc.returncode == 0:
-            success = True
-            break
-        best_video.is_working = False
-        denenen.add(best_video.url)
-        print("  Video çalışmadı, başka bir video denenecek..")
-    if success and getattr(bolum, 'anime', None):
+        return video.oynat(dakika_hatirla=dosya.ayarlar["dakika hatirla"])
+
+    try:
+        sonuc = yedekli_oynat(_bul, _oynat, bildir=lambda m: print(f"  {m}"))
+    except Exception as e:
+        # Arşiv okunamadı (TürkAnime çevrimdışı) ya da kaynak hatası:
+        # "çalışan video yok" değil, sebebiyle söylenir; CLI kapanmaz.
+        log_error(e)
+        rprint("[red][strong]Video aranırken bir hata oluştu.[/strong][/red]")
+        _hata_sebebi(e)
+        sleep(1.5)
+        return True
+    if not sonuc.basarili:
+        print(f"  (!) {sonuc.sebep[:1].upper()}{sonuc.sebep[1:]}")
+    elif getattr(bolum, 'anime', None):
         dosya.set_gecmis(bolum.anime.slug, bolum.slug, "izlendi")
     return True
 

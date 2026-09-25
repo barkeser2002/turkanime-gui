@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from ...common.oynatma import yedekli_oynat
 from . import prefs
 from .anilist import AniListService
 from .discord import DiscordService
@@ -399,20 +400,31 @@ class MainWindow(QMainWindow):
     def _play_blocking(self, bolum, title: str) -> None:
         # NOT: Bu gövde arka plan thread'inde; hata yutulursa kullanıcı sonsuza
         # kadar "video aranıyor…" görür. Bu yüzden her çıkış yolu raporlanır.
+        #
+        # Aday döngüsü CLI ile ORTAK (`common.oynatma.yedekli_oynat`). Eskiden
+        # `best_video` bir kez çağrılıyor, mpv nasıl kapanırsa kapansın bölüm
+        # "izlendi" yazılıyor ve ilerleme diyaloğu açılıyordu — mpv 2 ile
+        # (dosya oynatılamadı) çıksa bile. Yeniden "Oynat" da işe yaramıyordu:
+        # `best_video` aynı bozuk ilk adayı yine seçiyordu. Artık oynatılamayan
+        # adres `atla` ile geri veriliyor ve geçmiş yalnızca başarıda yazılıyor.
         try:
             tercih = prefs.oku()
-            video = bolum.best_video(by_res=tercih.max_res,
-                                     early_subset=tercih.aday_sayisi)
-            if video is None:
-                self._status(f"{title} — çalışan video bulunamadı.")
+
+            def bul(atla, callback):
+                return bolum.best_video(by_res=tercih.max_res,
+                                        early_subset=tercih.aday_sayisi,
+                                        callback=callback, atla=atla)
+
+            def oynat(video):
+                self._status(f"{title} — oynatıcı açılıyor…")
+                return prefs.oynat(video, tercih)
+
+            sonuc = yedekli_oynat(
+                bul, oynat, bildir=lambda m: self._status(f"{title} — {m}"))
+            if not sonuc.basarili:
+                self._status(f"{title} — {sonuc.sebep}", 10000)
                 return
-            self._status(f"{title} — oynatıcı açılıyor…")
-            proc = prefs.oynat(video, tercih)
-            if proc is None:
-                # oynat() mpv bulunamazsa None döndürüp sessizce geçiyor.
-                self._status(f"{title} — oynatıcı başlatılamadı (mpv kurulu mu?).")
-                return
-            # Buraya gelindiyse mpv kapandı: izleme geçmişi + ilerleme sorusu.
+            # Buraya gelindiyse mpv düzgün kapandı: izleme geçmişi + ilerleme.
             prefs.gecmis_kaydet(bolum, "izlendi")
             self._status(f"{title} — oynatma bitti.")
             self.ui.post(lambda: self._on_play_finished(bolum, title))

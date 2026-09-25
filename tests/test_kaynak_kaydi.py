@@ -845,13 +845,19 @@ class _Surec:
         self.returncode = kod
 
 
-def _iki_videolu_bolum(adapter_mod, monkeypatch, oynatilan: List[str]):
-    """İki akışlı bölüm: yt-dlp ikisini de "çalışıyor" görür, mpv A'da düşer."""
+def _iki_videolu_bolum(adapter_mod, monkeypatch, oynatilan: List[str],
+                       a_kodu: int = 2):
+    """İki akışlı bölüm: yt-dlp ikisini de "çalışıyor" görür, mpv A'da düşer.
+
+    A'nın kodu 2: mpv'nin "dosya oynatılamadı" kodu. Eskiden 1 kullanılıyordu;
+    ortak döngü (`common.oynatma`) 1'i (seçenek hatası, her adayda aynı) artık
+    yeniden denemiyor.
+    """
     monkeypatch.setattr(adapter_mod, "extract_video_info", lambda url, _o: {"url": url})
 
     def oynat(video, dakika_hatirla=False):
         oynatilan.append(video.url)
-        return _Surec(1 if video.url.endswith("/A") else 0)
+        return _Surec(a_kodu if video.url.endswith("/A") else 0)
 
     monkeypatch.setattr(adapter_mod.AdapterVideo, "oynat", oynat)
     akislar = [
@@ -883,6 +889,23 @@ def test_cli_yeniden_deneme_baska_videoyu_oynatiyor(cli, monkeypatch):
 
     assert oynatilan == ["https://ok.ru/videoembed/A", "https://video.sibnet.ru/B"]
     assert "naruto-1-bolum" in ana.Dosyalar().gecmis["izlendi"]["naruto"]
+
+
+def test_cli_kullanici_kesince_baska_video_acmiyor_izlendi_yazmiyor(cli, monkeypatch):
+    """mpv 4 (Ctrl+C) ile kapandı: eskiden CLI her sıfırdan farklı kodda
+    sıradaki videoyu açıyordu — kullanıcının kapattığı pencerenin yerine
+    yenisi geliyordu. İzlendi de yazılmamalı."""
+    from turkanime_api.sources import adapter as adapter_mod
+    ana = cli
+    oynatilan: List[str] = []
+    bolum = _iki_videolu_bolum(adapter_mod, monkeypatch, oynatilan, a_kodu=4)
+    monkeypatch.setattr(ana.qa, "select", _sirali_cevaplar([bolum]))
+    ana.Dosyalar().set_ayar("manuel fansub", False)
+
+    assert ana._bolum_izle([bolum], ana.Dosyalar()) is True
+
+    assert oynatilan == ["https://ok.ru/videoembed/A"]
+    assert "naruto" not in ana.Dosyalar().gecmis["izlendi"]
 
 
 def _okunamayan_bolum(adapter_mod):

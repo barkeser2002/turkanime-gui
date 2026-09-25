@@ -124,7 +124,11 @@ def test_oynatma_ayarlari_ve_gecmis(main_window, qtbot, monkeypatch, ayarla,
 
     qtbot.waitUntil(lambda: bool(acilan), timeout=10000)
 
-    assert bolum.best_kwargs == {"by_res": False, "early_subset": 4}
+    # Alt küme: yedekli döngü `callback` ve `atla` da geçiyor (bkz.
+    # `common.oynatma`); ayarların gittiği yer değişmedi.
+    assert {k: bolum.best_kwargs[k] for k in ("by_res", "early_subset")} == \
+        {"by_res": False, "early_subset": 4}
+    assert "callback" in bolum.best_kwargs and "atla" in bolum.best_kwargs
     assert video.kwargs == {"dakika_hatirla": True, "izlerken_kaydet": False}
     izlendi = Dosyalar().gecmis["izlendi"]
     assert "naruto-test-3-bolum" in izlendi.get("naruto-test", [])
@@ -265,3 +269,131 @@ def test_liste_gercek_gecmisi_okuyor(qtbot, izole_ev):
     Dosyalar().set_gecmis("naruto-test", "naruto-test-1-bolum", "indirildi")
     page.refresh_history()
     assert page._rows[0].indirildi is True
+
+
+# ── Yedekli oynatma: mpv başarısızsa izlendi yazılmıyor, sıradaki aday ──────
+class Surec:
+    def __init__(self, kod):
+        self.returncode = kod
+
+
+class KodluVideo:
+    """mpv'nin çıkış koduyla dönen video (`AdapterVideo.oynat` gibi)."""
+
+    def __init__(self, url, kod, player="SIBNET"):
+        self.url = url
+        self.player = player
+        self.kod = kod
+        self.oynatildi = 0
+
+    def oynat(self, dakika_hatirla=False):
+        self.oynatildi += 1
+        return None if self.kod == "yok" else Surec(self.kod)
+
+
+class SiraliBolum(SahteBolum):
+    """Her `best_video` çağrısında sıradaki videoyu döndürür, çağrıları saklar."""
+
+    def __init__(self, videolar, durumlar=(), slug="naruto-test-1-bolum"):
+        super().__init__(slug=slug)
+        self.videolar = list(videolar)
+        self.durumlar = list(durumlar)
+        self.cagrilar = []
+
+    def best_video(self, **kwargs):
+        self.cagrilar.append(kwargs)
+        for hook in self.durumlar:
+            kwargs["callback"](hook)
+        sira = len(self.cagrilar) - 1
+        return self.videolar[sira] if sira < len(self.videolar) else None
+
+
+def _izlendi():
+    from turkanime_api.cli.dosyalar import Dosyalar
+    return Dosyalar().gecmis["izlendi"].get("naruto-test", [])
+
+
+def _oynat_ve_bekle(main_window, qtbot, bolum, beklenen_metin=None):
+    main_window._on_play({"title": "Naruto Test 1. Bölüm", "obj": bolum})
+    qtbot.waitUntil(lambda: main_window._playing is False, timeout=10000)
+    if beklenen_metin:
+        qtbot.waitUntil(
+            lambda: all(p in main_window.statusBar().currentMessage()
+                        for p in beklenen_metin), timeout=5000)
+    qtbot.wait(100)
+
+
+@pytest.fixture
+def diyaloglar(monkeypatch):
+    acilan = []
+    monkeypatch.setattr(ProgressDialog, "exec",
+                        lambda self: acilan.append(self) or 0)
+    return acilan
+
+
+def test_oynatilamayan_aday_sonrasi_siradaki_deneniyor(
+        izole_ev, main_window, qtbot, diyaloglar):
+    """ESKİ HATA: mpv 2 ile (dosya oynatılamadı) çıksa bile bölüm "izlendi"
+    yazılıyor, "oynatma bitti" deniyor ve sıradaki aday hiç denenmiyordu."""
+    a, b = KodluVideo("u1", 2), KodluVideo("u2", 0, player="MAIL")
+    bolum = SiraliBolum([a, b])
+
+    main_window._on_play({"title": "Naruto Test 1. Bölüm", "obj": bolum})
+    qtbot.waitUntil(lambda: bool(diyaloglar), timeout=10000)
+
+    assert len(bolum.cagrilar) == 2
+    assert "u1" in bolum.cagrilar[1]["atla"]
+    assert (a.oynatildi, b.oynatildi) == (1, 1)
+    assert _izlendi().count("naruto-test-1-bolum") == 1
+    assert len(diyaloglar) == 1
+
+
+def test_hic_aday_oynatilamazsa_izlendi_yazilmiyor(
+        izole_ev, main_window, qtbot, diyaloglar):
+    bolum = SiraliBolum([KodluVideo(f"u{i}", 2) for i in range(5)])
+
+    _oynat_ve_bekle(main_window, qtbot, bolum, ("oynatılamadı", "3"))
+
+    assert len(bolum.cagrilar) == 3
+    assert _izlendi() == []
+    assert diyaloglar == []
+    assert main_window._playing is False
+
+
+@pytest.mark.parametrize("kod", [1, 4])
+def test_kullanici_kesmesi_ve_secenek_hatasi_yeniden_denenmiyor(
+        izole_ev, main_window, qtbot, diyaloglar, kod):
+    """4: kullanıcı Ctrl+C ile kapattı — yeni pencere açmak yanlış olurdu;
+    1: seçenek hatası her adayda aynı."""
+    bolum = SiraliBolum([KodluVideo("u1", kod), KodluVideo("u2", 0)])
+
+    _oynat_ve_bekle(main_window, qtbot, bolum, (str(kod),))
+
+    assert len(bolum.cagrilar) == 1
+    assert _izlendi() == []
+    assert diyaloglar == []
+
+
+def test_calisan_video_yoksa_sebep_oynaticilari_sayiyor(
+        izole_ev, main_window, qtbot, diyaloglar):
+    """Eskiden yalnızca "çalışan video bulunamadı" deniyordu."""
+    bolum = SiraliBolum([], durumlar=[
+        {"current": 1, "total": 2, "player": "SIBNET", "status": "çalışmıyor"},
+        {"current": 2, "total": 2, "player": "MAIL", "status": "çalışmıyor"},
+    ])
+
+    _oynat_ve_bekle(main_window, qtbot, bolum, ("SIBNET", "MAIL"))
+
+    assert "bulunamadı" in main_window.statusBar().currentMessage()
+    assert diyaloglar == []
+
+
+def test_mpv_yoksa_mesaj_ayni_ve_yeniden_denenmiyor(
+        izole_ev, main_window, qtbot, diyaloglar):
+    bolum = SiraliBolum([KodluVideo("u1", "yok"), KodluVideo("u2", 0)])
+
+    _oynat_ve_bekle(main_window, qtbot, bolum, ("mpv kurulu mu?",))
+
+    assert len(bolum.cagrilar) == 1
+    assert _izlendi() == []
+    assert diyaloglar == []
