@@ -14,6 +14,7 @@ Kapsanan eski hatalar:
 * OpenAnime CDN kökü sabit kodluydu; CDN taşındığında tek çare sürüm çıkmaktı.
 """
 import ast
+import json
 import inspect
 
 import pytest
@@ -111,6 +112,68 @@ def test_sayisal_kimlik_hala_sorguya_gidiyor(cix_istekler):
 
     assert any("12345" in url for url in cix_istekler), \
         f"geçerli sayısal kimlik sorgulanmadı: {cix_istekler}"
+
+
+@pytest.fixture
+def cix_yanitlar(monkeypatch):
+    """`_http_get`'i adrese göre yanıt veren sahteyle değiştir; istekleri kaydet."""
+    istekler, yanitlar = [], {}
+
+    def sahte(url, timeout=10):
+        istekler.append(url)
+        for parca, govde in yanitlar.items():
+            if parca in url:
+                if isinstance(govde, Exception):
+                    raise govde
+                return json.dumps(govde).encode()
+        return b"{}"
+
+    monkeypatch.setattr(ac, "_http_get", sahte)
+    return istekler, yanitlar
+
+
+def test_video_kimligi_yoksa_baska_animenin_kimligi_uydurulmuyor(cix_yanitlar):
+    """ESKİ HATA: başlıkta video yoksa sabit bir video kimliğiyle (başka bir
+    animenin) related-videos soruluyordu; o animenin bölümleri gelebiliyordu."""
+    istekler, yanitlar = cix_yanitlar
+    yanitlar["secure/titles/42"] = {"title": {"videos": [], "seasons": []}}
+
+    assert ac.CixAnime(id="42", title="Videosuz").episodes == []
+    assert ac._seasons_for_title(42) == []
+    assert not [u for u in istekler if "related-videos" in u], istekler
+    assert "637113" not in inspect.getsource(ac)
+
+
+def test_baslik_bir_kez_isteniyor(cix_yanitlar):
+    """Eskiden `_episodes_for_title` secure/titles'ı iki kez istiyordu."""
+    istekler, yanitlar = cix_yanitlar
+    yanitlar["secure/titles/42"] = {"title": {"videos": [{"id": 9}],
+                                              "seasons": [{}, {}]}}
+    yanitlar["related-videos"] = {"videos": [{"name": "1. Bölüm", "url": "u1"}]}
+
+    bolumler = ac._episodes_for_title(42)
+
+    assert bolumler == [{"name": "1. Bölüm", "url": "u1", "season_num": None}]
+    assert len([u for u in istekler if "secure/titles/42" in u]) == 1
+    sezon_istekleri = [u for u in istekler if "related-videos" in u]
+    assert len(sezon_istekleri) == 2 and all("videoId=9" in u for u in sezon_istekleri)
+
+
+def test_baslik_okunamazsa_tipli_hata(cix_yanitlar):
+    """Ağ hatası "bu animenin bölümü yok" diye yutulmuyor."""
+    from turkanime_api.common.hatalar import KaynakYanitVermedi
+
+    _istekler, yanitlar = cix_yanitlar
+    yanitlar["secure/titles/42"] = TimeoutError("timed out")
+
+    with pytest.raises(KaynakYanitVermedi, match="AnimeciX"):
+        ac._episodes_for_title(42)
+
+
+def test_oynatici_sabiti_tek_ve_kullaniliyor():
+    """`VIDEO_PLAYERS[1]` ("sibnet") hiçbir yolda okunmuyordu."""
+    assert ac.VIDEO_PLAYER == "tau-video.xyz"
+    assert not hasattr(ac, "VIDEO_PLAYERS")
 
 
 def test_kimlik_yedeginde_hash_cagrisi_kalmadi():

@@ -15,6 +15,8 @@ from urllib.parse import urlparse, parse_qs, quote, urlsplit, urlunsplit
 
 import urllib.request
 
+from ..common.hatalar import kaynak_hatasi
+
 # Cloudflare bypass entegrasyonu
 try:
     from ..common.cf_bypass import CFSession, CFBypassError
@@ -26,7 +28,11 @@ except ImportError:
 BASE_URL = "https://animecix.tv/"
 ALT_URL = "https://mangacix.net/"
 HEADERS = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
-VIDEO_PLAYERS = ["tau-video.xyz", "sibnet"]
+# Gömme sayfasının yönlendirdiği oynatıcı. Eskiden `["tau-video.xyz",
+# "sibnet"]` listesiydi ama yalnızca ilk öğesi okunuyordu; "sibnet" hiçbir
+# yolda kullanılmıyordu ve okuyana ikinci bir oynatıcı desteği varmış
+# izlenimi veriyordu.
+VIDEO_PLAYER = "tau-video.xyz"
 
 # Global CF session (lazy-load)
 _cf_session: Optional[CFSession] = None
@@ -100,7 +106,23 @@ def search_animecix(query: str, timeout: int = 8) -> List[Tuple[str, str]]:
     return results
 
 
-def _seasons_for_title(title_id: int) -> List[int]:
+def _baslik_bilgisi(safe_id: int) -> Tuple[str, int]:
+    """``secure/titles/{id}``'den (ilk videonun kimliği, sezon sayısı).
+
+    Tek istek: `_episodes_for_title` aynı adresi eskiden iki kez istiyordu
+    (bir kez video kimliği için, bir kez de `_seasons_for_title` içinde).
+    Ağ/JSON hatası yükselir; kararı çağıran verir.
+    """
+    title_data = json.loads(_http_get(f"{BASE_URL}secure/titles/{safe_id}"))
+    title_obj = title_data.get("title", title_data) if isinstance(title_data, dict) else {}
+    videos = title_obj.get("videos") or []
+    video_id = str((videos[0] or {}).get("id") or "") if videos else ""
+    return video_id, len(title_obj.get("seasons") or [])
+
+
+def _seasons_for_title(title_id: int,
+                       bilgi: Optional[Tuple[str, int]] = None) -> List[int]:
+    """Sezon indeksleri (0'dan). ``bilgi``: çağıran başlığı zaten çektiyse."""
     # Sayısal olmayan kimlikle AnimeciX'e gitmenin anlamı yok (bkz.
     # `_sayisal_kimlik`): uç zaten 404 verir, uydurma kimlik ise yanlış animeyi
     # getirir. Kaydı atlıyoruz.
@@ -108,27 +130,21 @@ def _seasons_for_title(title_id: int) -> List[int]:
     if safe_id is None:
         return []
 
-    # Önce title bilgisini al ve video ID'yi dinamik çek
-    video_id = ""
-    try:
-        title_url = f"{BASE_URL}secure/titles/{safe_id}"
-        title_data = json.loads(_http_get(title_url))
-        title_obj = title_data.get("title", title_data)
-        # İlk video'nun ID'sini bul
-        videos = title_obj.get("videos", [])
-        if videos:
-            video_id = str(videos[0].get("id", ""))
-        # Sezon sayısını direkt al
-        seasons = title_obj.get("seasons", [])
-        if seasons:
-            return list(range(len(seasons)))
-    except Exception:
-        pass
-    
-    # Fallback: related-videos endpoint
+    if bilgi is None:
+        try:
+            bilgi = _baslik_bilgisi(safe_id)
+        except Exception:
+            return []
+    video_id, sezon_sayisi = bilgi
+    if sezon_sayisi:
+        return list(range(sezon_sayisi))
+
+    # Başlık sezon saymadıysa related-videos'a sorulur; o uç bir video
+    # kimliği istiyor. Kimlik yoksa sorulmaz. Eskiden burada sabit
+    # bir video kimliği (BAŞKA bir animenin videosu) kullanılıyordu: yanıt o animenin
+    # sezonlarını, dolayısıyla alakasız bir bölüm listesini getirebiliyordu.
     if not video_id:
-        video_id = "637113"  # Eski hardcoded değer
-    
+        return []
     url = f"{ALT_URL}secure/related-videos?episode=1&season=1&titleId={safe_id}&videoId={video_id}"
     try:
         data = json.loads(_http_get(url))
@@ -147,24 +163,19 @@ def _episodes_for_title(title_id: int) -> List[Dict[str, Any]]:
     if safe_id is None:
         return []
 
-    # Dinamik video ID al
-    video_id = ""
     try:
-        title_url = f"{BASE_URL}secure/titles/{safe_id}"
-        title_data = json.loads(_http_get(title_url))
-        title_obj = title_data.get("title", title_data)
-        videos = title_obj.get("videos", [])
-        if videos:
-            video_id = str(videos[0].get("id", ""))
-    except Exception:
-        pass
-    
+        bilgi = _baslik_bilgisi(safe_id)
+    except Exception as e:
+        raise kaynak_hatasi(e, "AnimeciX", "bölüm listesi alınamadı") from e
+    video_id = bilgi[0]
+    # Video kimliği yoksa related-videos sorulamaz (bkz. `_seasons_for_title`);
+    # uydurma kimlikle sormak başka animenin bölümlerini getirirdi.
     if not video_id:
-        video_id = "637113"  # Eski hardcoded fallback
-    
+        return []
+
     episodes: List[Dict[str, Any]] = []
     seen = set()
-    for sidx in _seasons_for_title(safe_id):
+    for sidx in _seasons_for_title(safe_id, bilgi):
         url = (
             f"{ALT_URL}secure/related-videos?"
             f"episode=1&season={sidx+1}&titleId={safe_id}&videoId={video_id}"
@@ -207,7 +218,7 @@ def _video_streams(embed_path: str, timeout: int = 10) -> List[Dict[str, str]]:
     vid = (qs.get("vid") or [None])[0]
     if not embed_id or not vid:
         return []
-    api = f"https://{VIDEO_PLAYERS[0]}/api/video/{embed_id}?vid={vid}"
+    api = f"https://{VIDEO_PLAYER}/api/video/{embed_id}?vid={vid}"
     data = json.loads(_http_get(api, timeout=timeout))
     out: List[Dict[str, str]] = []
     for u in data.get("urls", []):
