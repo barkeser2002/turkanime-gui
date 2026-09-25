@@ -135,6 +135,9 @@ class MainWindow(QMainWindow):
         self._dl_titles: Dict[str, str] = {}
         self.downloads.added.connect(self._on_download_added)
         self.downloads.progress.connect(self._on_download_progress)
+        # Menüdeki "İndirilenler (N)": indirme artık sayfayı değiştirmiyor,
+        # kuyruğa girdiğini ve kaç işin sürdüğünü kullanıcı buradan görüyor.
+        self.downloads.state.connect(self._indirme_sayacini_guncelle)
 
         self._playing = False          # aynı anda tek oynatma denemesi
         # Detay sayfasındaki "← Geri" hangi sekmeden gelindiyse oraya dönmeli.
@@ -179,6 +182,7 @@ class MainWindow(QMainWindow):
         episodes = EpisodePage()
         episodes.play_requested.connect(self._on_play)
         episodes.download_requested.connect(self._on_download)
+        episodes.kuyrukta_mi = self._kuyrukta_mi
         self.pages["episodes"] = episodes
         self.stack.addWidget(episodes)
 
@@ -494,12 +498,39 @@ class MainWindow(QMainWindow):
             page.refresh_history()
 
     def _on_download(self, entry) -> None:
-        """İndirmeyi kuyruğa al ve indirilenler panelini göster."""
+        """İndirmeyi kuyruğa al; kullanıcı bulunduğu bölüm listesinde KALIR.
+
+        Eskiden burada İndirilenler sayfasına geçiliyordu. Bölüm listesinin
+        menüde düğmesi, kendisinin de "Geri"si yok: kullanıcı listeye ancak
+        aramayı baştan yapıp "Bölümleri Getir"le (yeniden ağ isteği, keşif
+        kayıtlarında elle eşleştirme diyaloğu) dönebiliyordu. Toplu indirmede
+        sayfa bölüm başına bir kez değiştiriliyor, "N bölüm sıraya alındı"
+        mesajı da gizlenmiş sayfaya yazılıyordu. Artık onay durum çubuğunda,
+        sürenlerin sayısı menüdeki "İndirilenler (N)" düğmesinde.
+        """
         if not (entry or {}).get("obj"):
             return
-        self.downloads.enqueue(entry, output=self._download_dir())
-        self.show_page("downloads")
-        self._sync_nav("downloads")
+        baslik = entry.get("title") or "Bölüm"
+        output = self._download_dir()
+        if self.downloads.kuyruktaki_is(entry, output) is not None:
+            self.statusBar().showMessage(f"{baslik} zaten kuyrukta.", 6000)
+            return
+        self.downloads.enqueue(entry, output=output)
+        self.statusBar().showMessage(
+            f"{baslik} indirme sırasına alındı — ilerleme: İndirilenler.", 6000)
+
+    def _kuyrukta_mi(self, entry) -> bool:
+        """`EpisodePage` toplu indirmesi için: bölümün bitmemiş işi var mı?"""
+        return self.downloads.kuyruktaki_is(entry, self._download_dir()) is not None
+
+    def _indirme_sayacini_guncelle(self, *_args) -> None:
+        """Menüdeki İndirilenler düğmesine süren iş sayısını yaz."""
+        btn = self._nav_buttons.get("downloads")
+        if btn is None:
+            return
+        etiket = dict(NAV_ITEMS)["downloads"]
+        sayi = len(self.downloads.active_ids())
+        btn.setText(f"{etiket} ({sayi})" if sayi else etiket)
 
     def _on_download_added(self, task_id: str, title: str) -> None:
         """İş adlarını sakla: `progress` sinyali yalnızca kimlik taşıyor."""

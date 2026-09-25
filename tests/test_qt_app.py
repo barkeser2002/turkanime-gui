@@ -119,3 +119,79 @@ def test_uzun_is_surerken_surec_asili_kalmiyor(tmp_path):
         pytest.fail("süreç 20 sn içinde çıkmadı: uzun iş kapanışı kilitliyor")
     sure = time.time() - t0
     assert sure < 15, f"kapanış {sure:.1f} sn sürdü — uzun işi bekliyor"
+
+
+# ── İndirme bölüm listesinden koparmıyor; aynı bölüm iki kez kuyruğa girmiyor ─
+class _Anime:
+    slug = "naruto-test"
+    title = "Naruto Test"
+
+
+class _Bolum:
+    def __init__(self, slug):
+        self.slug = slug
+        self.anime = _Anime()
+
+
+def _giris(no: int):
+    return {"title": f"{no}. Bölüm", "obj": _Bolum(f"naruto-test-{no}-bolum")}
+
+
+@pytest.fixture
+def indirme_penceresi(izole_ev, main_window, monkeypatch, tmp_path):
+    """Bölüm listesi açık pencere; indirme işleri başlamaz (bekliyor'da kalır)."""
+    import turkanime_api.gui.qt.pages.downloads as dl_mod
+
+    monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
+    monkeypatch.setattr(MainWindow, "_download_dir",
+                        staticmethod(lambda: str(tmp_path / "indir")))
+    main_window.show_page("episodes")
+    return main_window
+
+
+def test_indir_bolum_listesinde_birakiyor_menude_sayac(indirme_penceresi, qtbot):
+    """ESKİ HATA: "İndir" İndirilenler'e geçiyordu; bölüm listesinin menüde
+    düğmesi ve "Geri"si olmadığından kullanıcı listeye dönemiyordu."""
+    win = indirme_penceresi
+    liste = win.pages["episodes"]
+    dugme = win._nav_buttons["downloads"]
+
+    win._on_download(_giris(1))
+
+    assert win.stack.currentWidget() is liste
+    qtbot.waitUntil(lambda: "(1)" in dugme.text(), timeout=2000)
+    assert "sırasına alındı" in win.statusBar().currentMessage()
+
+    win.downloads.cancel_all()
+    qtbot.waitUntil(lambda: dugme.text() == "İndirilenler", timeout=2000)
+
+
+def test_ayni_bolum_ikinci_kez_indirilince_zaten_kuyrukta(indirme_penceresi):
+    win = indirme_penceresi
+    giris = _giris(1)
+
+    win._on_download(giris)
+    win._on_download({"title": giris["title"], "obj": _Bolum(giris["obj"].slug)})
+
+    assert len(win.downloads.active_ids()) == 1
+    assert "zaten kuyrukta" in win.statusBar().currentMessage()
+
+
+def test_toplu_indirme_sayfada_kaliyor_tekrari_sayiyor(indirme_penceresi, qtbot):
+    win = indirme_penceresi
+    liste = win.pages["episodes"]
+    liste.load("TürkAnime", "naruto-test", "Naruto Test",
+               episodes=[_giris(i) for i in (1, 2, 3)])
+    liste.btnAll.setChecked(True)
+
+    liste._download_selected()
+
+    assert win.stack.currentWidget() is liste
+    assert liste.lblStatus.isVisible()
+    assert "3 bölüm indirme sırasına alındı" in liste.lblStatus.text()
+    qtbot.waitUntil(lambda: "(3)" in win._nav_buttons["downloads"].text(), timeout=2000)
+
+    liste._download_selected()
+
+    assert "3 bölüm zaten kuyrukta" in liste.lblStatus.text()
+    assert len(win.downloads.active_ids()) == 3

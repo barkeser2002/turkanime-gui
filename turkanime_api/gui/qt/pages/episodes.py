@@ -15,7 +15,7 @@ kaynak tarafında hiçbir değişiklik gerekmez.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -368,6 +368,11 @@ class EpisodePage(QWidget):
         # Geçmiş tek seferde okunur; satır başına dosya açmak birkaç yüz
         # bölümlük listede gözle görülür gecikme demek.
         self._gecmis: Optional[prefs.Gecmis] = None
+        # "Bu bölüm zaten indirme kuyruğunda mı?" — kuyruğu ana pencere
+        # tutuyor ve buraya bağlıyor. Sayfa artık indirmeden sonra açık
+        # kaldığı için ikinci "Seçilenleri İndir" aynı bölümleri yeniden
+        # gönderebiliyor; kaçının atlandığını kullanıcı burada görmeli.
+        self.kuyrukta_mi: Callable[[Dict[str, Any]], bool] = lambda _entry: False
 
         self.signals = WorkerSignals()
         self.signals.connect_found(self._on_episodes)
@@ -636,11 +641,15 @@ class EpisodePage(QWidget):
         entries = [e["sources"][source] for e in picked
                    if (e.get("sources") or {}).get(source)]
         missing = len(picked) - len(entries)
-        message = f"{len(entries)} bölüm indirme sırasına alındı ({source_label(source)})."
+        yeni = [e for e in entries if not self.kuyrukta_mi(e)]
+        kuyrukta = len(entries) - len(yeni)
+        message = f"{len(yeni)} bölüm indirme sırasına alındı ({source_label(source)})."
+        if kuyrukta:
+            message += f" {kuyrukta} bölüm zaten kuyrukta."
         if missing:
             message += f" {missing} bölüm bu kaynakta yok, atlandı."
         self.lblStatus.info(message)
-        for entry in entries:
+        for entry in yeni:
             self.download_requested.emit(entry)
 
     def _pick_download_source(self, counts: Dict[str, int],
