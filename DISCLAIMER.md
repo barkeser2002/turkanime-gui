@@ -62,6 +62,7 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 | Tranimaci | [tranimaci.com](https://tranimaci.com) |
 | Animexe | [animexe.com](https://animexe.com) · video: AnimeciX'in tau-video CDN'leri (alan adları sık değişiyor) |
 | AnimPow | [animpow.com](https://animpow.com) · API: [client-api.animpow.com](https://client-api.animpow.com) · [quadrogg.best](https://quadrogg.best) · CDN: [benstreamsunucusuyum.xyz](https://benstreamsunucusuyum.xyz) |
+| Deokwave | [deokwave.com](https://deokwave.com) · video: [sw2.deokwave.com](https://sw2.deokwave.com) |
 
 > Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
 > `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce

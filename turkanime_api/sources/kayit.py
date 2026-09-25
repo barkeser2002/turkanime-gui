@@ -309,6 +309,11 @@ def _animpow() -> KaynakUclari:
     return KaynakUclari(search_animpow, get_anime_episodes, get_episode_streams)
 
 
+def _deokwave() -> KaynakUclari:
+    from .deokwave import get_anime_episodes, get_episode_streams, search_deokwave
+    return KaynakUclari(search_deokwave, get_anime_episodes, get_episode_streams)
+
+
 def _arsiv_bolum_slugu(bolum_id: str) -> str:
     """"anime_slug/bolum_slug" → "bolum_slug" (turkanime.tv'nin kendi slug'ı).
 
@@ -346,6 +351,16 @@ def _animpow_adresi(bolum_id: str) -> str:
     return f"https://animpow.com/watch/{bolum_id}"
 
 
+def _deokwave_adresi(bolum_id: str) -> str:
+    """"<ID>/<sezon>/<bölüm>" → sitenin izleme sayfası (film: /watch/<ID>/).
+
+    Tembel import: bölüm nesneleri kurulurken modül `bolumler` için zaten
+    yüklenmiş oluyor; kimlik biçimi tek yerde (`deokwave.watch_url`) kalsın.
+    """
+    from .deokwave import watch_url
+    return watch_url(bolum_id)
+
+
 # ── Tablo ───────────────────────────────────────────────────────────────────
 # Sıra önemli: arama sonuçları, CLI menüsü ve PROVIDERS önceliği bu sırayı
 # izler. TürkAnime en başta: CLI'ın varsayılanı ve ağsız çalışan tek kaynak.
@@ -377,6 +392,8 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
            taranabilir=True),
     Kaynak("AnimPow", "AnimPow", "AP", "#fd79a8", "ANIMPOW", _animpow,
            modul="animpow", cli_kodu="animpow", bolum_adresi=_animpow_adresi,
+    Kaynak("Deokwave", "Deokwave", "DW", "#6c5ce7", "DEOKWAVE", _deokwave,
+           modul="deokwave", cli_kodu="deokwave", bolum_adresi=_deokwave_adresi,
            taranabilir=True),
 )
 
