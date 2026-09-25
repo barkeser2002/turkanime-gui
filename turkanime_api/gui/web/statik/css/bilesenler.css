@@ -657,3 +657,87 @@
     transform: translateY(6px);
   }
 }
+
+/* Kaynak rengiyle boyanmış köşe rozeti (arama sonuçları). */
+.kart-rozet.renkli {
+  color: #fff;
+  background: color-mix(in srgb, var(--renk) 78%, rgba(8, 9, 13, 0.6));
+}
+
+/* ── Hap düğmeleri (filtre) ────────────────────────────────────────────── */
+.cip {
+  --renk: var(--soluk);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--kenar);
+  background: var(--yuzey);
+  color: var(--metin-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--gecis), border-color var(--gecis), color var(--gecis), opacity var(--gecis);
+}
+
+.cip:hover {
+  background: var(--yuzey-2);
+  color: var(--metin);
+}
+
+.cip.secili {
+  background: var(--metin);
+  color: var(--zemin);
+  border-color: transparent;
+}
+
+.cip.secili .cip-sayi {
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+}
+
+.cip:disabled {
+  cursor: default;
+}
+
+.cip.sonucsuz {
+  opacity: 0.45;
+}
+
+.cip.hatali {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.cip-nokta {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--renk);
+  flex: none;
+}
+
+.cip-sayi {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+}
+
+.cip .donen {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+.cip-uyari {
+  width: 14px;
+  height: 14px;
+  color: var(--kirmizi);
+}

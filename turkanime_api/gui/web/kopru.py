@@ -57,7 +57,12 @@ def json_metni(veri: Any) -> str:
 
 
 class Kopru(QObject):
-    """Sayfaya açılan tek nesne. Uçları `bagla` ile alan sınıflarından alır."""
+    """Sayfaya açılan tek nesne. Uçları `bagla` ile alan sınıflarından alır.
+
+    EBEVEYNSİZ kurun: arka plan uçları bu nesneden sinyal yayıyor; Qt
+    ebeveyni (pencere) onu iş sürerken yıkarsa yayım yarışa girip süreci
+    düşürür. Ebeveynsiz nesneyi süren işin kendi referansı yaşatıyor.
+    """
 
     # (istek kimliği, başarılı mı, sonuç JSON'u)
     yanit = Signal(str, bool, str)

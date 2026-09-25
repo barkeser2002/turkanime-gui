@@ -34,7 +34,6 @@ from .fansub import FansubSecici
 from .pages.downloads import DURUM_IPTAL, DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
 from .pages.library import LibraryPage
-from .pages.search import SearchPage
 from .pages.settings import SettingsPage
 from .pages.watchlist import WatchlistPage
 from .progress_dialog import ProgressDialog, anime_adi
@@ -44,6 +43,7 @@ from .updates import UpdateDialog, UpdateService
 from .workers import UiBridge, run_bg
 from ..web.gorunum import WebGorunum
 from ..web.kopru import Kopru
+from ..web.uclar_arama import AramaUclari
 from ..web.uclar_genel import GenelUclar
 from ..web.uclar_kesif import KesifUclari
 
@@ -76,7 +76,7 @@ NAV_ITEMS = [
 # `WebGorunum`'da rota olarak açılıyor; listede olmayanlar hâlâ Qt sayfası.
 # Geçiş sayfa sayfa: bir sayfa taşındığında buraya eklenir, eski Qt sınıfı
 # geçiş bitince silinir.
-WEB_SAYFALARI = ("home", "trending", "season")
+WEB_SAYFALARI = ("home", "trending", "season", "search")
 
 
 def _resource_path(rel: str) -> str:
@@ -229,9 +229,17 @@ class MainWindow(QMainWindow):
 
     def _build_web(self) -> None:
         """Web arayüzü: köprü + uçlar + tek görünüm (bkz. `WEB_SAYFALARI`)."""
-        self.kopru = Kopru(self)
+        # Köprünün Qt EBEVEYNİ YOK (bilerek): arka plan uçları bitince köprüden
+        # sinyal yayıyor. Ebeveyni pencere olsaydı, pencere yıkılırken süren
+        # bir iş yıkılmakta olan nesneden `emit` edip süreci segfault'la
+        # düşürüyordu (test paketinde 12 koşuda bir yakalandı). Ebeveynsiz
+        # nesneyi Python referansı yaşatıyor; iş sürdükçe `self` referansı da
+        # sürüyor, yani yayıcı işten önce ölemiyor. Alıcı (web kanalı)
+        # silinirse Qt bağlantıyı güvenle koparıyor.
+        self.kopru = Kopru()
         self.kopru.bagla(GenelUclar(ac=self._web_ac))
         self.kopru.bagla(KesifUclari())
+        self.arama = self.kopru.bagla(AramaUclari(self.kopru))
         self.web = WebGorunum(self.kopru)
 
     def _web_ac(self, hedef: str, veri: Dict) -> None:
@@ -250,6 +258,11 @@ class MainWindow(QMainWindow):
             if sorgu:
                 self.txtSearch.setText(sorgu)
                 self._on_search()
+        elif hedef == "sonuc":
+            kayit = veri.get("kayit") if isinstance(veri.get("kayit"), dict) else None
+            self._on_anime_selected(str(veri.get("kaynak") or ""),
+                                    str(veri.get("slug") or ""),
+                                    str(veri.get("baslik") or ""), kayit)
 
     def _make_page(self, key: str, label: str) -> QWidget:
         """`NAV_ITEMS` anahtarına karşılık gelen sayfayı üret.
@@ -262,10 +275,6 @@ class MainWindow(QMainWindow):
         """
         if key in WEB_SAYFALARI:
             return self.web
-        if key == "search":
-            page = SearchPage()
-            page.anime_selected.connect(self._on_anime_selected)
-            return page
         if key in ("home", "trending", "season"):
             page = DiscoverPage(key)
             page.anime_selected.connect(self._on_discover_selected)
@@ -382,11 +391,11 @@ class MainWindow(QMainWindow):
             return ""
 
     # ── Davranış ────────────────────────────────────────────────────────────
-    def show_page(self, key: str) -> None:
+    def show_page(self, key: str, parametreler: Optional[Dict] = None) -> None:
         page = self.pages.get(key)
         if page is not None:
             if page is self.web:
-                self.web.git(key)
+                self.web.git(key, parametreler)
             self.stack.setCurrentWidget(page)
             self._current_page = key
             self.discord.sayfa(key)
@@ -395,11 +404,10 @@ class MainWindow(QMainWindow):
         query = self.txtSearch.text().strip()
         if not query:
             return
-        self.show_page("search")
+        # Arama sayfası web'de: sorgu rotanın parametresi, sayfa aramayı
+        # kendisi başlatıyor (`ara` ucu, sonuçlar olaylarla).
+        self.show_page("search", {"sorgu": query})
         self._sync_nav("search")
-        page = self.pages.get("search")
-        if isinstance(page, SearchPage):
-            page.start_search(query)
 
     def _sync_nav(self, key: str) -> None:
         """Sol menüdeki seçili düğmeyi programatik geçişlerle senkron tut."""

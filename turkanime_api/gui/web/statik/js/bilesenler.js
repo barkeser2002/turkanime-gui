@@ -32,7 +32,11 @@
       poster.appendChild(h("span.kart-puan", { style: { "--renk": TA.puanRengi(veri.puan) } },
         TA.ikon("yildiz"), veri.puan.toFixed(1)));
     }
-    if (veri.rozet) poster.appendChild(h("span.kart-rozet", null, veri.rozet));
+    if (veri.rozet) {
+      var renk = veri.rozet_renk || secenek.rozetRenk;
+      poster.appendChild(h("span.kart-rozet" + (renk ? ".renkli" : ""),
+        renk ? { style: { "--renk": renk } } : null, veri.rozet));
+    }
     if (secenek.sira) poster.appendChild(h("span.kart-sira", null, String(secenek.sira)));
     poster.appendChild(h("div.kart-ortu", null, h("span.oynat-dairesi", null, TA.ikon("oynat"))));
 

@@ -241,21 +241,21 @@ def test_arsiv_disi_kaynakta_kunye_okunmuyor(qtbot, page, monkeypatch):
 
 
 # ── Kapak: arama kartından detaya ───────────────────────────────────────────
-def test_arama_kartinin_kapagi_detaya_tasiniyor(qtbot, main_window, kapak_istekleri):
-    from PySide6.QtCore import Qt
-
-    arama = main_window.pages["search"]
-    arama._on_results({"AniList": [{"slug": "154587", "title": "Sousou no Frieren",
-                                    "image": "https://img/frieren.jpg"}]})
-    main_window.show_page("search")
-    qtbot.waitExposed(arama)
-    qtbot.mouseClick(arama.cards()[0], Qt.MouseButton.LeftButton)
+def test_arama_kartinin_kapagi_detaya_tasiniyor(main_window, web, sahte_arama,
+                                                 kapak_istekleri):
+    sahte_arama(sonuclar={"AniList": [{"slug": "154587", "title": "Sousou no Frieren",
+                                       "image": "https://img/frieren.jpg"}]})
+    main_window.txtSearch.setText("frieren")
+    main_window._on_search()
+    web.bekle("document.querySelectorAll('.sonuc-grubu .kart').length === 1")
+    web.js("document.querySelector('.sonuc-grubu .kart').click()")
 
     detay = main_window.pages["detail"]
-    assert main_window.stack.currentWidget() is detay
+    web.qtbot.waitUntil(lambda: main_window.stack.currentWidget() is detay,
+                        timeout=5000)
     assert detay._anime.get("coverImage") == {"large": "https://img/frieren.jpg"}
-    qtbot.waitUntil(lambda: kapak_istekleri == ["https://img/frieren.jpg"],
-                    timeout=5000)
+    web.qtbot.waitUntil(lambda: kapak_istekleri == ["https://img/frieren.jpg"],
+                        timeout=5000)
 
 
 def test_kapaksiz_detayda_yer_tutucu(page, kapak_istekleri):

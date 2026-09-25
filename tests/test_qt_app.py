@@ -24,26 +24,28 @@ def test_page_switching(main_window):
         assert main_window.stack.currentWidget() is main_window.pages[key]
 
 
-def test_search_from_header_routes_to_search_page(main_window, monkeypatch):
-    """Aramaya basınca arama sayfasına geçilmeli (ağa çıkmadan doğrula)."""
-    started: list = []
-    page = main_window.pages["search"]
-    monkeypatch.setattr(page, "start_search", lambda q: started.append(q))
+def test_search_from_header_routes_to_search_page(main_window, web, sahte_arama):
+    """Aramaya basınca arama sayfasına geçilmeli; sayfa aramayı başlatır."""
+    sorgular = sahte_arama(sonuclar={"TürkAnime": [{"slug": "naruto", "title": "Naruto"}]})
 
     main_window.txtSearch.setText("naruto")
     main_window._on_search()
 
-    assert main_window.stack.currentWidget() is page
-    assert started == ["naruto"]
+    assert main_window.stack.currentWidget() is main_window.web
+    assert main_window._current_page == "search"
+    assert main_window._nav_buttons["search"].isChecked()
+    web.bekle("TA.aktif === 'search'")
+    web.qtbot.waitUntil(lambda: sorgular == ["naruto"], timeout=5000)
+    assert web.js("document.querySelector('.arama-cubugu input').value") == "naruto"
 
 
-def test_empty_search_is_ignored(main_window, monkeypatch):
-    started: list = []
-    monkeypatch.setattr(main_window.pages["search"], "start_search",
-                        lambda q: started.append(q))
+def test_empty_search_is_ignored(main_window, web, sahte_arama):
+    sorgular = sahte_arama()
     main_window.txtSearch.setText("   ")
     main_window._on_search()
-    assert started == []
+    web.qtbot.wait(200)
+    assert sorgular == []
+    assert main_window._current_page == "home"
 
 
 def test_download_dir_never_empty_or_cwd():

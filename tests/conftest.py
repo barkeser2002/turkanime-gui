@@ -370,8 +370,8 @@ class WebSurucu:
     testler düz değer istiyor. `bekle` koşul doğru olana kadar betiği
     yeniden çalıştırıyor (sayfa köprüden gelen veriyi eşzamansız çiziyor).
 
-    DİKKAT: DOM düğümü JSON'a çevrilemiyor ve Python'a boş dizge olarak
-    geliyor; varlık sınamasında ``!!document.querySelector(...)`` yazın.
+    DİKKAT: DOM düğümü JSON'da ``{}`` oluyor (Python'da boş sözlük, yani
+    yanlış); varlık sınamasında ``!!document.querySelector(...)`` yazın.
     """
 
     def __init__(self, qtbot, gorunum):
@@ -384,10 +384,20 @@ class WebSurucu:
         return self
 
     def js(self, betik: str, timeout: int = 5000):
+        """Betiği çalıştır; son ifadenin değerini JSON üzerinden döndür.
+
+        `runJavaScript`'in kendi dönüşümü dizileri boş dizgeye çeviriyor;
+        değer sayfada `JSON.stringify` ile paketleniyor (betik `eval` ile
+        koşuyor ki deyim dizileri de çalışsın).
+        """
+        import json
+        sarili = ("(function () { var d = (0, eval)(" + json.dumps(betik) + ");"
+                  " try { return JSON.stringify(d === undefined ? null : d); }"
+                  " catch (e) { return 'null'; } })()")
         sonuc: list = []
-        self.gorunum.page().runJavaScript(betik, 0, sonuc.append)
+        self.gorunum.page().runJavaScript(sarili, 0, sonuc.append)
         self.qtbot.waitUntil(lambda: bool(sonuc), timeout=timeout)
-        return sonuc[0]
+        return json.loads(sonuc[0]) if isinstance(sonuc[0], str) and sonuc[0] else None
 
     def bekle(self, betik: str, timeout: int = 5000):
         import time
@@ -399,6 +409,42 @@ class WebSurucu:
                 return deger
             self.qtbot.wait(40)
         raise AssertionError(f"koşul gerçekleşmedi: {betik!r} → {deger!r}")
+
+
+@pytest.fixture
+def sahte_arama(monkeypatch):
+    """`SearchEngine` sahtesi (artımlı sözleşme); sorguları kaydeder.
+
+    ``kur(sonuclar={kaynak: kayıtlar}, hatalar={kaynak: sebep},
+    yetismeyen={kaynak: sebep})``: sonuçlar ve hatalar `kaynak_bitti` ile
+    tek tek bildirilir; ``yetismeyen`` hiç bildirilmez, yalnızca dönüşteki
+    ``hatalar``'da durur (gerçek motordaki zaman aşımı gibi).
+    """
+    import turkanime_api.common.adapters as adapters_mod
+
+    cagrilar: list = []
+
+    def kur(sonuclar=None, hatalar=None, yetismeyen=None):
+        sonuclar, hatalar = dict(sonuclar or {}), dict(hatalar or {})
+        yetismeyen = dict(yetismeyen or {})
+
+        class SahteMotor:
+            def __init__(self):
+                self.adapters = {ad: None for ad in [*sonuclar, *hatalar, *yetismeyen]}
+
+            def artimli_ara(self, query, kaynak_bitti, limit_per_source=10):
+                cagrilar.append(query)
+                for ad, kayitlar in sonuclar.items():
+                    kaynak_bitti(ad, list(kayitlar), None)
+                for ad, sebep in hatalar.items():
+                    kaynak_bitti(ad, [], sebep)
+                return adapters_mod.AramaSonuclari(
+                    sonuclar, hatalar={**hatalar, **yetismeyen})
+
+        monkeypatch.setattr(adapters_mod, "SearchEngine", SahteMotor)
+        return cagrilar
+
+    return kur
 
 
 @pytest.fixture

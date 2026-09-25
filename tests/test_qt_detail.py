@@ -480,9 +480,10 @@ def test_search_result_opens_detail_then_episodes(qtbot, main_window, fake_fetch
     detail = main_window.pages["detail"]
     assert isinstance(detail, _DetailPage)
 
-    main_window.pages["search"].anime_selected.emit(
-        "TürkAnime", "cowboy-bebop", "Cowboy Bebop",
-        {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None})
+    # Arama sayfası web'de: sonuç kartı köprüden `ac("sonuc", ...)` gönderir.
+    main_window._web_ac("sonuc", {
+        "kaynak": "TürkAnime", "slug": "cowboy-bebop", "baslik": "Cowboy Bebop",
+        "kayit": {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None}})
 
     assert main_window.stack.currentWidget() is detail
     assert detail.lblTitle.text() == "Cowboy Bebop"

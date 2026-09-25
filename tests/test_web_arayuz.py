@@ -254,13 +254,12 @@ def test_tumunu_gor_trend_sayfasina_geciyor(sahte_kesif, main_window, web):
     web.bekle("document.querySelectorAll('[data-sayfa=trending] .izgara .kart:not(.iskelet-kart)').length === 6")
 
 
-def test_hero_aramasi_arama_sayfasini_aciyor(main_window, web, monkeypatch):
-    istenen = []
-    monkeypatch.setattr(main_window.pages["search"], "start_search", istenen.append)
+def test_hero_aramasi_arama_sayfasini_aciyor(main_window, web, sahte_arama):
+    sorgular = sahte_arama()
     web.js("var f = document.querySelector('.hero-ara'); "
            "f.querySelector('input').value = '  frieren '; f.requestSubmit()")
-    web.qtbot.waitUntil(lambda: istenen == ["frieren"], timeout=5000)
-    assert main_window.stack.currentWidget() is main_window.pages["search"]
+    web.qtbot.waitUntil(lambda: sorgular == ["frieren"], timeout=5000)
+    assert main_window._current_page == "search"
     assert main_window.txtSearch.text() == "frieren"
 
 

@@ -8,7 +8,7 @@ from .kopru import uc
 
 # Sayfanın isteyebileceği gezinti hedefleri. `ac` bunları pencereye iletiyor;
 # listede olmayan hedef reddediliyor (sayfa hatası sessiz kalmasın).
-HEDEFLER = ("sayfa", "anime", "kitaplik", "arama")
+HEDEFLER = ("sayfa", "anime", "kitaplik", "arama", "sonuc")
 
 
 class GenelUclar:
