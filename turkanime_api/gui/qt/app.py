@@ -344,11 +344,17 @@ class MainWindow(QMainWindow):
         if isinstance(item, dict) and item and isinstance(page, DetailPage):
             self._open_detail(lambda: page.show_anime(item))
 
-    def _on_anime_selected(self, source: str, slug: str, title: str) -> None:
-        """Arama sonucundan anime seçildi: kaynağı bağlı detay sayfasını aç."""
+    def _on_anime_selected(self, source: str, slug: str, title: str,
+                           kayit: object = None) -> None:
+        """Arama sonucundan anime seçildi: kaynağı bağlı detay sayfasını aç.
+
+        ``kayit`` arama kaydının kendisi (kapak adresi dahil); detay sayfası
+        kartta görünen posteri tekrar göstermek için kullanıyor.
+        """
         page = self.pages.get("detail")
         if isinstance(page, DetailPage):
-            self._open_detail(lambda: page.show_match(source, slug, title))
+            ek = kayit if isinstance(kayit, dict) else None
+            self._open_detail(lambda: page.show_match(source, slug, title, kayit=ek))
 
     def _open_detail(self, populate) -> None:
         """Detay sayfasına geç ve dönüş noktasını hatırla.

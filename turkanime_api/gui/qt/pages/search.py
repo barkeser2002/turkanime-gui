@@ -32,8 +32,10 @@ def _kisalt(metin: str, sinir: int = HATA_SEBEBI_SINIRI) -> str:
 class SearchPage(QWidget):
     """Arama sonuçlarını kaynak rozetli kartlar hâlinde gösterir."""
 
-    # (source_name, slug, title)
-    anime_selected = Signal(str, str, str)
+    # (kaynak, slug, başlık, arama kaydı). Son alan kaydın kendisi (slug,
+    # title, image…): kartta görünen kapak detay sayfasında da görünsün diye
+    # taşınıyor. Kart yükü üçlü kalıyor; kayıt `_kayitlar`'dan bulunuyor.
+    anime_selected = Signal(str, str, str, object)
     # (AnimeCard, görsel baytları) — arka plandan UI thread'ine
     thumb_ready = Signal(object, object)
 
@@ -42,6 +44,8 @@ class SearchPage(QWidget):
         self._busy = False
         self._query = ""
         self._cards: List[AnimeCard] = []
+        # (kaynak, slug) → arama kaydı (bkz. `anime_selected`)
+        self._kayitlar: Dict[tuple, Dict[str, Any]] = {}
 
         self.signals = WorkerSignals()
         self.signals.connect_found(self._on_results)
@@ -140,6 +144,7 @@ class SearchPage(QWidget):
             self.lblStatus.error("Beklenmeyen arama sonucu.")
             return
 
+        self._kayitlar = {}
         cards: List[AnimeCard] = []
         per_source: List[str] = []
         pending_thumbs = []
@@ -167,6 +172,7 @@ class SearchPage(QWidget):
                 card = AnimeCard(title, gorunen_ad(source),
                                  payload=(source, slug, title), image_url=image)
                 card.clicked.connect(self._on_card_clicked)
+                self._kayitlar[(source, slug)] = dict(item)
                 cards.append(card)
                 eklenen += 1
                 if image:
@@ -217,7 +223,8 @@ class SearchPage(QWidget):
         if not payload:
             return
         source, slug, title = payload
-        self.anime_selected.emit(source, slug, title)
+        kayit = dict(self._kayitlar.get((source, slug)) or {})
+        self.anime_selected.emit(source, slug, title, kayit)
 
 
 __all__ = ["SearchPage"]

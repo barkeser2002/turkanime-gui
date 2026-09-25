@@ -282,7 +282,9 @@ def test_karta_tiklayinca_secim_sinyali_yayiliyor(qtbot, page):
     with qtbot.waitSignal(page.anime_selected, timeout=2000) as sinyal:
         qtbot.mouseClick(page.cards()[0], Qt.MouseButton.LeftButton)
 
-    assert sinyal.args == ["TurkAnime", "naruto", "Naruto"]
+    assert sinyal.args[:3] == ["TurkAnime", "naruto", "Naruto"]
+    # Dördüncü alan arama kaydının kendisi: kapak detay sayfasına taşınsın.
+    assert sinyal.args[3] == {"slug": "naruto", "title": "Naruto", "image": None}
 
 
 def test_payloadsiz_tiklama_sinyal_yaymiyor(page):

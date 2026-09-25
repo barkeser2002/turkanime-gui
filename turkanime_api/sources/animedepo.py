@@ -1077,6 +1077,104 @@ def get_anime_episodes(anime_slug: str) -> List[Tuple[str, str]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Künye (info.json)
+# ─────────────────────────────────────────────────────────────────────────────
+_TR_AYLAR = {"ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5,
+             "haziran": 6, "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10,
+             "kasım": 11, "aralık": 12}
+_TARIH = re.compile(r"(\d{1,2})\s+(\w+)\s+(\d{4})")
+
+
+def _tarih_coz(ham: Any) -> Optional[Dict[str, int]]:
+    """"07 Nisan 2009, Salı" → AniList biçimi ``{"year", "month", "day"}``."""
+    m = _TARIH.search(str(ham or ""))
+    if not m:
+        return None
+    ay = _TR_AYLAR.get(m.group(2).replace("I", "ı").lower())
+    if not ay:
+        return None
+    return {"year": int(m.group(3)), "month": ay, "day": int(m.group(1))}
+
+
+def _bolum_sayisi(ham: Any) -> Optional[int]:
+    """"25 / 25" → 25. Toplam bilinmiyorsa ("12 / ?", "12 / 12+") yayınlanan.
+
+    Arşivdeki biçim "yayınlanan / toplam"; süren seride toplam "?" ya da
+    "N+" yazıyor. Toplamı sayı değilken göstermek "12 bölüm" demek olur ki
+    bu da elde olan bölüm sayısı, yani doğru.
+    """
+    parcalar = [p.strip() for p in str(ham or "").split("/")]
+    for aday in reversed(parcalar):
+        if aday.isdigit() and int(aday) > 0:
+            return int(aday)
+    for aday in parcalar:
+        rakam = re.match(r"\d+", aday)
+        if rakam and int(rakam.group()) > 0:
+            return int(rakam.group())
+    return None
+
+
+def anime_bilgisi(anime_slug: str) -> Dict[str, Any]:
+    """Arşivdeki ``animeler/{slug}/info.json``'u AniList biçimine çevir.
+
+    Detay sayfası AniList/Jikan kaydını render ediyor; arşiv kaydı aynı
+    anahtarlarla gelince ikinci bir görünüm yazmak gerekmiyor. Okuma
+    `_kaydi_oku` üzerinden (yerel arşiv → aynalar → disk önbelleği), yani
+    yerel ya da indirilmiş arşivle tamamen çevrimdışı çalışır.
+
+    "Resim" alanı BİLEREK taşınmıyor: adresler kapanan turkanime.co/.tv'ye
+    gidiyor, arayüz onu istemeye kalksa her kapak zaman aşımını beklerdi.
+    ``averageScore`` yalnızca Puanı > 0 ise: arşivde puansız kayıtlar 0
+    taşıyor ve "SKOR 0%" puanı düşük bir anime gibi okunurdu.
+
+    Returns: anahtarları olan alanlar (description, genres, studios,
+        averageScore, episodes, format, startDate, endDate, title.native);
+        anime ya da info.json arşivde yoksa ``{}``.
+    Raises: `ArsivOkunamadi` — arşive ulaşılamadı (bkz. `_kaydi_oku`).
+    """
+    veri = _kaydi_oku(f"animeler/{anime_slug}/info.json")
+    if not isinstance(veri, dict):
+        return {}
+    out: Dict[str, Any] = {}
+
+    ozet = str(veri.get("Özet") or "").strip()
+    if ozet:
+        out["description"] = ozet            # <br /> temizliği arayüzde
+    turler = veri.get("Anime Türü")
+    if isinstance(turler, str):
+        turler = turler.split(",")
+    if isinstance(turler, list):
+        temiz = [str(t).strip() for t in turler if str(t or "").strip()]
+        if temiz:
+            out["genres"] = temiz
+    # 529 kayıtta birden çok stüdyo virgülle yazılmış ("Studio A, Studio B").
+    studyolar = [s.strip() for s in str(veri.get("Stüdyo") or "").split(",")]
+    studyolar = [s for s in studyolar if s and s != "?"]
+    if studyolar:
+        out["studios"] = studyolar
+    try:
+        puan = float(veri.get("Puanı") or 0)
+    except (TypeError, ValueError):
+        puan = 0.0
+    if puan > 0:
+        out["averageScore"] = int(round(puan * 10))
+    bolum = _bolum_sayisi(veri.get("Bölüm Sayısı"))
+    if bolum:
+        out["episodes"] = bolum
+    kategori = str(veri.get("Kategori") or "").strip()
+    if kategori:
+        out["format"] = kategori
+    for alan, anahtar in (("Başlama Tarihi", "startDate"), ("Bitiş Tarihi", "endDate")):
+        tarih = _tarih_coz(veri.get(alan))
+        if tarih:
+            out[anahtar] = tarih
+    japonca = str(veri.get("Japonca") or "").strip()
+    if japonca:
+        out["title"] = {"native": japonca}
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Stream linkleri
 # ─────────────────────────────────────────────────────────────────────────────
 # turkanime.tv/.co/.net… — site kapandı; oraya giden adres oynatılamaz.
@@ -1234,6 +1332,7 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
 __all__ = [
     "search_animedepo",
     "get_anime_episodes",
+    "anime_bilgisi",
     "get_episode_streams",
     "get_anime_listesi",
     "dizin",

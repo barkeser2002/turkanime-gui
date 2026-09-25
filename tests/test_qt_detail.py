@@ -306,9 +306,11 @@ def test_stale_cover_is_not_applied(page):
     page.show_anime(make_anime("Anime B"))
 
     page._apply_cover(stale, png)
-    assert page.lblCover.pixmap().isNull(), "eski kapak yeni animeye yapıştı"
+    # Kapaksız animede çizilmiş yer tutucu duruyor; eski kapak onu EZMEMELİ.
+    assert page.kapak_yer_tutucuda, "eski kapak yeni animeye yapıştı"
 
     page._apply_cover(page.request_id, png)
+    assert not page.kapak_yer_tutucuda
     assert not page.lblCover.pixmap().isNull()
 
 
@@ -471,7 +473,8 @@ def test_search_result_opens_detail_then_episodes(qtbot, main_window, fake_fetch
     assert isinstance(detail, _DetailPage)
 
     main_window.pages["search"].anime_selected.emit(
-        "TürkAnime", "cowboy-bebop", "Cowboy Bebop")
+        "TürkAnime", "cowboy-bebop", "Cowboy Bebop",
+        {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None})
 
     assert main_window.stack.currentWidget() is detail
     assert detail.lblTitle.text() == "Cowboy Bebop"

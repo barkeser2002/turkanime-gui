@@ -25,11 +25,17 @@ def test_card_click_emits_payload(qtbot):
     assert blocker.args[0] == payload
 
 
-def test_card_hides_thumb_area_without_image(qtbot):
-    """Görseli olmayan kaynaklarda kapak alanı yer kaplamamalı."""
+def test_gorselsiz_kart_cizilmis_poster_gosteriyor(qtbot):
+    """Kapaksız kart poster kipinde, çizilmiş yer tutucuyla (ağ yok).
+
+    ESKİ DAVRANIŞ: kapak alanı gizlenip kart 116 px'lik kompakt kutuya
+    iniyordu; arşiv sonuçları ~340 px'lik posterlerin yanında cüce kalıyordu.
+    """
     card = AnimeCard("Bir Anime", "AnimeDepo", image_url=None)
     qtbot.addWidget(card)
-    assert not card.lblThumb.isVisibleTo(card)
+    assert card.lblThumb.isVisibleTo(card)
+    assert card.yer_tutucu
+    assert not card.lblThumb.pixmap().isNull(), "yer tutucu çizilmedi"
 
 
 @pytest.fixture
@@ -154,7 +160,8 @@ def test_gorselsiz_kart_cokmuyor(qtbot):
     """Kapak sağlamayan kaynakta kart boş siyah poster göstermemeli."""
     card = _goster(qtbot, AnimeCard("AnimeDepo Kaydı", "AnimeDepo", image_url=None), 320)
 
-    assert not card.lblThumb.isVisibleTo(card)
+    assert card.lblThumb.isVisibleTo(card)
+    assert not card.lblThumb.pixmap().isNull(), "yer tutucu çizilmedi"
     assert card.height() > 0 and card.width() == 320
     assert card.lblTitle.text() == "AnimeDepo Kaydı"
     assert card.lblSource.text() == "AnimeDepo"
@@ -182,3 +189,38 @@ def test_status_label_states(qtbot):
     assert lbl.text() == "bulundu"
     lbl.error("hata")
     assert lbl.text() == "hata"
+
+
+# ── Çizilmiş yer tutucu ─────────────────────────────────────────────────────
+def test_bas_harfler():
+    from turkanime_api.gui.qt.widgets import bas_harfler
+
+    assert bas_harfler("Sousou no Frieren") == "SF"
+    assert bas_harfler("07-Ghost") == "0"
+    assert bas_harfler("One Piece") == "OP"
+    assert bas_harfler("!!!") == "?"
+
+
+def test_karisik_izgarada_satir_yuksekligi_esit(qtbot):
+    """Kapaklı ve kapaksız kartlar aynı satırda aynı boyda olmalı."""
+    from turkanime_api.gui.qt.pages._grid import CardGrid
+
+    izgara = CardGrid()
+    qtbot.addWidget(izgara)
+    izgara.resize(1000, 800)
+    kartlar = [AnimeCard("Kapaklı", "AniList", image_url="http://x/y.png"),
+               AnimeCard("Kapaksız Arşiv Kaydı", "TürkAnime (arşiv)"),
+               AnimeCard("Bir Başkası", "AnimeciX", image_url=None)]
+    izgara.set_items(kartlar)
+    izgara.show()
+    qtbot.waitExposed(izgara)
+
+    assert izgara.columns() >= 3
+    assert len({k.height() for k in kartlar}) == 1, [k.height() for k in kartlar]
+
+
+def test_kapak_gelince_yer_tutucu_kalkiyor(qtbot, png_bytes):
+    card = _goster(qtbot, AnimeCard("Naruto", "TürkAnime (arşiv)"))
+    assert card.yer_tutucu
+    card.set_thumbnail(png_bytes)
+    assert not card.yer_tutucu

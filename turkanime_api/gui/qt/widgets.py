@@ -1,10 +1,11 @@
 """Yeniden kullanılabilir Qt widget'ları (eski CTk kart/ızgara mantığının karşılığı)."""
 from __future__ import annotations
 
+import hashlib
 from typing import Any, List, Optional
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtCore import QRect, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QSizePolicy,
     QStyle, QStyleOption, QVBoxLayout, QWidget,
@@ -13,7 +14,6 @@ from PySide6.QtWidgets import (
 from .theme import ACCENT, BG_ELEV_2, TEXT_MUTED
 
 CARD_MIN_WIDTH = 210
-CARD_HEIGHT = 116          # yalnızca kapaksız (kompakt) kartlar için
 GRID_SPACING = 12
 
 # Poster geometrisi: kartın iç genişliğini tamamen kaplar, en-boy 2:3 korunur.
@@ -21,6 +21,78 @@ POSTER_RATIO = 3 / 2       # yükseklik / genişlik
 CARD_PAD = 6               # kart kenar boşluğu (poster bu kadar içeride kalır)
 BADGE_INSET = 6            # rozetin poster köşesine uzaklığı
 TITLE_LINES = 2            # başlık en çok kaç satır
+
+# Çizilmiş yer tutucunun varsayılan boyutu (2:3). Kartta KULLANILMIYOR: kart
+# onu her seferinde poster kutusunun tam ölçüsünde çiziyor (bkz.
+# `AnimeCard._rescale_poster`).
+YER_TUTUCU_BOYUTU = (240, 360)
+
+
+def bas_harfler(baslik: str) -> str:
+    """"Sousou no Frieren" → "SF": ilk iki anlamlı kelimenin baş harfi.
+
+    "no"/"wa" gibi bağlaçlar atlanıyor: "Sousou no Frieren"de "SN" hiçbir şey
+    çağrıştırmıyor. Harf/rakam yoksa (yalnızca simge) "?".
+    """
+    atla = {"no", "wa", "ga", "to", "the", "a", "of", "ni", "de"}
+    kelimeler = ["".join(c for c in k if c.isalnum()) for k in (baslik or "").split()]
+    kelimeler = [k for k in kelimeler if k]
+    anlamli = [k for k in kelimeler if k.lower() not in atla] or kelimeler
+    harfler = "".join(k[0] for k in anlamli[:2]).upper()
+    return harfler or "?"
+
+
+_YAZI_TIPLERI: dict = {}
+
+
+def _yazi_tipi(piksel: int) -> QFont:
+    """Kalın yazı tipi, piksel boyutuna göre önbellekli.
+
+    Her çizimde `QFont()` kurmak yazı tipi eşleştirmesini yeniden yaptırıyor;
+    pencere daraltılırken kart başına her adımda çizim yapıldığı için fark
+    ediyor.
+    """
+    font = _YAZI_TIPLERI.get(piksel)
+    if font is None:
+        font = QFont()
+        font.setBold(True)
+        font.setPixelSize(piksel)
+        _YAZI_TIPLERI[piksel] = font
+    return font
+
+
+def yer_tutucu_poster(baslik: str, genislik: int = YER_TUTUCU_BOYUTU[0],
+                      yukseklik: int = YER_TUTUCU_BOYUTU[1]) -> QPixmap:
+    """Kapağı olmayan anime için ÇİZİLMİŞ poster (ağ yok, GUI thread'i).
+
+    Arşiv kayıtlarının "Resim" adresleri kapanan siteye gidiyor, yani
+    TürkAnime sonuçlarının hiçbirinde kapak yok. Eskiden bu kartlar 116 px'lik
+    kompakt kutu olarak ~340 px'lik posterlerin yanında duruyordu ve ızgara
+    satırları dalgalanıyordu. Renk başlığın özetinden: aynı anime her yerde
+    (arama, detay) aynı renkte görünsün, komşu kartlar birbirinden ayrılsın.
+
+    Yazı rengi OPAK (tonlu beyaz): yarı saydam kalemle metin çizmek ölçüldü,
+    üç kat yavaş (0.30 → 0.10 ms) ve bu çizim her yeniden boyutlamada yapılıyor.
+    """
+    ozet = hashlib.md5((baslik or "").encode("utf-8")).digest()
+    ton = int.from_bytes(ozet[:2], "big") % 360
+    genislik, yukseklik = max(1, int(genislik)), max(1, int(yukseklik))
+    pix = QPixmap(genislik, yukseklik)
+    pix.fill(QColor.fromHsv(ton, 110, 78))
+    painter = QPainter(pix)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        # Alt üçte bire koyu bir şerit: düz renkten daha "poster" duruyor.
+        ust = yukseklik * 2 // 3
+        painter.fillRect(0, ust, genislik, yukseklik - ust,
+                         QColor.fromHsv(ton, 120, 52))
+        painter.setFont(_yazi_tipi(max(8, genislik // 3)))
+        painter.setPen(QColor.fromHsv(ton, 25, 240))
+        painter.drawText(QRect(0, 0, genislik, ust + genislik // 6),
+                         int(Qt.AlignmentFlag.AlignCenter), bas_harfler(baslik))
+    finally:
+        painter.end()
+    return pix
 
 
 class ElidedLabel(QLabel):
@@ -119,8 +191,10 @@ class AnimeCard(QFrame):
 
     Yerleşim: kartın TAM genişliğini kaplayan 2:3 poster, altında en çok iki
     satırlık başlık, posterin sağ alt köşesinde rozet (puan / durum / kaynak).
-    Kapak sağlamayan kaynaklarda (`image_url=None`) poster alanı hiç
-    gösterilmez; kart eski kompakt hâlinde kalır.
+    Kapak sağlamayan kaynaklarda (`image_url=None`) poster alanında ÇİZİLMİŞ
+    bir yer tutucu durur (bkz. `yer_tutucu_poster`): eskiden bu kartlar
+    kompakt kutuya iniyordu ve aynı ızgara satırında 116 px'lik kartla
+    ~340 px'lik poster yan yana kalıyordu.
     """
 
     clicked = Signal(object)
@@ -132,9 +206,10 @@ class AnimeCard(QFrame):
         self.setObjectName("Card")
         self.payload = payload
         self.image_url = image_url
-        self._poster_mode = bool(image_url)
         self._poster_size = (0, 0)
         self._src_pixmap: Optional[QPixmap] = None   # ham kapak (yeniden ölçek için)
+        # Posterde çizilmiş yer tutucu mu duruyor (gerçek kapak değil)?
+        self.yer_tutucu = not image_url
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumWidth(CARD_MIN_WIDTH)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -157,15 +232,17 @@ class AnimeCard(QFrame):
         self.lblThumb.setStyleSheet(
             f"#CardPoster {{ background-color: {BG_ELEV_2}; border-radius: 6px;"
             f" color: {TEXT_MUTED}; font-size: 11px; }}")
-        # Kapak inene kadar boş siyah dikdörtgen yerine adın kendisi durur.
-        self.lblThumb.setText(title)
-        self.lblThumb.setVisible(self._poster_mode)
+        self._baslik = title
+        if image_url:
+            # Kapak inene kadar boş siyah dikdörtgen yerine adın kendisi durur.
+            self.lblThumb.setText(title)
+        # İnecek kapak yoksa poster `_rescale_poster`'da ağa gitmeden çiziliyor.
         outer.addWidget(self.lblThumb, 0)
 
         # ── Rozet (poster üstünde köşe rozeti) ──────────────────────────────
         # Posterin ÇOCUĞU: böylece görselin üzerinde durur, yer kaplamaz.
-        self.badge = QFrame(self.lblThumb if self._poster_mode else None)
-        self.badge.setObjectName("CardBadge" if self._poster_mode else "CardBadgeFlat")
+        self.badge = QFrame(self.lblThumb)
+        self.badge.setObjectName("CardBadge")
         badge_row = QHBoxLayout(self.badge)
         badge_row.setContentsMargins(6, 2, 6, 2)
         badge_row.setSpacing(0)
@@ -185,13 +262,7 @@ class AnimeCard(QFrame):
 
         self.lblTitle = ElidedLabel(title)
         col.addWidget(self.lblTitle, 0)
-        if not self._poster_mode:
-            # Poster yoksa rozet sarkacak yer bulamaz; başlığın altına iner.
-            col.addWidget(self.badge, 0)
         outer.addWidget(self._textPanel, 0)
-
-        if not self._poster_mode:
-            self.setFixedHeight(CARD_HEIGHT)
 
         self.setToolTip(f"{title}\nKaynak: {source}")
         self._apply_geometry()
@@ -218,8 +289,6 @@ class AnimeCard(QFrame):
 
     def _apply_geometry(self) -> None:
         """Poster yüksekliğini ve kart yüksekliğini genişlikten türet."""
-        if not self._poster_mode:
-            return
         pw = self._poster_width()
         ph = int(round(pw * POSTER_RATIO))
         if (pw, ph) != self._poster_size:
@@ -233,8 +302,6 @@ class AnimeCard(QFrame):
         self._place_badge(pw, ph)
 
     def _place_badge(self, pw: int, ph: int) -> None:
-        if not self._poster_mode:
-            return
         self.badge.adjustSize()
         self.badge.move(max(0, pw - self.badge.width() - BADGE_INSET),
                         max(0, ph - self.badge.height() - BADGE_INSET))
@@ -245,11 +312,20 @@ class AnimeCard(QFrame):
 
         `KeepAspectRatioByExpanding` kutuyu doldurur ama taşan kenarı bırakır;
         taşan kısım ortadan kırpılmazsa poster kartın dışına sarkar.
+
+        Yer tutucu ÖLÇEKLENMİYOR, kutunun tam ölçüsünde yeniden çiziliyor:
+        büyük bir kaynağı her yeniden boyutlamada 12-24 kart için yumuşak
+        ölçeklemek, pencere daraltılırken yerleşimin oturmasını ölçülür
+        biçimde geciktiriyordu (adım başına ~1 ms → ~7 ms). Düz renk + metin
+        çizmek bundan ucuz ve her boyutta keskin.
         """
-        if self._src_pixmap is None or self._src_pixmap.isNull():
-            return
         pw, ph = self._poster_size
         if pw <= 0 or ph <= 0:
+            return
+        if self.yer_tutucu:
+            self.lblThumb.setPixmap(yer_tutucu_poster(self._baslik, pw, ph))
+            return
+        if self._src_pixmap is None or self._src_pixmap.isNull():
             return
         scaled = self._src_pixmap.scaled(
             pw, ph,
@@ -261,20 +337,6 @@ class AnimeCard(QFrame):
         self.lblThumb.setPixmap(scaled.copy(x, y, min(pw, scaled.width()),
                                             min(ph, scaled.height())))
 
-    def _enable_poster(self) -> None:
-        """Kapaksız açılan kart sonradan görsel alırsa poster kipine geç."""
-        if self._poster_mode:
-            return
-        self._poster_mode = True
-        self.col.removeWidget(self.badge)
-        self.badge.setParent(self.lblThumb)
-        self.badge.setObjectName("CardBadge")
-        self.badge.setVisible(True)       # reparent widget'ı gizler
-        self.lblThumb.setVisible(True)
-        self.setMaximumHeight(16777215)   # kompakt sabit yüksekliği çöz
-        self.setMinimumHeight(0)
-        self._apply_geometry()
-
     # ── Genel API ───────────────────────────────────────────────────────────
     def set_thumbnail(self, data: bytes) -> None:
         """İndirilen görsel baytlarını karta yerleştir (GUI thread'inden çağrılmalı)."""
@@ -284,7 +346,7 @@ class AnimeCard(QFrame):
         if not pix.loadFromData(data):
             return
         self._src_pixmap = pix
-        self._enable_poster()
+        self.yer_tutucu = False
         self._poster_size = (0, 0)        # ölçeklemeyi zorla
         self._apply_geometry()
 
@@ -333,5 +395,5 @@ class StatusLabel(QLabel):
         self.setText(text)
 
 
-__all__ = ["AnimeCard", "ElidedLabel",
-           "StatusLabel", "CARD_MIN_WIDTH", "CARD_PAD", "POSTER_RATIO"]
+__all__ = ["AnimeCard", "ElidedLabel", "StatusLabel", "yer_tutucu_poster",
+           "bas_harfler", "CARD_MIN_WIDTH", "CARD_PAD", "POSTER_RATIO"]
