@@ -37,6 +37,9 @@ class Tercihler:
     aria2c: bool = False
     dakika_hatirla: bool = True
     izlerken_kaydet: bool = False
+    # Kapalıyken ilerleme bölüm sonunda KENDİLİĞİNDEN yazılır; açıkken eski
+    # "Kaçıncı bölümü tamamladınız?" diyaloğu her bölümden sonra açılır.
+    ilerlemeyi_sor: bool = False
     izlendi_ikonu: bool = True
     manuel_fansub: bool = False
     discord: bool = True
@@ -94,6 +97,7 @@ def oku() -> Tercihler:
         aria2c=bool(ayarlar.get("aria2c kullan", False)),
         dakika_hatirla=bool(ayarlar.get("dakika hatirla", True)),
         izlerken_kaydet=bool(ayarlar.get("izlerken kaydet", False)),
+        ilerlemeyi_sor=bool(ayarlar.get("ilerlemeyi sor", False)),
         izlendi_ikonu=bool(ayarlar.get("izlendi ikonu", True)),
         manuel_fansub=bool(ayarlar.get("manuel fansub", False)),
         discord=bool(ayarlar.get("discord_rich_presence", True)),
@@ -116,24 +120,19 @@ def kaynak_kimliklerini_uygula(tercih: Optional[Tercihler] = None) -> bool:
     CDN uçlarında kullanıcıya "Ayarlar'dan token'ını girin" diyordu ama ne alan
     ne de aktarım vardı.
 
-    Boş değer de bilerek gönderiliyor: "Temizle" dendiğinde süreç içindeki eski
-    çerezin de düşmesi gerekir, yoksa yalnızca disk temizlenirdi.
+    Gövde Qt'siz `common.kimlikler`'de: CLI de aynı aktarımı yapıyor ve
+    `gui.qt`'yi (PySide6) import edemez. Burası yalnızca `Tercihler`'i
+    ayar adlarına geri çeviriyor.
 
     Hata yutulur ve `False` döner: kimlik yükleyememek açılışı engellememeli.
     """
+    from ...common.kimlikler import kaynak_kimliklerini_uygula as _uygula
     tercih = tercih or oku()
-    tamam = True
-    try:
-        from ...sources.tranime import set_session_cookie
-        set_session_cookie(tercih.tranime_cookie)
-    except Exception:
-        tamam = False
-    try:
-        from ...sources.openani import set_openani_tokens
-        set_openani_tokens(tercih.openani_token, tercih.openani_refresh)
-    except Exception:
-        tamam = False
-    return tamam
+    return _uygula({
+        "tranime_cookie": tercih.tranime_cookie,
+        "openani_token": tercih.openani_token,
+        "openani_refresh_token": tercih.openani_refresh,
+    })
 
 
 def ayar_yaz(**degerler: Any) -> bool:
@@ -192,9 +191,72 @@ def _kabul_ediyor(fn: Callable, isim: str) -> bool:
     return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
-def oynat(video, tercih: Optional[Tercihler] = None):
-    """`video.oynat()`'ı kullanıcının ayarlarıyla çağır."""
+class YerelVideo:
+    """İndirme klasöründeki dosya, `best_video` adayı gibi davranan kılıkta.
+
+    Yedekli oynatma döngüsü (`common.oynatma.yedekli_oynat`) aday nesnesi
+    bekliyor; yerel dosyayı İLK aday yapmak şunu sağlıyor: dosya bozuksa
+    (mpv 2 ile döner) adresi `atla`ya girer ve döngü kendiliğinden akışa
+    geçer. Ayrı bir "yerel mi, akış mı" dalı bu yedeği ikinci kez yazardı.
+    """
+
+    player = "YEREL"
+
+    def __init__(self, yol: str):
+        self.url = os.path.abspath(yol)
+        self.is_working = True
+
+
+def yerel_dosya(bolum, tercih: Optional[Tercihler] = None,
+                kayitli: str = "") -> Optional[str]:
+    """Bölümün indirilmiş dosyası (oynatılabilir, tamamlanmış) ya da None.
+
+    Önce indirme bittiğinde kaydedilen yol (``kayitli``; kullanıcı klasör
+    ayarını sonradan değiştirmiş olabilir), sonra ayarlı klasördeki hedef.
+    Geçmişteki "indirildi" kaydına bakılmıyor: dosya silinmiş ya da taşınmış
+    olabilir, diskte ne varsa o.
+    """
+    from ...common.dosya_adi import bolum_hedefi, oynatilabilir_dosya
+    if kayitli:
+        try:
+            if os.path.isfile(kayitli) and os.path.getsize(kayitli) > 0:
+                return kayitli
+        except OSError:
+            pass
+    try:
+        return oynatilabilir_dosya(bolum_hedefi(indirme_dizini(tercih), bolum))
+    except (ValueError, TypeError, OSError):
+        return None
+
+
+def oynat(video, tercih: Optional[Tercihler] = None, *,
+          baslangic: Optional[float] = None, konum_dosyasi: Optional[str] = None,
+          bolum: Any = None):
+    """Videoyu kullanıcının ayarlarıyla oynat.
+
+    Kaynak videosu (`AdapterVideo`) ve yerel dosya ortak mpv komutuyla
+    (`common.mpv_oynatici`) açılıyor: bölümün kaldığı saniye (``baslangic``),
+    konum raporu (``konum_dosyasi``) ve "İzlerken kaydet" ancak orada
+    verilebiliyor. `AdapterVideo.oynat` yalnızca `dakika_hatirla` alıyordu;
+    ayar sayfasındaki "İzlerken aynı anda kaydet" hiçbir kaynakta çalışmıyordu.
+    Diğer nesneler (eski `objects.Video`, sahteler) kendi `oynat`'larıyla.
+    """
+    from ...common import mpv_oynatici
     tercih = tercih or oku()
+    if not tercih.dakika_hatirla:
+        baslangic = None
+    if isinstance(video, YerelVideo):
+        return mpv_oynatici.yerel_oynat(video.url,
+                                        dakika_hatirla=tercih.dakika_hatirla,
+                                        baslangic=baslangic,
+                                        konum_dosyasi=konum_dosyasi)
+    if mpv_oynatici.kaynak_videosu_mu(video):
+        kayit = None
+        if tercih.izlerken_kaydet and bolum is not None:
+            kayit = mpv_oynatici.kayit_hedefi_kur(indirme_dizini(tercih), bolum)
+        return mpv_oynatici.video_oynat(video, dakika_hatirla=tercih.dakika_hatirla,
+                                        baslangic=baslangic,
+                                        konum_dosyasi=konum_dosyasi, kayit=kayit)
     kwargs: Dict[str, Any] = {}
     if _kabul_ediyor(video.oynat, "dakika_hatirla"):
         kwargs["dakika_hatirla"] = tercih.dakika_hatirla
@@ -253,6 +315,88 @@ def gecmis_kaydet(bolum, islem: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def seri_adi(bolum, yedek: str = "") -> str:
+    """Okunabilir seri adı — ağa çıkabilecek alanlara dokunmadan.
+
+    `objects.Anime.title` gerekirse sayfayı indirir; önce `_title` bakılıyor
+    (bkz. `progress_dialog.anime_adi`, aynı sıra).
+    """
+    try:
+        anime = getattr(bolum, "anime", None)
+    except Exception:
+        anime = None
+    for alan in ("_title", "title", "slug"):
+        deger = getattr(anime, alan, None)
+        if isinstance(deger, str) and deger:
+            return deger
+    return yedek
+
+
+def kitaplik_kimligi(entry: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Bölüm kaydından kitaplık anahtarı: kaynak, kimlik, seri adı, kapak.
+
+    Kaynak ve kimlik `EpisodePage._kimlik_damgala`'dan gelir. Kaynağı
+    bilinmeyen kayıt (eski akışlar, testlerin çıplak `{"obj": ...}`'i)
+    kitaplığa YAZILMAZ: kaynaksız bir kayıt yeniden açılamaz, yani "izlemeye
+    devam et"te tıklanınca hiçbir yere gitmeyen bir kart olurdu.
+    """
+    entry = entry or {}
+    bolum = entry.get("obj")
+    seri, bolum_slug = bolum_kimligi(bolum)
+    kaynak = str(entry.get("kaynak") or "")
+    kimlik = str(entry.get("kimlik") or "") or (seri if kaynak else "")
+    return {
+        "kaynak": kaynak, "kimlik": kimlik, "bolum_slug": bolum_slug,
+        "baslik": str(entry.get("seri_adi") or "") or seri_adi(bolum, kimlik),
+        "kapak": str(entry.get("kapak") or ""),
+    }
+
+
+def kitapliga_yaz(entry: Optional[Dict[str, Any]], bolum_baslik: str = "") -> bool:
+    """Başarılı oynatmayı kitaplığa (izlemeye devam + geçmiş) yaz.
+
+    `gecmis_kaydet` gibi hata yutar: kitaplık yazılamadı diye oynatmanın
+    "başarılı" sonucu değişmemeli.
+    """
+    from ...common import kutuphane
+    k = kitaplik_kimligi(entry)
+    if not (k["kaynak"] and k["kimlik"] and k["bolum_slug"]):
+        return False
+    return kutuphane.izleme_kaydet(
+        k["kaynak"], k["kimlik"], k["baslik"], k["bolum_slug"],
+        bolum_baslik=bolum_baslik or str((entry or {}).get("title") or ""),
+        kapak=k["kapak"])
+
+
+def konum_getir(entry: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Bölümün kitaplıktaki konumu (``{"konum", "sure", ...}``) ya da None.
+
+    Anahtar kitaplığınki (kaynak + kaynağın kimliği + bölüm slug'ı): mpv'nin
+    adrese bağlı kaydı token'lı/değişen adreslerde kayboluyordu.
+    """
+    from ...common import kutuphane
+    k = kitaplik_kimligi(entry)
+    if not (k["kaynak"] and k["kimlik"] and k["bolum_slug"]):
+        return None
+    try:
+        return kutuphane.konum_getir(k["kaynak"], k["kimlik"], k["bolum_slug"])
+    except Exception:
+        return None
+
+
+def konum_yaz(entry: Optional[Dict[str, Any]], konum: Optional[float],
+              sure: Optional[float] = None) -> bool:
+    """Konumu yaz; ``konum`` None ise sil (bölüm bitti, baştan başlasın)."""
+    from ...common import kutuphane
+    k = kitaplik_kimligi(entry)
+    if not (k["kaynak"] and k["kimlik"] and k["bolum_slug"]):
+        return False
+    if konum is None:
+        return kutuphane.konum_sil(k["kaynak"], k["kimlik"], k["bolum_slug"])
+    return kutuphane.konum_kaydet(k["kaynak"], k["kimlik"], k["bolum_slug"],
+                                  konum, sure)
 
 
 def ilerleme_kaydet(seri: str, bolum_no: int) -> bool:
@@ -379,5 +523,7 @@ class Gecmis:
 __all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
            "kaynak_kimliklerini_uygula",
            "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
+           "seri_adi", "kitaplik_kimligi", "kitapliga_yaz", "YerelVideo",
+           "yerel_dosya", "konum_getir", "konum_yaz",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

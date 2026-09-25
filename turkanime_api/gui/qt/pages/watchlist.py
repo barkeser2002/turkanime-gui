@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ..gorsel import gorsel_getir
 from ..anilist import (
     DURUM_ETIKETI, DURUM_RENGI, DURUMLAR, AniListService,
 )
@@ -254,7 +255,7 @@ class WatchlistPage(QWidget):
 
         for card in cards:
             if card.image_url:
-                run_bg(self._fetch_thumb, card, card.image_url)
+                run_bg(self._fetch_thumb, card, card.image_url, gorsel=True)
 
     def _make_card(self, media: Dict[str, Any]) -> WatchlistCard:
         card = WatchlistCard(media)
@@ -306,11 +307,9 @@ class WatchlistPage(QWidget):
     # ── Kapak görselleri ────────────────────────────────────────────────────
     def _fetch_thumb(self, card: WatchlistCard, url: str) -> None:
         """Arka plan: görseli indir, baytları sinyalle taşı (widget'a dokunma)."""
-        try:
-            import requests
-            data = requests.get(url, timeout=10).content
-        except Exception:
-            return
+        # Tek yol `gorsel_getir`: bellek/disk önbelleği, durum kodu ve
+        # görsel imzası denetimi orada (bkz. `gorsel.py`).
+        data = gorsel_getir(url)
         if data:
             self.thumb_ready.emit(card, data)
 

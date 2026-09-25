@@ -12,9 +12,18 @@ Kapsanan eski hatalar:
 * OpenAnime'ın üç dışa açık fonksiyonunun `timeout` parametresi gövdelerde hiç
   kullanılmıyordu (`PROVIDER_CONFIG["timeout"]` de hiç okunmuyordu).
 * OpenAnime CDN kökü sabit kodluydu; CDN taşındığında tek çare sürüm çıkmaktı.
+* TRAnimeİzle harf sayfalarını `hash(sorgu)` anahtarıyla önbelleğe alıyordu;
+  anahtar süreçten sürece değişiyor, boş (bot kontrolü) sonuç da yazılıyordu.
+* Tranimaci arama sorgusunu kodlamıyordu: "Tom & Jerry" `q=Tom ` gidiyordu.
 """
 import ast
+import json
 import inspect
+import os
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -111,6 +120,68 @@ def test_sayisal_kimlik_hala_sorguya_gidiyor(cix_istekler):
 
     assert any("12345" in url for url in cix_istekler), \
         f"geçerli sayısal kimlik sorgulanmadı: {cix_istekler}"
+
+
+@pytest.fixture
+def cix_yanitlar(monkeypatch):
+    """`_http_get`'i adrese göre yanıt veren sahteyle değiştir; istekleri kaydet."""
+    istekler, yanitlar = [], {}
+
+    def sahte(url, timeout=10):
+        istekler.append(url)
+        for parca, govde in yanitlar.items():
+            if parca in url:
+                if isinstance(govde, Exception):
+                    raise govde
+                return json.dumps(govde).encode()
+        return b"{}"
+
+    monkeypatch.setattr(ac, "_http_get", sahte)
+    return istekler, yanitlar
+
+
+def test_video_kimligi_yoksa_baska_animenin_kimligi_uydurulmuyor(cix_yanitlar):
+    """ESKİ HATA: başlıkta video yoksa sabit bir video kimliğiyle (başka bir
+    animenin) related-videos soruluyordu; o animenin bölümleri gelebiliyordu."""
+    istekler, yanitlar = cix_yanitlar
+    yanitlar["secure/titles/42"] = {"title": {"videos": [], "seasons": []}}
+
+    assert ac.CixAnime(id="42", title="Videosuz").episodes == []
+    assert ac._seasons_for_title(42) == []
+    assert not [u for u in istekler if "related-videos" in u], istekler
+    assert "637113" not in inspect.getsource(ac)
+
+
+def test_baslik_bir_kez_isteniyor(cix_yanitlar):
+    """Eskiden `_episodes_for_title` secure/titles'ı iki kez istiyordu."""
+    istekler, yanitlar = cix_yanitlar
+    yanitlar["secure/titles/42"] = {"title": {"videos": [{"id": 9}],
+                                              "seasons": [{}, {}]}}
+    yanitlar["related-videos"] = {"videos": [{"name": "1. Bölüm", "url": "u1"}]}
+
+    bolumler = ac._episodes_for_title(42)
+
+    assert bolumler == [{"name": "1. Bölüm", "url": "u1", "season_num": None}]
+    assert len([u for u in istekler if "secure/titles/42" in u]) == 1
+    sezon_istekleri = [u for u in istekler if "related-videos" in u]
+    assert len(sezon_istekleri) == 2 and all("videoId=9" in u for u in sezon_istekleri)
+
+
+def test_baslik_okunamazsa_tipli_hata(cix_yanitlar):
+    """Ağ hatası "bu animenin bölümü yok" diye yutulmuyor."""
+    from turkanime_api.common.hatalar import KaynakYanitVermedi
+
+    _istekler, yanitlar = cix_yanitlar
+    yanitlar["secure/titles/42"] = TimeoutError("timed out")
+
+    with pytest.raises(KaynakYanitVermedi, match="AnimeciX"):
+        ac._episodes_for_title(42)
+
+
+def test_oynatici_sabiti_tek_ve_kullaniliyor():
+    """`VIDEO_PLAYERS[1]` ("sibnet") hiçbir yolda okunmuyordu."""
+    assert ac.VIDEO_PLAYER == "tau-video.xyz"
+    assert not hasattr(ac, "VIDEO_PLAYERS")
 
 
 def test_kimlik_yedeginde_hash_cagrisi_kalmadi():
@@ -265,3 +336,96 @@ def test_sayfadaki_cdn_link_ortam_cdn_si_ile_kuruluyor(monkeypatch, openani_otur
 
     assert [v["url"] for v in videolar] == \
         ["https://kendi-cdn.example/animes/one-piece/1.mp4"]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TRAnimeİzle — harf sayfası önbelleği
+# ═════════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def tranime_harf(monkeypatch, tmp_path):
+    """Önbelleği geçici klasöre al; harf sayfası isteklerini say (ağ yok)."""
+    import turkanime_api.sources.tranime as tr
+
+    cagrilar, sayfalar = [], {}
+
+    def sahte_harf(harf, sayfa=1):
+        cagrilar.append((harf, sayfa))
+        return sayfalar.get(sayfa, [])
+
+    monkeypatch.setattr(tr, "CACHE_DIR", tmp_path / "tranime_cache")
+    monkeypatch.setattr(tr, "search_by_letter", sahte_harf)
+    monkeypatch.setattr(tr, "_search_direct", lambda *a, **k: [])
+    monkeypatch.setattr(tr.time, "sleep", lambda _s: None)
+    return tr, cagrilar, sayfalar
+
+
+def test_ayni_harfle_baslayan_sorgular_sayfalari_bir_kez_indiriyor(tranime_harf):
+    tr, cagrilar, sayfalar = tranime_harf
+    sayfalar[1] = [("one-piece", "One Piece"), ("overlord", "Overlord")]
+
+    assert tr.search_anime("one piece")[0] == ("one-piece", "One Piece")
+    ilk = len(cagrilar)
+    assert tr.search_anime("overlord")[0] == ("overlord", "Overlord")
+
+    assert len(cagrilar) == ilk == 2, cagrilar      # sayfa 1 + boş sayfa 2
+    assert [p.name for p in tr.CACHE_DIR.iterdir()] == ["harf_o_s1-5.json"]
+
+
+def test_bos_harf_sonucu_onbellege_yazilmiyor(tranime_harf):
+    """Bot kontrolü boş liste döndürüyor; yazılsaydı 30 dk "sonuç yok" denirdi."""
+    tr, cagrilar, _sayfalar = tranime_harf
+
+    assert tr.search_anime("one piece") == []
+    assert tr.search_anime("one piece") == []
+
+    assert len(cagrilar) == 2, "boş sonuç önbellekten okundu"
+    assert not tr.CACHE_DIR.exists() or not any(tr.CACHE_DIR.iterdir())
+
+
+def test_onbellek_anahtari_surecten_bagimsiz(tmp_path):
+    """Python `hash`'i süreç başına rastgele; anahtar iki süreçte aynı olmalı."""
+    betik = (
+        "import sys, pathlib\n"
+        "import turkanime_api.sources.tranime as tr\n"
+        "tr.CACHE_DIR = pathlib.Path(sys.argv[1])\n"
+        "tr._search_direct = lambda *a, **k: []\n"
+        "tr.search_by_letter = lambda h, s=1: [('one-piece', 'One Piece')] if s == 1 else []\n"
+        "tr.time.sleep = lambda _s: None\n"
+        "tr.search_anime('one piece')\n"
+        "print(sorted(p.name for p in tr.CACHE_DIR.iterdir()))\n"
+    )
+    kok = Path(__file__).resolve().parent.parent
+    ciktilar = []
+    for tohum in ("1", "2"):
+        ortam = dict(os.environ, PYTHONHASHSEED=tohum)
+        cikti = subprocess.run(
+            [sys.executable, "-c", betik, str(tmp_path / f"c{tohum}")],
+            cwd=kok, env=ortam, capture_output=True, text=True, timeout=60, check=True)
+        ciktilar.append(cikti.stdout.strip())
+
+    assert ciktilar[0] == ciktilar[1] == "['harf_o_s1-5.json']"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Tranimaci — arama sorgusu kodlanıyor
+# ═════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize("sorgu", ["Tom & Jerry", "Steins;Gate #0", "Çağ? 100%"])
+def test_tranimaci_sorgusu_kesilmeden_gidiyor(monkeypatch, sorgu):
+    import turkanime_api.sources.tranimaci as tm
+
+    yollar = []
+
+    class Yanit:
+        status_code = 200
+        text = "<html></html>"
+
+    def sahte_istek(yontem, yol, **k):
+        yollar.append(yol)
+        return Yanit()
+
+    monkeypatch.setattr(tm, "_request", sahte_istek)
+    tm.search_tranimaci(sorgu)
+
+    assert parse_qs(urlsplit(yollar[0]).query) == {"q": [sorgu]}

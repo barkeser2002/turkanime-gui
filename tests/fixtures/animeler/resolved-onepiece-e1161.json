@@ -1,0 +1,26 @@
+[
+ {
+  "src": {
+   "id": 329132,
+   "fansub_group_id": 4,
+   "source_type": "iframe",
+   "quality": "auto",
+   "server_name": "Mugen"
+  },
+  "embed": "https://animeler.pw/embed/329132/fefc352bae33bf94",
+  "iframe": "https://anizmplayer.com/video/0e5cea59ae769ec1186d3625fdcf249b",
+  "video": null
+ },
+ {
+  "src": {
+   "id": 329133,
+   "fansub_group_id": 4,
+   "source_type": "iframe",
+   "quality": "auto",
+   "server_name": "Varsayılan(Toplu)"
+  },
+  "embed": "https://animeler.pw/embed/329133/8199b68e567b9d4b",
+  "iframe": "https://loveulikeido.site/e/kTngt6ZU1YSwgfKtkzUPiQ",
+  "video": null
+ }
+]

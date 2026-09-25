@@ -57,11 +57,6 @@ QFrame#CardBadge {{
     border-radius: 5px;
 }}
 QFrame#CardBadge QLabel {{ background: transparent; }}
-QFrame#CardBadgeFlat, QFrame#CardBadgeFlat QLabel {{
-    background: transparent;
-    border: none;
-}}
-
 QFrame#Header {{
     background-color: {BG_ELEV};
     border: none;

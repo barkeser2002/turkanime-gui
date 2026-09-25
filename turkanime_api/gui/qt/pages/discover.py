@@ -31,9 +31,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..theme import TEXT_MUTED, score_color
+from ..gorsel import gorsel_getir
 from ..widgets import AnimeCard, StatusLabel
 from ..workers import WorkerSignals, run_bg
 from ._grid import CardGrid
+from .library import SERIT_SINIRI, DevamSeridi, devam_kayitlari
 
 MODES = ("home", "trending", "season")
 
@@ -219,6 +221,10 @@ class DiscoverPage(QWidget):
     anime_selected = Signal(object)
     # (AnimeCard, görsel baytları) — arka plandan UI thread'ine
     thumb_ready = Signal(object, object)
+    # Ana sayfanın "İzlemeye devam et" şeridi: kitaplık kaydı (kaynak + kimlik).
+    # Keşif kaydından AYRI sinyal: bu kayıt kaynağa bağlı açılır, eşleşme yok.
+    kitaplik_secildi = Signal(object)
+    devam_hazir = Signal(object)          # arka plandan: şerit kayıtları
 
     def __init__(self, mode: str = "home", parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -275,6 +281,15 @@ class DiscoverPage(QWidget):
         # kartların kapladığı kadar yer tutar, altındaki boşluk düzenin
         # kendisine kalırdı ve kaydırma alanı kart sayısıyla birlikte
         # zıplardı.
+        # Yalnızca ana sayfada: yerel kitaplıktan "İzlemeye devam et". Ağdan
+        # bağımsız; Jikan/AniList düştüğünde ana sayfanın tek dolu yeri bu.
+        self.devam: Optional[DevamSeridi] = None
+        if self.mode == "home":
+            self.devam = DevamSeridi()
+            self.devam.secildi.connect(self.kitaplik_secildi.emit)
+            self.devam_hazir.connect(self.devam.doldur)
+            layout.addWidget(self.devam)
+
         self.results = CardGrid()
         layout.addWidget(self.results, 1)
 
@@ -289,8 +304,19 @@ class DiscoverPage(QWidget):
         sekmeye bakmasa bile üç ağ isteği atardı.
         """
         super().showEvent(event)
+        if self.devam is not None:
+            # Şerit HER gösterimde tazelenir (yerel dosya, ucuz): az önce
+            # izlenen bölüm kullanıcı ana sayfaya döndüğünde orada olmalı.
+            run_bg(self._devam_oku)
         if not self._loaded:
             self.refresh()
+
+    def _devam_oku(self) -> None:
+        """Arka plan: kitaplıktan şerit kayıtlarını oku."""
+        try:
+            self.devam_hazir.emit(devam_kayitlari(sinir=SERIT_SINIRI))
+        except RuntimeError:
+            pass              # sayfa bu arada yok edildi (kapanış)
 
     def refresh(self) -> None:
         """Listeyi (yeniden) getir."""
@@ -341,7 +367,7 @@ class DiscoverPage(QWidget):
 
         # Görseller kartlar yerleştikten SONRA, arka planda indirilir.
         for card, url in pending_thumbs:
-            run_bg(self._fetch_thumb, card, url)
+            run_bg(self._fetch_thumb, card, url, gorsel=True)
 
     def _make_card(self, item: Dict[str, Any]) -> AnimeCard:
         """Tek bir anime sözlüğünden kart üret (rozet = puan)."""
@@ -387,11 +413,9 @@ class DiscoverPage(QWidget):
         Widget'a burada DOKUNULMAZ; yalnızca sinyal yayılır (kart bu arada
         silinmiş olabilir, o yüzden slot tarafında da kontrol var).
         """
-        try:
-            import requests
-            data = requests.get(url, timeout=10).content
-        except Exception:
-            return
+        # Tek yol `gorsel_getir`: bellek/disk önbelleği, durum kodu ve
+        # görsel imzası denetimi orada (bkz. `gorsel.py`).
+        data = gorsel_getir(url)
         if data:
             self.thumb_ready.emit(card, data)
 

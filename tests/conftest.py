@@ -11,9 +11,11 @@
 """
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -131,6 +133,157 @@ def _stub_discover_sources(request, monkeypatch):
                             lambda *a, _s=sonuc, **k: _s)
 
 
+_ARSIV_YALITIM_SAYACI = itertools.count()
+
+
+@pytest.fixture(scope="session")
+def _arsiv_yalitim_koku(tmp_path_factory):
+    return tmp_path_factory.mktemp("arsiv_yalitim")
+
+
+@pytest.fixture(autouse=True)
+def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku, tmp_path_factory):
+    """AnimeDepo istemcisini gerçek arşivlerden ve ağdan yalıt.
+
+    İstemci artık önce YEREL arşive bakıyor ve depodan çalışırken commit'lenmiş
+    `arsiv/` (~500 MB) orada duruyor: yalıtılmasa AnimeDepo'ya dokunan her test
+    sessizce gerçek arşivi okur ve sonucu arşivin o günkü içeriğine bağlanırdı.
+    Aynı sebeple geliştiricinin indirdiği `cevrimdisi_arsiv/`, disk önbelleği ve
+    `TURKANIME_ARSIV_*` ortam değişkenleri de devre dışı.
+
+    `_session` da kesiliyor: curl_cffi kendi (libcurl) soketlerini açtığı için
+    yukarıdaki ağ mandalı onu YAKALAMIYOR. HTTP isteyen test kendi sahtesini
+    `monkeypatch.setattr(animedepo, "_session", ...)` ile bunun üstüne yazar.
+
+    Önbellek klasörü test başına ayrı ve yalnızca yazılırsa oluşuyor: bir testin
+    önbelleğe aldığı dosya başka bir testin "çevrimdışı" yoluna sızmasın.
+
+    `ayarlar.json` da: istemci `animedepo_dizin` (seçilen klasör) ve
+    `animedepo_url` (özel ayna) ayarlarını VERİ KÖKÜNDEN okuyor ve pytest
+    depodan çalışınca veri kökü DEPO KÖKÜ. Geliştirici uygulamayı depodan
+    açıp "Klasör seç…"e bastıysa `<depo>/ayarlar.json`'a yazılan klasör ve
+    ayna bütün teste sızıyordu (ölçüldü: 31 test düştü). Kural: ayar dosyası
+    yalnızca pytest'in GEÇİCİ kökü altındaysa okunur. Ayarı sınayan testler
+    zaten `tmp_path`'teki `.git`'li bir klasöre `chdir` ediyor (`izole_ev`,
+    `veri_koku`), onlar etkilenmez.
+    """
+    if "network" in request.keywords:
+        yield
+        return
+    from turkanime_api.sources import animedepo
+
+    kok = _arsiv_yalitim_koku / f"t{next(_ARSIV_YALITIM_SAYACI)}"
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    asil_ayar_dosyasi = animedepo._ayar_dosyasi
+
+    def _yalniz_gecici_ayar_dosyasi():
+        yol = asil_ayar_dosyasi()
+        if yol is None:
+            return None
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+        except ValueError:
+            return None                  # geliştiricinin/kullanıcının gerçek ayarı
+        return yol
+
+    def _ag_yok():
+        raise AgEngellendi("testler AnimeDepo aynalarına çıkamaz; "
+                           "`animedepo._session`'ı sahteleyin")
+
+    monkeypatch.delenv(animedepo.DIZIN_ORTAM_ANAHTARI, raising=False)
+    monkeypatch.delenv(animedepo.ORTAM_ANAHTARI, raising=False)
+    monkeypatch.setattr(animedepo, "DEPO_ARSIVI", kok / "depo_arsivi_yok")
+    monkeypatch.setattr(animedepo, "indirilen_arsiv_dizini", lambda: kok / "indirilen_yok")
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: kok / "onbellek")
+    monkeypatch.setattr(animedepo, "_session", _ag_yok)
+    monkeypatch.setattr(animedepo, "_ayar_dosyasi", _yalniz_gecici_ayar_dosyasi)
+    animedepo.sifirla()
+    yield
+    animedepo.sifirla()
+
+
+@pytest.fixture(autouse=True)
+def _gorsel_onbellek_yalitimi(monkeypatch, tmp_path_factory):
+    """Kapak önbelleği test başına boş ve geçici klasörde.
+
+    Disk önbelleğinin kökü `veri_koku()`: pytest depodan çalışınca DEPO KÖKÜ.
+    Yalıtılmasa testlerin sahte PNG'leri depoya yazılır; bellek önbelleği de
+    testler arasında taşınıp "0 istek" iddialarını önceki testin indirdiğiyle
+    geçirirdi.
+    """
+    from turkanime_api.gui.qt import gorsel
+
+    kok = tmp_path_factory.mktemp("gorsel_onbellek")
+    monkeypatch.setattr(gorsel, "onbellek_dizini", lambda: kok)
+    gorsel.bellegi_temizle()
+    yield
+    gorsel.bellegi_temizle()
+
+
+@pytest.fixture(autouse=True)
+def _kutuphane_yalitimi(monkeypatch, tmp_path_factory):
+    """Kitaplık dosyası (`kutuphane.json`) yalnızca pytest'in geçici kökünde.
+
+    Kök `Dosyalar().ta_path`: depodan çalışınca DEPO KÖKÜ. `preserved_gecmis`
+    kullanan eski oynatma testleri gerçek `gecmis.json`'a yazıp geri alıyor;
+    kitaplık ayrı dosya olduğu için o yedek onu kapsamıyor ve başarılı her
+    oynatma testi depoya `kutuphane.json` bırakırdı (ana sayfa da açılışta
+    geliştiricinin gerçek kitaplığını okurdu). `izole_ev` kullanan testler
+    etkilenmez: onların kökü zaten geçici.
+    """
+    from turkanime_api.common import kutuphane
+
+    asil = kutuphane.kutuphane_yolu
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    yedek = {}
+    kilit = threading.Lock()          # arka plan işleri de çağırıyor
+
+    def _yalniz_gecici():
+        yol = asil()
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+            return yol
+        except ValueError:
+            with kilit:
+                if "yol" not in yedek:
+                    yedek["yol"] = str(tmp_path_factory.mktemp("kutuphane")
+                                       / kutuphane.DOSYA_ADI)
+                return yedek["yol"]
+
+    monkeypatch.setattr(kutuphane, "kutuphane_yolu", _yalniz_gecici)
+
+
+@pytest.fixture(autouse=True)
+def _indirme_kuyrugu_yalitimi(monkeypatch, tmp_path_factory):
+    """İndirme kuyruğu dosyası (`indirme_kuyrugu.json`) yalnızca geçici kökte.
+
+    Kök `Dosyalar().ta_path`: depodan çalışınca DEPO KÖKÜ. Yalıtılmasa gerçek
+    `AdapterBolum`'la kuyruğa iş koyan bir test depoya kuyruk dosyası bırakır,
+    her `MainWindow` açılışı da onu "duraklatıldı" işler olarak geri yüklerdi.
+    `izole_ev` kullanan testler etkilenmez: onların kökü zaten geçici.
+    """
+    from turkanime_api.gui.qt.pages import downloads
+
+    asil = downloads.kuyruk_yolu
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    yedek = {}
+    kilit = threading.Lock()
+
+    def _yalniz_gecici():
+        yol = asil()
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+            return yol
+        except ValueError:
+            with kilit:
+                if "yol" not in yedek:
+                    yedek["yol"] = str(tmp_path_factory.mktemp("kuyruk")
+                                       / downloads.KUYRUK_DOSYASI)
+                return yedek["yol"]
+
+    monkeypatch.setattr(downloads, "kuyruk_yolu", _yalniz_gecici)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _cevresel_taban(pytestconfig):
     """Ağ uçlarının OTURUM BOYU tabanını sahteye çek.
@@ -187,6 +340,11 @@ def main_window(qtbot):
 
     apply_theme(QApplication.instance())
     win = MainWindow()
+    # Süren indirme varken kapanış modal soru açıyor; teardown asla beklememeli.
+    # `yield`'den ÖNCE: pytest-qt `addWidget` ile kaydedilen pencereyi
+    # fixture sonlandırıcılarından önce (kendi teardown kancasında) kapatıyor.
+    # Soruyu sınayan testler bunu kendi `monkeypatch`'leriyle eziyor.
+    win._kapanis_onayi = lambda _adet: True
     qtbot.addWidget(win)
     win.show()
     yield win

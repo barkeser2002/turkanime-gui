@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Any, Dict, Callable
+from typing import List, Optional, Any, Dict, Callable, Iterable
 import errno
+import hashlib
 import json
 from tempfile import NamedTemporaryFile
 from os import remove
@@ -11,15 +12,56 @@ import re
 import unicodedata
 
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
+
+try:
+    from yt_dlp.extractor.unsupported import KnownPiracyIE
+except ImportError:                      # eski/yeni yt-dlp'de yer değişirse
+    KnownPiracyIE = None
 
 from .animecix import _video_streams
-from ..common.dosya_adi import guvenli_alt_yol
+from ..common.dosya_adi import bolum_hedefi, indirilen_dosya
 from ..common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_info
 
 
-def _slugify(text: str) -> str:
+def ytdlp_reddeder(url: Optional[str]) -> bool:
+    """yt-dlp bu adresi baştan reddediyor mu (KnownPiracy listesi)?
+
+    yt-dlp uqload.com, yourupload.com, dood.*, filemoon.sx, wolfstream.tv…
+    için çıkarıcı çalıştırmıyor, "desteklenmiyor" deyip çıkıyor; mpv'nin
+    ytdl_hook'u da yt-dlp'den geçtiği için bu adaylar hiç oynamıyor. Ölçüm
+    (yt-dlp 2026.08.19, yerel arşiv): 71.137 bölümün 26.563'ünde (%37) ilk
+    8 adaydan en az biri böyle; `best_video` yalnızca ilk birkaç adayı
+    yokladığı için bu adaylar çalışacak olanların yerini yiyordu.
+    `suitable` saf bir adres düzenli ifadesi: ağa çıkmıyor.
+    """
+    if not url or KnownPiracyIE is None:
+        return False
+    try:
+        return bool(KnownPiracyIE.suitable(url))
+    except Exception:
+        return False
+
+
+# Başlıktan ÜRETİLEN slug'ın üst sınırı. Kaynağın kendi verdiği slug'a
+# uygulanmaz (bkz. `AdapterBolum`): o bir kimlik, kesilirse kimlik olmaktan çıkar.
+SLUG_SINIRI = 80
+
+
+def _slugify(text: str, azami: Optional[int] = SLUG_SINIRI) -> str:
     """Basit ve güvenli bir slug üretici: ASCII'ye indirger,
-    boşlukları '-' yapar, gereksizleri temizler."""
+    boşlukları '-' yapar, gereksizleri temizler.
+
+    ``azami``: uzunluk sınırı; ``None`` kesmez. Sınırı aşan slug düz kesilmez,
+    sonuna tam slug'ın kısa özeti eklenir. Düz kesmek iki farklı slug'ı AYNI
+    yapıyordu: arşivde 633 bölüm slug'ı 80 karakterden uzun ve 394'ü aynı
+    animenin başka bir bölümüyle ilk 80 karakteri paylaşıyor ("…-youna-mo").
+    Slug izleme geçmişinin anahtarı ve indirme dosyasının adı olduğu için
+    sonuç: bütün bölümler aynı dosyaya iniyor, biri izlenince hepsi
+    "izlendi" görünüyordu. Özet sayesinde kesilen slug'lar da ayrık kalır ve
+    aynı girdi her zaman aynı slug'ı verir (Python'un `hash`'i gibi süreçten
+    sürece değişmez).
+    """
     if not text:
         return ""
     # Unicode -> ASCII transliterasyon
@@ -29,7 +71,10 @@ def _slugify(text: str) -> str:
     t = re.sub(r"\s+", "-", t)
     t = re.sub(r"[^a-z0-9\-]", "-", t)
     t = re.sub(r"-+", "-", t).strip("-")
-    return t[:80]
+    if azami is not None and len(t) > azami:
+        ozet = hashlib.sha1(t.encode("ascii")).hexdigest()[:8]
+        t = f"{t[:max(1, azami - len(ozet) - 1)].rstrip('-')}-{ozet}"
+    return t
 
 
 @dataclass
@@ -85,10 +130,17 @@ class AdapterVideo:
             # OPENANI linkleri Cloudflare arkasında olduğu için yt-dlp 404 dönecektir.
             # Bu linkler direkt mp4/m3u8 olduğu için info'yu sahte (mock) oluşturuyoruz.
             if self.player == "OPENANI":
+                # `id`/`extractor` şart: yt-dlp `process_video_result`'ta
+                # `info_dict['extractor']`ı okuyor; yoksa KeyError('extractor')
+                # ile her OpenAnime indirmesi "hata: 'extractor'" diye düşüyordu.
                 self._info = {
+                    "id": str(getattr(self.bolum, "slug", "") or "video"),
                     "url": self.url,
                     "ext": "mp4" if "mp4" in self.url else "m3u8",
-                    "title": self.bolum.title if self.bolum else "Video"
+                    "title": self.bolum.title if self.bolum else "Video",
+                    "extractor": "generic",
+                    "extractor_key": "Generic",
+                    "webpage_url": self.url,
                 }
                 return self._info
 
@@ -123,15 +175,19 @@ class AdapterVideo:
 
     def indir(self, callback=None, output=""):
         assert self.is_working, "Video çalışmıyor."
-        seri_slug = self.bolum.anime.slug if getattr(self.bolum, 'anime', None) else ""
         # Slug kaynağın verisi: arşivin dizin.json'ına `"../../../evil"` konursa
         # yt-dlp dosyayı indirme klasörünün DIŞINA yazar. Bkz. common.dosya_adi.
-        out_tmpl_dir = guvenli_alt_yol(output, seri_slug, self.bolum.slug,
-                                       yedek="bolum")
+        out_tmpl_dir = bolum_hedefi(output, self.bolum)
         opts = self.ydl_opts.copy()
         if callback:
             opts['progress_hooks'] = [callback]
         opts['outtmpl'] = {'default': out_tmpl_dir + r'.%(ext)s'}
+        # `get_ydl_opts` 'ignoreerrors': 'only_download' veriyor; o ayarla
+        # yt-dlp HTTP 403'te istisna FIRLATMIYOR, yalnızca 1 döndürüyordu.
+        # Dönüş değeri de okunmadığı için arayüz ve CLI klasör boşken işi
+        # "tamamlandı" sayıp geçmişe "indirildi" yazıyordu; kuyruğun kendi
+        # yeniden denemesi de hiç çalışmıyordu. İndirmede hata hata olmalı.
+        opts['ignoreerrors'] = False
         # delete=False şart: yt-dlp dosyayı adıyla ikinci kez açıyor (Windows'ta
         # açık bir NamedTemporaryFile yeniden açılamaz). Bu yüzden temizliği biz
         # yapıyoruz — aksi hâlde her indirme bir geçici dosya sızdırır.
@@ -139,7 +195,14 @@ class AdapterVideo:
             json.dump(self.info, tmp)
         try:
             with YoutubeDL(opts) as ydl:  # type: ignore
-                ydl.download_with_info_file(tmp.name)
+                kod = ydl.download_with_info_file(tmp.name)
+            # İki kat güvence: çıkış kodu da, diskteki sonuç da denetlenir.
+            # Yalnızca `.part`/`.ytdl` kaldıysa indirme bitmemiştir.
+            if isinstance(kod, int) and kod != 0:
+                raise DownloadError(f"yt-dlp indirmeyi bitiremedi (çıkış kodu {kod})")
+            if indirilen_dosya(out_tmpl_dir) is None:
+                raise DownloadError("indirme bitti ama dosya diskte yok: "
+                                    f"{out_tmpl_dir}.*")
         finally:
             try:
                 remove(tmp.name)
@@ -277,23 +340,67 @@ class AdapterBolum:
         anime: AdapterAnime,
         stream_provider: Optional[Callable[[str], List[Dict[str, str]]]] = None,
         player_name: str = "ANIMECIX",
+        slug: Optional[str] = None,
     ):
         self.url = url
         self._title = title
         self.anime = anime
         self._stream_provider = stream_provider
         self._player_name = player_name or "ANIMECIX"
-        # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı)
-        self.slug = _slugify(f"{anime.title}-{title}" if anime else title)
+        # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı).
+        # Kaynak kendi bölüm slug'ını veriyorsa (TürkAnime arşivi: sitenin
+        # "naruto-1-bolum"u) o kullanılır: izleme geçmişi ve eski indirmelerin
+        # dosya adları o slug'la duruyor. Yine `_slugify`'dan geçer — değer
+        # arşivden geliyor; indirme yolu ayrıca `guvenli_alt_yol` ile korunuyor.
+        # KESİLMEZ (`azami=None`): sitenin slug'ı hiç kısaltılmamıştı; 80'de
+        # kesmek uzun adlı serilerde bölümleri birbirine karıştırıyordu (aynı
+        # geçmiş anahtarı, aynı indirme dosyası). Dosya adı uzunluğu diske
+        # dokunulan yerde, `guvenli_alt_yol`'da sınırlanıyor.
+        verilen = _slugify(slug, azami=None) if slug else ""
+        self.slug = verilen or _slugify(f"{anime.title}-{title}" if anime else title)
+        # `fansubs` akışları getirmek zorunda (fansub adları akışların içinde).
+        # CLI hemen ardından `best_video` çağırıyor; aynı listeyi ikinci kez
+        # istememek için burada bekletilir ve İLK `best_video` onu tüketir.
+        # Kalıcı cache DEĞİL: bazı kaynakların adresleri imzalı/süreli; aynı
+        # bölüm nesnesiyle saatler sonra yapılan oynatma taze liste almalı.
+        self._bekleyen_akislar: Optional[List[Dict[str, Any]]] = None
+        self._fansub_listesi: Optional[List[str]] = None
 
     @property
     def title(self):
         return self._title
 
+    def _saglayici(self) -> Callable[[str], List[Dict[str, Any]]]:
+        return self._stream_provider or _video_streams
+
+    def _fansublari_not_et(self, akislar: List[Dict[str, Any]]) -> None:
+        """Akışlardaki fansub adlarını (ilk görülme sırasıyla) hatırla."""
+        if self._fansub_listesi is not None or not akislar:
+            return
+        adlar: List[str] = []
+        for akis in akislar:
+            ad = akis.get("fansub") if isinstance(akis, dict) else None
+            if isinstance(ad, str) and ad.strip() and ad.strip() not in adlar:
+                adlar.append(ad.strip())
+        self._fansub_listesi = adlar
+
     @property
     def fansubs(self):
-        # AnimeciX tarafında fansub konsepti kullanılmıyor
-        return []
+        """Bölümün fansub adları; sağlayıcı "fansub" vermiyorsa boş liste.
+
+        AnimeciX/Tranimaci gibi kaynaklarda fansub kavramı yok, liste boş kalır
+        ve CLI seçim sormaz. AnimeDepo her akışta "fansub" taşıyor; aynı
+        bölümün birden çok grubu varsa kullanıcı seçebilir.
+        """
+        if self._fansub_listesi is None and self.url:
+            try:
+                akislar = self._saglayici()(self.url) or []
+            except Exception:
+                akislar = []          # fansub listesi yüzünden oynatma çökmesin
+            if akislar:
+                self._bekleyen_akislar = akislar
+                self._fansublari_not_et(akislar)
+        return list(self._fansub_listesi or [])
 
     def best_video(
         self,
@@ -301,25 +408,53 @@ class AdapterBolum:
         by_fansub=None,
         default_res=600,
         callback=lambda x: None,
-        early_subset: int = 8
+        early_subset: int = 8,
+        atla: Optional[Iterable[str]] = None,
     ):
+        """En iyi çalışan videoyu bul; hiçbiri yoksa None.
+
+        ``atla``: bu adreslerdeki akışlar hiç denenmez. CLI'ın yeniden deneme
+        döngüsü, mpv'de oynatılamayan videonun adresini buraya ekliyor.
+        Gerekli çünkü bu sınıf videoları önbelleklemiyor: her çağrı akışlardan
+        YENİ `AdapterVideo`'lar kuruyor, çağıranın başarısız videoya koyduğu
+        ``is_working = False`` bir sonraki çağrıda kayboluyor ve aynı (ilk
+        sıradaki) adres yeniden seçiliyordu — CLI üç denemenin üçünde de aynı
+        bozuk videoyu açıyor, çalışan diğerlerine hiç geçmiyordu. (Eski
+        `objects.Bolum` videolarını sakladığı için bu sorun orada yoktu.)
+
+        Kaynak okunamadıysa (arşive ulaşılamadı, Cloudflare engeli, zaman
+        aşımı, çerez gerekli…) sağlayıcının `common.hatalar.KaynakHatasi`'sı
+        YÜKSELİR, "hiçbiri çalışmıyor" denmez; bkz. `kayit.akis_saglayici`.
+        """
         # URL kontrolü
         if not self.url:
             callback({"current": 1, "total": 1, "player": "ANIMECIX", "status": "URL bulunamadı"})
             return None
 
         # Kaynağa uygun stream sağlayıcısını kullan
-        provider = self._stream_provider or _video_streams
         player_label = self._player_name
 
         callback({"current": 0, "total": 1, "player": player_label, "status": "üstbilgi çekiliyor"})
-        streams = provider(self.url)
+        if self._bekleyen_akislar is not None:
+            # `fansubs` az önce getirdi; aynı listeyi ikinci kez isteme.
+            streams, self._bekleyen_akislar = self._bekleyen_akislar, None
+        else:
+            try:
+                streams = self._saglayici()(self.url)
+            except Exception:
+                callback({"current": 1, "total": 1, "player": player_label,
+                          "status": "kaynak okunamadı"})
+                raise
+            self._fansublari_not_et(streams or [])
         if not streams:
+            # "sebep": denenecek aday HİÇ yoktu; `common.oynatma` bunu
+            # "N aday denendi" özetinden ayırıp kullanıcıya söylüyor.
             callback({
                 "current": 1,
                 "total": 1,
                 "player": player_label,
-                "status": "hiçbiri çalışmıyor"
+                "status": "hiçbiri çalışmıyor",
+                "sebep": "kaynak bu bölüm için hiç video vermedi",
             })
             return None
 
@@ -337,6 +472,25 @@ class AdapterBolum:
             })
             return None
 
+        # Daha önce denenip oynatılamayanlar elenir. Hepsi denendiyse "video
+        # yok" değil "hiçbiri çalışmıyor": adresler vardı, çalışmadılar.
+        if atla:
+            atlanacak = set(atla)
+            kalan = [s for s in adaylar if s.get("url") not in atlanacak]
+            if not kalan:
+                callback({"current": 1, "total": 1, "player": player_label,
+                          "status": "hiçbiri çalışmıyor"})
+                return None
+            adaylar = kalan
+
+        # Seçilen fansub'un akışlarıyla sınırla. Hiçbiri eşleşmiyorsa (fansub
+        # kavramı olmayan kaynak ya da o grubun kaydı artık yok) hepsiyle devam:
+        # kullanıcı "bu grubu tercih ederim" dedi, "başka grup oynatma" demedi.
+        if by_fansub:
+            secili = [s for s in adaylar if s.get("fansub") == by_fansub]
+            if secili:
+                adaylar = secili
+
         # Kaynaklar aynı kalite için birden çok CDN yedeği döndürüyor
         # ("1080p", "1080p (CDN2)", ...). Eskiden yalnızca en yüksek çözünürlüklü
         # İLK aday deneniyordu; o CDN 403/504 verdiğinde çalışan yedekler varken
@@ -345,22 +499,77 @@ class AdapterBolum:
         if by_res:
             adaylar.sort(key=lambda s: parse_res(s.get("label") or "0p"),
                          reverse=True)
+        # yt-dlp'nin baştan reddettiği konaklar (uqload, yourupload, dood,
+        # filemoon…) bütçeyi yemesin: sona. Kararlı sıralama; diğerlerinin
+        # sırası (çözünürlük, kaynağın CDN sırası) korunur.
+        adaylar.sort(key=lambda s: ytdlp_reddeder(s.get("url")))
         # `early_subset` ile aynı bütçe: her CDN'i denemek yt-dlp zaman aşımları
         # yüzünden dakikalara mal olabilir.
         adaylar = adaylar[:max(1, int(early_subset or 1))]
 
         toplam = len(adaylar)
         for sira, aday in enumerate(adaylar, start=1):
-            callback({"current": sira, "total": toplam, "player": player_label,
+            # Akış kendi oynatıcısını söylüyorsa (AnimeDepo: SIBNET, MAIL…)
+            # ilerlemede o görünür; söylemeyen kaynaklarda eski etiket kalır.
+            oynatici = aday.get("player") or player_label
+            callback({"current": sira, "total": toplam, "player": oynatici,
                       "status": "üstbilgi çekiliyor"})
             vid = AdapterVideo(self, aday.get("url"), aday.get("label"),
-                               player=player_label, referer=aday.get("referer"))
+                               player=oynatici, referer=aday.get("referer"))
             if vid.is_working:
                 callback({"current": sira, "total": toplam,
-                          "player": player_label, "status": "çalışıyor"})
+                          "player": oynatici, "status": "çalışıyor"})
                 return vid
-            callback({"current": sira, "total": toplam, "player": player_label,
+            callback({"current": sira, "total": toplam, "player": oynatici,
                       "status": "çalışmıyor"})
         callback({"current": toplam, "total": toplam, "player": player_label,
                   "status": "hiçbiri çalışmıyor"})
         return None
+
+
+def kayittan_bolumler(kaynak: Any, slug: str, title: str) -> List[AdapterBolum]:
+    """Kayıttaki bir kaynağın (`sources.kayit.Kaynak`) bölümlerini nesneye çevir.
+
+    Qt köprüsü (`gui/qt/sources_bridge.py`) ve CLI aynı işi eskiden kaynak
+    başına ayrı ayrı yazıyordu — CLI'da her kaynak için iki kez (izle ve indir
+    dalları), toplam ~250 satır neredeyse aynı `AdapterBolum(...)` kurulumu.
+    Bu fonksiyon o kurulumun tek kopyası: bölüm kimliği kaynağın
+    `bolum_adresi` ile url'ye çevrilir, akışlar kimliği kapatan sağlayıcıyla
+    getirilir (bkz. `kayit.akis_saglayici`).
+
+    Burada, `kayit.py`'de değil: `AdapterBolum` bu modülde ve bu modül yt_dlp
+    çekiyor; kayıt ise sunucu tarayıcısının da okuduğu hafif modül.
+
+    Kimlik bu kaynakta açılamıyorsa (AnimeciX: sayısal değil) ``ValueError``
+    kaynağın kendi mesajıyla yükselir; kaynak bölüm vermiyorsa boş liste.
+    """
+    from .kayit import akis_saglayici
+
+    hata = kaynak.kimlik_denetle(slug)
+    if hata:
+        raise ValueError(hata)
+    uclar = kaynak.uclar()
+    if uclar.bolumler is None or uclar.akislar is None:
+        return []                       # yalnızca metadata (AniList)
+    ham = uclar.bolumler(slug) or []
+    anime = AdapterAnime(slug=slug, title=title)
+    bolumler: List[AdapterBolum] = []
+    gorulen = set()
+    for bolum_id, bolum_basligi in ham:
+        # Aynı kimlik iki kez: Anizle'nin veritabanı ve sayfası aynı bölümü
+        # tekrar verebiliyor (eskiden `AnizleAnime.episodes` bu yüzden
+        # ayıklıyordu). Aynı bölüm listede iki satır olmasın.
+        if bolum_id in gorulen:
+            continue
+        gorulen.add(bolum_id)
+        bolumler.append(AdapterBolum(
+            url=kaynak.bolum_adresi(bolum_id),
+            title=bolum_basligi,
+            anime=anime,
+            stream_provider=akis_saglayici(uclar.akislar, bolum_id,
+                                           etiket=kaynak.etiket,
+                                           bos_mesaji=kaynak.bos_akis_mesaji),
+            player_name=kaynak.oynatici,
+            slug=kaynak.bolum_slugu(bolum_id) if kaynak.bolum_slugu else None,
+        ))
+    return bolumler

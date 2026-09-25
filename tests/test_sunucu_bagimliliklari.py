@@ -48,7 +48,15 @@ ISTEMCI_MODULLERI = [
     "turkanime_api.sources.animecix",
     "turkanime_api.sources.tranime",
     "turkanime_api.sources.tranimaci",
+    "turkanime_api.sources.animexe",
+    "turkanime_api.sources.deokwave",
+    "turkanime_api.sources.asyaanimeleri",
+    "turkanime_api.sources.animeler",
+    "turkanime_api.sources.onepacetr",
     "turkanime_api.sources.animedepo",
+    # Şifreli eski API pycryptodome istiyor; modül onu ilk şifreli istekte
+    # yüklemeli, import anında değil (sunucu imajında Crypto yok).
+    "turkanime_api.sources.animpow",
     "turkanime_api.common.episode_parser",
     "turkanime_api.common.title_match",
 ]
@@ -77,6 +85,18 @@ def test_sunucu_modulu_indirme_yiginini_cekmiyor(modul):
         "turkanime_server/requirements.txt bunları kurmuyor — konteyner "
         "ImportError ile çıkar. Paketi geri eklemek yerine sızıntıyı bul."
     )
+
+
+def test_api_sunucusu_indirme_yiginini_cekmiyor():
+    """app.py kaynak tablosunu kayıttan kurarken her kaynağın uçlarını yüklüyor.
+
+    Listede değil çünkü flask/flask_cors ister; kuruluysa (CI kuruyor) burada
+    sınanıyor. Uçlardan biri yt-dlp'ye uzanırsa API imajı ImportError verir.
+    """
+    pytest.importorskip("flask")
+    pytest.importorskip("flask_cors")
+    sizinti = _yuklu_paketler("turkanime_server.app")
+    assert not sizinti, f"turkanime_server.app şunları sürükledi: {sorted(sizinti)}"
 
 
 @pytest.mark.parametrize("modul", ISTEMCI_MODULLERI)

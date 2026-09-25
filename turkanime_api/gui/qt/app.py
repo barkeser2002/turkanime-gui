@@ -11,22 +11,29 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QMainWindow, QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QSystemTrayIcon,
+    QVBoxLayout, QWidget,
 )
 
+from ...common import kutuphane, mpv_oynatici
+from ...common.episode_parser import extract_episode_info
+from ...common.hatalar import insanlastir
+from ...common.oynatma import yedekli_oynat
 from . import prefs
 from .anilist import AniListService
 from .discord import DiscordService
 from .pages.detail import DetailPage
 from .pages.discover import DiscoverPage
-from .pages.downloads import DownloadManager, DownloadsPage
+from .fansub import FansubSecici
+from .pages.downloads import DURUM_IPTAL, DownloadManager, DownloadsPage
 from .pages.episodes import EpisodePage
+from .pages.library import LibraryPage
 from .pages.search import SearchPage
 from .pages.settings import SettingsPage
 from .pages.watchlist import WatchlistPage
@@ -56,6 +63,7 @@ NAV_ITEMS = [
     ("season", "Bu Sezon"),
     ("trending", "Trend"),
     ("watchlist", "İzleme Listesi"),
+    ("library", "Kitaplığım"),
     ("downloads", "İndirilenler"),
     ("settings", "Ayarlar"),
 ]
@@ -84,11 +92,11 @@ def prepare_qt_env() -> None:
 
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
 
-    # Bazı sanal/başsız ortamlarda GPU yok; WebEngine'i yumuşak başlat.
-    os.environ.setdefault(
-        "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--disable-gpu-compositing --disable-features=UseChromeOSDirectVideoDecoder",
-    )
+    # Chromium'un GPU süreci kapalı: GPU'suz ortamda sayfa kapanırken çöküyordu
+    # (ölçüm ve gerekçe: common/chromium.py). CF çözücü alt-süreci de aynısını
+    # kullanıyor.
+    from ...common.chromium import bayraklari_hazirla
+    bayraklari_hazirla()
 
     try:  # WebEngine opsiyonel kalsın: yoksa GUI yine de açılmalı
         import PySide6.QtWebEngineCore  # noqa: F401
@@ -112,6 +120,8 @@ class MainWindow(QMainWindow):
         # Arka plan işlerinden UI'ya güvenli geçiş köprüsü (eski `after(0, ...)`)
         self.ui = UiBridge(self)
         self.downloads = DownloadManager(self)
+        # "Fansub'u kendim seçeyim": seri başına tek soru (bkz. `fansub`).
+        self.fansub = FansubSecici(self)
         self.downloads.finished.connect(self._on_download_finished)
 
         # AniList tek bir servisten yürür: ayar sayfası girişi yapar, izleme
@@ -132,8 +142,14 @@ class MainWindow(QMainWindow):
         self._update_dialog: QWidget | None = None
         self._req_dialog: QWidget | None = None
         self._dl_titles: Dict[str, str] = {}
+        # Kuyruk boşalana kadar biten işlerin sayımı (bkz. `_toplu_indirme_bitti`).
+        self._toplu_indirme = {"ok": 0, "hata": 0}
+        self._tepsi: QSystemTrayIcon | None = None
         self.downloads.added.connect(self._on_download_added)
         self.downloads.progress.connect(self._on_download_progress)
+        # Menüdeki "İndirilenler (N)": indirme artık sayfayı değiştirmiyor,
+        # kuyruğa girdiğini ve kaç işin sürdüğünü kullanıcı buradan görüyor.
+        self.downloads.state.connect(self._indirme_sayacini_guncelle)
 
         self._playing = False          # aynı anda tek oynatma denemesi
         # Detay sayfasındaki "← Geri" hangi sekmeden gelindiyse oraya dönmeli.
@@ -142,6 +158,14 @@ class MainWindow(QMainWindow):
         self.pages: Dict[str, QWidget] = {}
         self._build_ui()
         self.show_page("home")
+        # Önceki oturumun bitmemiş indirmeleri (kapanışta ya da çökmede
+        # kalanlar) "duraklatıldı" olarak geri gelir; ağa çıkılmaz, iş
+        # başlatılmaz. Sayfalar kurulduktan SONRA: satırlar `added` ile doğuyor.
+        geri = self.downloads.geri_yukle()
+        if geri:
+            self.statusBar().showMessage(
+                f"Önceki oturumdan {geri} indirme duraklatılmış olarak geri "
+                "yüklendi — İndirilenler'den “Tümünü Sürdür”.", 0)
         # Jeton diskte duruyor olabilir; kullanıcı adını/avatarı arka planda al.
         self.anilist.baslat()
         QTimer.singleShot(ACILIS_DENETIM_GECIKMESI, self._acilis_denetimleri)
@@ -178,6 +202,7 @@ class MainWindow(QMainWindow):
         episodes = EpisodePage()
         episodes.play_requested.connect(self._on_play)
         episodes.download_requested.connect(self._on_download)
+        episodes.kuyrukta_mi = self._kuyrukta_mi
         self.pages["episodes"] = episodes
         self.stack.addWidget(episodes)
 
@@ -188,7 +213,7 @@ class MainWindow(QMainWindow):
     def _make_page(self, key: str, label: str) -> QWidget:
         """`NAV_ITEMS` anahtarına karşılık gelen sayfayı üret.
 
-        Aşağıdaki dallar `NAV_ITEMS`'ın yedi anahtarını da karşılıyor, yani
+        Aşağıdaki dallar `NAV_ITEMS`'ın sekiz anahtarını da karşılıyor, yani
         sona düşmek mümkün değil. Yine de sessizce `None` dönüp çağıranın
         `addWidget`'ında anlamsız bir hatayla patlamak yerine burada
         bağırıyoruz: `NAV_ITEMS`'a dalı yazılmamış bir anahtar eklenirse
@@ -201,9 +226,18 @@ class MainWindow(QMainWindow):
         if key in ("home", "trending", "season"):
             page = DiscoverPage(key)
             page.anime_selected.connect(self._on_discover_selected)
+            page.kitaplik_secildi.connect(self._on_kitaplik_selected)
+            return page
+        if key == "library":
+            page = LibraryPage()
+            page.kitaplik_secildi.connect(self._on_kitaplik_selected)
             return page
         if key == "downloads":
-            return DownloadsPage(self.downloads)
+            page = DownloadsPage(self.downloads)
+            # Biten indirmenin "Oynat"ı normal oynatma yolundan geçer: yerel
+            # dosya orada ilk aday, geçmiş/kitaplık yazımı da aynı yerde.
+            page.oynat_istendi.connect(self._on_play)
+            return page
         if key == "watchlist":
             page = WatchlistPage(self.anilist)
             page.anime_selected.connect(self._on_discover_selected)
@@ -339,11 +373,27 @@ class MainWindow(QMainWindow):
         if isinstance(item, dict) and item and isinstance(page, DetailPage):
             self._open_detail(lambda: page.show_anime(item))
 
-    def _on_anime_selected(self, source: str, slug: str, title: str) -> None:
-        """Arama sonucundan anime seçildi: kaynağı bağlı detay sayfasını aç."""
+    def _on_kitaplik_selected(self, kayit) -> None:
+        """Kitaplık kartı: detayı kaynağa BAĞLI aç, bölümleri hemen getir.
+
+        Keşif kartından farkı: kayıt kaynağın kendi kimliğini taşıyor, yani
+        eşleştirme (ve yanlış eşleşme riski) yok (bkz. `kitaplik_ac`).
+        """
+        page = self.pages.get("detail")
+        if isinstance(kayit, dict) and isinstance(page, DetailPage):
+            self._open_detail(lambda: page.kitaplik_ac(kayit))
+
+    def _on_anime_selected(self, source: str, slug: str, title: str,
+                           kayit: object = None) -> None:
+        """Arama sonucundan anime seçildi: kaynağı bağlı detay sayfasını aç.
+
+        ``kayit`` arama kaydının kendisi (kapak adresi dahil); detay sayfası
+        kartta görünen posteri tekrar göstermek için kullanıyor.
+        """
         page = self.pages.get("detail")
         if isinstance(page, DetailPage):
-            self._open_detail(lambda: page.show_match(source, slug, title))
+            ek = kayit if isinstance(kayit, dict) else None
+            self._open_detail(lambda: page.show_match(source, slug, title, kayit=ek))
 
     def _open_detail(self, populate) -> None:
         """Detay sayfasına geç ve dönüş noktasını hatırla.
@@ -371,14 +421,29 @@ class MainWindow(QMainWindow):
         aynı listeyi ikinci kez ağdan indirirdi.
         """
         page = self.pages.get("episodes")
+        detail = self.pages.get("detail")
+        # Kaynak başına kimlikler + kapak: kitaplık kaydı satırın KENDİ
+        # kaynağının kimliğiyle yazılsın (bkz. `EpisodePage._kimlik_damgala`).
+        baglam = (detail.kitaplik_baglami() if isinstance(detail, DetailPage)
+                  else {})
         if isinstance(page, EpisodePage):
             self.show_page("episodes")
-            page.load(source, slug, title, episodes=episodes)
+            page.load(source, slug, title, episodes=episodes,
+                      baglar=baglam.get("baglar"), kapak=baglam.get("kapak") or "")
 
     # ── Oynatma / indirme ───────────────────────────────────────────────────
     def _status(self, msg: str, timeout: int = 6000) -> None:
         """Durum çubuğuna yaz (her thread'den güvenli)."""
         self.ui.post(lambda: self.statusBar().showMessage(msg, timeout))
+
+    def _hata_durumu(self, msg: str) -> None:
+        """Hatayı durum çubuğuna SÜRESİZ yaz; bir sonraki mesaj onu değiştirir.
+
+        Bilgi mesajları 6 sn'de siliniyor, hatalar da öyleydi: mpv'nin
+        açılmasını bekleyip başka pencereye bakan kullanıcı "neden
+        oynamadı?"nın cevabını hiç görmüyordu.
+        """
+        self._status(msg, 0)
 
     def _on_play(self, entry) -> None:
         bolum = (entry or {}).get("obj")
@@ -388,44 +453,162 @@ class MainWindow(QMainWindow):
             self._status("Zaten bir bölüm açılıyor, lütfen bekleyin.")
             return
         self._playing = True
+        title = entry.get("title") or ""
         self._status(f"{entry.get('title')} — video aranıyor…")
-        self.discord.izliyor(anime_adi(bolum, ""), entry.get("title") or "")
-        # playback: oynatma mpv kapanana kadar thread'i tutar ama İNDİRME
-        # havuzuna girmemeli — kuyrukta 30 bölüm varsa mpv hiç açılmaz ve
-        # `_playing` açık kaldığı için kullanıcı yeniden de deneyemez.
-        run_bg(self._play_blocking, bolum, entry.get("title") or "",
-               playback=True)
+        self.discord.izliyor(anime_adi(bolum, ""), title)
 
-    def _play_blocking(self, bolum, title: str) -> None:
+        def devam(tamam: bool, fansub: Optional[str]) -> None:
+            if not tamam:
+                self._playing = False
+                self._status(f"{title} — oynatma iptal edildi (fansub seçilmedi).")
+                return
+            # playback: oynatma mpv kapanana kadar thread'i tutar ama İNDİRME
+            # havuzuna girmemeli — kuyrukta 30 bölüm varsa mpv hiç açılmaz ve
+            # `_playing` açık kaldığı için kullanıcı yeniden de deneyemez.
+            run_bg(self._play_blocking, bolum, title, entry, fansub,
+                   playback=True)
+
+        tercih = prefs.oku()
+        # İndirilmiş bölüm diskten oynuyor: fansub sormanın anlamı yok.
+        if tercih.manuel_fansub and not prefs.yerel_dosya(
+                bolum, tercih, str(entry.get("yerel_dosya") or "")):
+            self.fansub.iste(entry, devam)
+        else:
+            devam(True, None)
+
+    def _play_blocking(self, bolum, title: str, entry=None,
+                       fansub: Optional[str] = None) -> None:
         # NOT: Bu gövde arka plan thread'inde; hata yutulursa kullanıcı sonsuza
         # kadar "video aranıyor…" görür. Bu yüzden her çıkış yolu raporlanır.
+        #
+        # Aday döngüsü CLI ile ORTAK (`common.oynatma.yedekli_oynat`). Eskiden
+        # `best_video` bir kez çağrılıyor, mpv nasıl kapanırsa kapansın bölüm
+        # "izlendi" yazılıyor ve ilerleme diyaloğu açılıyordu — mpv 2 ile
+        # (dosya oynatılamadı) çıksa bile. Yeniden "Oynat" da işe yaramıyordu:
+        # `best_video` aynı bozuk ilk adayı yine seçiyordu. Artık oynatılamayan
+        # adres `atla` ile geri veriliyor ve geçmiş yalnızca başarıda yazılıyor.
         try:
             tercih = prefs.oku()
-            video = bolum.best_video(by_res=tercih.max_res,
-                                     early_subset=tercih.aday_sayisi)
-            if video is None:
-                self._status(f"{title} — çalışan video bulunamadı.")
+            # İndirilmiş bölüm ağa çıkmadan, diskten oynatılır. Yerel dosya İLK
+            # aday: bozuksa (mpv 2) yolu `atla`ya girer ve döngü kendiliğinden
+            # akışa geçer (bkz. `prefs.YerelVideo`).
+            yerel = prefs.yerel_dosya(bolum, tercih,
+                                      str((entry or {}).get("yerel_dosya") or ""))
+
+            def bul(atla, callback):
+                if yerel and os.path.abspath(yerel) not in atla:
+                    return prefs.YerelVideo(yerel)
+                ek = {"by_fansub": fansub} if fansub else {}
+                return bolum.best_video(by_res=tercih.max_res,
+                                        early_subset=tercih.aday_sayisi,
+                                        callback=callback, atla=atla, **ek)
+
+            # Kaldığı yer bölümün KENDİ anahtarıyla (kaynak + kimlik + bölüm):
+            # mpv'nin adrese bağlı kaydı token'lı adreslerde ve başka aday
+            # seçildiğinde kayboluyordu. Rapor dosyasını mpv betiği yazar.
+            kayit = entry or {"obj": bolum}
+            eski = prefs.konum_getir(kayit)
+            baslangic = (eski or {}).get("konum")
+            rapor_yolu = mpv_oynatici.konum_dosyasi_ayir()
+            kayit_yolu = []          # "İzlerken kaydet" hedefi (akışta)
+
+            def oynat(video):
+                yerelden = isinstance(video, prefs.YerelVideo)
+                self._status(f"{title} — "
+                             + ("indirilmiş dosya açılıyor…" if yerelden
+                                else "oynatıcı açılıyor…"))
+                if (not yerelden and tercih.izlerken_kaydet
+                        and mpv_oynatici.kaynak_videosu_mu(video)):
+                    kayit_yolu.append(mpv_oynatici.kayit_hedefi_kur(
+                        prefs.indirme_dizini(tercih), bolum))
+                return prefs.oynat(video, tercih, baslangic=baslangic,
+                                   konum_dosyasi=rapor_yolu, bolum=bolum)
+
+            try:
+                sonuc = yedekli_oynat(
+                    bul, oynat, bildir=lambda m: self._status(f"{title} — {m}"))
+            finally:
+                rapor = mpv_oynatici.konum_oku(rapor_yolu, sil=True)
+            bitti = rapor is not None and kutuphane.bitti_mi(
+                rapor["konum"], rapor["sure"], rapor["sebep"])
+            if kayit_yolu:
+                # Kayıt yalnızca baştan sona izlendiyse "indirilmiş" sayılır.
+                mpv_oynatici.kaydi_sonlandir(
+                    kayit_yolu[-1], tam=bool(sonuc.basarili and rapor
+                                             and rapor["sebep"] == "eof"
+                                             and not (tercih.dakika_hatirla
+                                                      and baslangic)))
+            if not sonuc.basarili:
+                self._hata_durumu(f"{title} — {sonuc.sebep}")
                 return
-            self._status(f"{title} — oynatıcı açılıyor…")
-            proc = prefs.oynat(video, tercih)
-            if proc is None:
-                # oynat() mpv bulunamazsa None döndürüp sessizce geçiyor.
-                self._status(f"{title} — oynatıcı başlatılamadı (mpv kurulu mu?).")
-                return
-            # Buraya gelindiyse mpv kapandı: izleme geçmişi + ilerleme sorusu.
-            prefs.gecmis_kaydet(bolum, "izlendi")
-            self._status(f"{title} — oynatma bitti.")
-            self.ui.post(lambda: self._on_play_finished(bolum, title))
+            # Buraya gelindiyse mpv düzgün kapandı. Kitaplık: "izlemeye devam
+            # et" + bölüm geçmişi (kaynaksız kayıt yazılmaz, bkz. prefs).
+            prefs.kitapliga_yaz(kayit, title)
+            if rapor is None:
+                # mpv rapor vermedi (Lua'sız derleme, eski `oynat`): bölümün
+                # bitip bitmediği bilinmiyor — eski davranış, izlendi + soru.
+                prefs.gecmis_kaydet(bolum, "izlendi")
+                self._status(f"{title} — oynatma bitti.")
+                self.ui.post(lambda: self._on_play_finished(bolum, title, "sor"))
+            elif bitti:
+                prefs.gecmis_kaydet(bolum, "izlendi")
+                prefs.konum_yaz(kayit, None)        # bir dahaki sefere baştan
+                self._status(f"{title} — izlendi.")
+                kip = "sor" if tercih.ilerlemeyi_sor else "otomatik"
+                self.ui.post(lambda: self._on_play_finished(bolum, title, kip))
+            else:
+                # Yarıda kapatıldı: izlendi YAZILMAZ, ilerleme sorulmaz; yer
+                # saklanır ve bölüm listesi "Devam et" gösterir.
+                konum = rapor["konum"] or 0
+                if konum >= kutuphane.ASGARI_KONUM:
+                    prefs.konum_yaz(kayit, konum, rapor["sure"])
+                    self._status(f"{title} — kaldığınız yer "
+                                 f"({kutuphane.sure_metni(konum)}) kaydedildi; "
+                                 "bir dahaki sefere oradan devam edilecek.")
+                else:
+                    self._status(f"{title} — oynatma kapatıldı.")
+                self.ui.post(lambda: self._on_play_finished(bolum, title, ""))
         except Exception as exc:
-            self._status(f"{title} — oynatma hatası: {exc}")
+            # Kaynak hatası (`common.hatalar.KaynakHatasi`) kullanıcıya yazılmış
+            # cümle, olduğu gibi; ham requests/yt-dlp metni Türkçe sebebe
+            # çevrilir ("HTTPSConnectionPool(...) Max retries…" kimseye bir
+            # şey anlatmıyordu). Ham metin konsolda kalır.
+            kisa, ayrinti = insanlastir(exc)
+            print(f"[Oynatma] {title}: {ayrinti}")
+            self._hata_durumu(f"{title} — oynatılamadı: {kisa}")
         finally:
             self._playing = False
 
-    def _on_play_finished(self, bolum, title: str) -> None:
-        """Oynatma bitti (GUI thread'i): rozetleri tazele, ilerlemeyi sor."""
+    def _on_play_finished(self, bolum, title: str, ilerleme: str = "sor") -> None:
+        """Oynatma bitti (GUI thread'i): rozetleri tazele, ilerlemeyi işle.
+
+        ``ilerleme``: "sor" → diyalog (rapor yok ya da ayar açık), "otomatik"
+        → bölüm numarası başlıktan yazılır, "" → dokunulmaz (yarıda kaldı).
+        Her bölümden sonra açılan modal soru, bölümü sonuna kadar izleyen
+        kullanıcıya her seferinde aynı cevabı yazdırıyordu.
+        """
         self.discord.sayfa(self._current_page)
         self._refresh_episode_history()
-        self._ask_progress(bolum, title)
+        if ilerleme == "sor":
+            self._ask_progress(bolum, title)
+        elif ilerleme == "otomatik":
+            self._otomatik_ilerleme(bolum, title)
+
+    def _otomatik_ilerleme(self, bolum, title: str) -> None:
+        """Bitmiş bölümün numarasını yerel ilerlemeye ve AniList'e yaz.
+
+        Numara diyaloğunkiyle aynı yoldan (`extract_episode_info`, seri adı
+        verilerek: "86 2nd Season 5. Bölüm"de 86 bölüm sanılmasın). İlerleme
+        GERİ ALINMAZ: 10. bölümdeki kullanıcı 3'ü yeniden izlerse AniList'e 3
+        yazmak yanlış olurdu.
+        """
+        seri, _slug = prefs.bolum_kimligi(bolum)
+        ad = anime_adi(bolum, seri)
+        _, no = extract_episode_info(title or _slug, ad)
+        if not (seri and no) or no <= prefs.yerel_ilerleme().get(seri, 0):
+            return
+        if prefs.ilerleme_kaydet(seri, no):
+            self._on_progress_saved(seri, no, ad)
 
     def _ask_progress(self, bolum, title: str) -> None:
         """İzleme ilerlemesi diyaloğunu aç (eski `show_progress_dialog`)."""
@@ -482,28 +665,113 @@ class MainWindow(QMainWindow):
             page.refresh_history()
 
     def _on_download(self, entry) -> None:
-        """İndirmeyi kuyruğa al ve indirilenler panelini göster."""
+        """İndirmeyi kuyruğa al; kullanıcı bulunduğu bölüm listesinde KALIR.
+
+        Eskiden burada İndirilenler sayfasına geçiliyordu. Bölüm listesinin
+        menüde düğmesi, kendisinin de "Geri"si yok: kullanıcı listeye ancak
+        aramayı baştan yapıp "Bölümleri Getir"le (yeniden ağ isteği, keşif
+        kayıtlarında elle eşleştirme diyaloğu) dönebiliyordu. Toplu indirmede
+        sayfa bölüm başına bir kez değiştiriliyor, "N bölüm sıraya alındı"
+        mesajı da gizlenmiş sayfaya yazılıyordu. Artık onay durum çubuğunda,
+        sürenlerin sayısı menüdeki "İndirilenler (N)" düğmesinde.
+        """
         if not (entry or {}).get("obj"):
             return
-        self.downloads.enqueue(entry, output=self._download_dir())
-        self.show_page("downloads")
-        self._sync_nav("downloads")
+        baslik = entry.get("title") or "Bölüm"
+        output = self._download_dir()
+        if self.downloads.kuyruktaki_is(entry, output) is not None:
+            self.statusBar().showMessage(f"{baslik} zaten kuyrukta.", 6000)
+            return
+
+        def devam(tamam: bool, fansub: Optional[str]) -> None:
+            if not tamam:
+                self._status(f"{baslik} — indirme iptal edildi (fansub seçilmedi).")
+                return
+            # Soru sürerken aynı bölüm başka yoldan kuyruğa girmiş olabilir;
+            # `enqueue` o durumda mevcut işin kimliğini döndürüp yeni iş açmaz.
+            self.downloads.enqueue(entry, output=output, fansub=fansub)
+            self.statusBar().showMessage(
+                f"{baslik} indirme sırasına alındı — ilerleme: İndirilenler.", 6000)
+
+        # Toplu indirmede her bölüm buraya ayrı gelir; `FansubSecici` aynı
+        # serinin isteklerini biriktirip TEK soru soruyor ve seçimi hepsine
+        # uyguluyor.
+        if prefs.oku().manuel_fansub:
+            self.fansub.iste(entry, devam)
+        else:
+            devam(True, None)
+
+    def _kuyrukta_mi(self, entry) -> bool:
+        """`EpisodePage` toplu indirmesi için: bölümün bitmemiş işi var mı?"""
+        return self.downloads.kuyruktaki_is(entry, self._download_dir()) is not None
+
+    def _indirme_sayacini_guncelle(self, *_args) -> None:
+        """Menüdeki İndirilenler düğmesine süren iş sayısını yaz."""
+        btn = self._nav_buttons.get("downloads")
+        if btn is None:
+            return
+        etiket = dict(NAV_ITEMS)["downloads"]
+        sayi = len(self.downloads.active_ids())
+        btn.setText(f"{etiket} ({sayi})" if sayi else etiket)
 
     def _on_download_added(self, task_id: str, title: str) -> None:
         """İş adlarını sakla: `progress` sinyali yalnızca kimlik taşıyor."""
         self._dl_titles[task_id] = title
 
     def _on_download_progress(self, task_id: str, yuzde: int, _detay: str) -> None:
+        if yuzde < 0:                   # yalnızca metin ("duraklatılıyor…")
+            return
         self.discord.indiriyor(self._dl_titles.get(task_id, "Bölüm"), yuzde)
 
     def _on_download_finished(self, task_id: str, ok: bool, mesaj: str) -> None:
-        self._status(("İndirme: " if ok else "İndirme başarısız: ") + mesaj)
+        # İptal hata değil (kullanıcı kesti); yalnızca gerçek hata kalıcı.
+        if ok or self.downloads.durum(task_id) == DURUM_IPTAL:
+            self._status("İndirme: " + mesaj)
+        else:
+            self._hata_durumu("İndirme başarısız: " + mesaj)
         self._dl_titles.pop(task_id, None)
+        # Toplu indirmenin özeti: iptal hata sayılmaz, kullanıcı kendisi kesti.
+        if ok:
+            self._toplu_indirme["ok"] += 1
+        elif self.downloads.durum(task_id) != DURUM_IPTAL:
+            self._toplu_indirme["hata"] += 1
         if not self.downloads.active_ids():
             self.discord.sayfa(self._current_page)
+            self._toplu_indirme_bitti()
         if ok:
             # Bölüm satırındaki ⬇ rozeti geçmişten okunuyor; liste açıksa tazele.
             self._refresh_episode_history()
+
+    def _toplu_indirme_bitti(self) -> None:
+        """Kuyruk boşaldı: pencere arka plandaysa masaüstü bildirimi.
+
+        Durum çubuğu mesajı 6 saniye duruyor; 30 bölümlük kuyruğu başlatıp
+        başka işe geçen kullanıcı indirmenin bittiğini hiç görmüyordu.
+        Pencere öndeyse bildirim yok: kullanıcı zaten bakıyor.
+        """
+        ok, hata = self._toplu_indirme["ok"], self._toplu_indirme["hata"]
+        self._toplu_indirme = {"ok": 0, "hata": 0}
+        if not (ok or hata):
+            return                      # hepsi iptal edildi
+        mesaj = f"{ok} bölüm indirildi" + (f", {hata} hata" if hata else "")
+        self.statusBar().showMessage(f"İndirmeler bitti: {mesaj}.", 10000)
+        if not self.isActiveWindow():
+            self._bildir("İndirmeler bitti", mesaj)
+
+    def _bildir(self, baslik: str, mesaj: str) -> None:
+        """Masaüstü bildirimi: sistem tepsisi varsa balon, yoksa görev çubuğu.
+
+        Tepsi simgesi ilk bildirimde kuruluyor; bildirimsiz oturumda tepside
+        boş yere simge durmasın.
+        """
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            if self._tepsi is None:
+                self._tepsi = QSystemTrayIcon(self.windowIcon(), self)
+                self._tepsi.setToolTip(APP_TITLE)
+                self._tepsi.show()
+            self._tepsi.showMessage(baslik, mesaj)
+        else:
+            QApplication.alert(self)
 
     @staticmethod
     def _download_dir() -> str:
@@ -548,24 +816,62 @@ class MainWindow(QMainWindow):
         if dialog is not None:
             dialog.deleteLater()
 
+    def _kapanis_onayi(self, adet: int) -> bool:
+        """Süren indirmeler varken kapanış sorusu (testler bunu sahteler).
+
+        Eskiden kapatmak sormadan her şeyi iptal ediyordu ve kuyruk yalnızca
+        bellekteydi: 40 bölümlük toplu indirme yanlış bir tıkla kayboluyordu.
+        """
+        cevap = QMessageBox.question(
+            self, "İndirmeler sürüyor",
+            f"{adet} indirme sürüyor. Duraklatılıp çıkılsın mı?\n\n"
+            "Kuyruk kaydedilir; uygulamayı yeniden açınca İndirilenler'den "
+            "“Devam et” ile kaldığı yerden sürdürebilirsiniz.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        return cevap == QMessageBox.StandardButton.Yes
+
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt imzası)
         """Kapanışta arka plan işlerini durdur.
 
         `clear()` tek başına yetmez: yalnızca HENÜZ BAŞLAMAMIŞ görevleri atar.
         Çalışan bir indirme, biz pencereyi yok ettikten sonra sinyal yaymaya
         devam eder ve silinmiş C++ nesnesine çarpar (çökme). Bu yüzden önce
-        işleri iptal ediyor, sonra kısa süre bitmelerini bekliyoruz.
+        işleri durduruyor, sonra kısa süre bitmelerini bekliyoruz.
+
+        Süren indirme varsa ÖNCE sorulur ("Hayır": pencere açık kalır, hiçbir
+        şeye dokunulmaz). İşler iptal değil DURAKLATILIR ve kuyruk diske
+        yazılır; bir sonraki açılışta geri gelirler (`geri_yukle`).
         """
+        # closeEvent ASLA fırlatmamalı: C++ sanal metodundan kaçan istisna
+        # (ör. yıkılmakta olan yönetici) süreci segfault'la düşürüyor.
+        try:
+            calisan = self.downloads.active_ids()
+        except Exception:
+            calisan = []
+        if calisan and not self._kapanis_onayi(len(calisan)):
+            event.ignore()
+            return
         try:
             self.discord.durdur()
         except Exception:
             pass
         try:
-            # İptal ŞART: yalnızca beklemek yetmez, yt-dlp indirmeyi sonuna
-            # kadar sürdürür ve süreç dakikalarca kapanmaz. `cancel_all` iptal
-            # bayrağını kaldırır, ilerleme hook'u bir sonraki parçada görüp
-            # indirmeyi bırakır.
-            self.downloads.cancel_all()
+            # Durdurmak ŞART: yalnızca beklemek yetmez, yt-dlp indirmeyi
+            # sonuna kadar sürdürür ve süreç dakikalarca kapanmaz.
+            # `pause_all` iptal bayrağını kaldırır (hook bir sonraki parçada
+            # görüp indirmeyi bırakır) ama işi "duraklatıldı" bitirir: `.part`
+            # diskte kalır, kuyruk dosyası işi bir sonraki açılışa taşır.
+            self.downloads.pause_all()
+            self.downloads.kapanista_kaydet()
+        except Exception:
+            pass
+        try:
+            # Aynı sebeple süren tam arşiv indirmesi (~230 MB) de iptal edilir;
+            # yarım paket geçici klasörle birlikte silinir, eski arşiv yerinde.
+            ayarlar = self.pages.get("settings")
+            if isinstance(ayarlar, SettingsPage):
+                ayarlar.arsiv_indirmeyi_durdur()
         except Exception:
             pass
         try:

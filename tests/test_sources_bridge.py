@@ -54,10 +54,18 @@ def test_animedepo_episode_id_passes_through_unchanged():
     assert sb.FUNCTION_SOURCES["AnimeDepo"]["ep_url"]("naruto/naruto-1") == "naruto/naruto-1"
 
 
-def test_stream_provider_swallows_source_errors():
-    """Bozuk bir kaynak tüm bölüm listesini düşürmemeli."""
+def test_stream_provider_carries_source_error_reason():
+    """Akış hatası artık yutulmuyor: sebep `KaynakHatasi` olarak oynatmaya
+    kadar çıkıyor. Bölüm LİSTESİ yine düşmüyor: `fansubs` hatayı yutuyor."""
+    from turkanime_api.common.hatalar import KaynakHatasi
+    from turkanime_api.sources.adapter import AdapterAnime, AdapterBolum
+
     def kaynak_patlar(_ep_id):
         raise RuntimeError("kaynak çöktü")
 
     provider = sb._make_provider(kaynak_patlar, "ep1")
-    assert provider("http://x") == []
+    with pytest.raises(KaynakHatasi, match="kaynak çöktü"):
+        provider("http://x")
+    bolum = AdapterBolum("http://x", "1. Bölüm", AdapterAnime("a", "A"),
+                         stream_provider=provider)
+    assert bolum.fansubs == []

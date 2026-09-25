@@ -55,6 +55,16 @@ def _normalize(s: str) -> str:
     return s.strip()
 
 
+def baslik_normalize(s: str) -> str:
+    """`_normalize`'ın dışa açık adı: aksansız, küçük harf, yalnız harf/rakam/boşluk.
+
+    Arşiv araması (`sources/animedepo.py`) binlerce başlığı BİR KEZ normalize
+    edip önbelleğe alıyor; skorlama fonksiyonlarıyla aynı kuralı kullanması
+    şart, yoksa "Dr. Stone" ↔ "dr stone" gibi eşleşmeler kademe atlar.
+    """
+    return _normalize(s)
+
+
 def fuzzy_score(a: str, b: str) -> float:
     """İki başlık arasında 0..1 benzerlik skoru. Karakter+token bazlı.
 
@@ -352,6 +362,8 @@ def multilang_search(
 
 
 __all__ = [
+    "baslik_normalize",
+    "siralama_skoru",
     "MatchResult",
     "SearchResponse",
     "fuzzy_score",

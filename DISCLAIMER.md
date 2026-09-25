@@ -54,13 +54,18 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 
 | Kaynak | Adres(ler) |
 |--------|------------|
-| TürkAnime | [www.turkanime.co](https://www.turkanime.co) |
+| TürkAnime (arşiv) | Site kapandı; kayıtlar statik arşivden okunur: [gitlab.com/AnimeDepo/animedepo](https://gitlab.com/AnimeDepo/animedepo) · yedek ayna: [github.com/barkeser2002/turkanime-gui](https://github.com/barkeser2002/turkanime-gui) (`arsiv/`; raw.githubusercontent.com ve codeload.github.com üzerinden) |
 | AnimeciX | [animecix.tv](https://animecix.tv) · API: [mangacix.net](https://mangacix.net) |
-| Anizle | [anizm.pro](https://anizm.pro) · API: [anizle.org](https://anizle.org) · oynatıcı: [anizmplayer.com](https://anizmplayer.com) |
+| Anizle | [anizle.co](https://anizle.co) · aynalar: [anizm.com.tr](https://anizm.com.tr), [puffytr.com](https://puffytr.com), [anizm.pro](https://anizm.pro) · oynatıcı: [anizmplayer.com](https://anizmplayer.com) |
 | TRAnimeİzle | [www.tranimeizle.io](https://www.tranimeizle.io) |
 | OpenAnime | [openani.me](https://openani.me) |
 | Tranimaci | [tranimaci.com](https://tranimaci.com) |
-| AnimeDepo | [gitlab.com/AnimeDepo/animedepo](https://gitlab.com/AnimeDepo/animedepo) — statik arşiv |
+| Animexe | [animexe.com](https://animexe.com) · video: AnimeciX'in tau-video CDN'leri (alan adları sık değişiyor) |
+| AnimPow | [animpow.com](https://animpow.com) · API: [client-api.animpow.com](https://client-api.animpow.com) · [quadrogg.best](https://quadrogg.best) · CDN: [benstreamsunucusuyum.xyz](https://benstreamsunucusuyum.xyz) |
+| Deokwave | [deokwave.com](https://deokwave.com) · video: [sw2.deokwave.com](https://sw2.deokwave.com) |
+| Asya Animeleri | [asyaanimeleri.top](https://asyaanimeleri.top) |
+| Animeler | [animeler.pw](https://animeler.pw) · oynatıcı: [play.animeler.pw](https://play.animeler.pw), [anizmplayer.com](https://anizmplayer.com), [loveulikeido.site](https://loveulikeido.site) |
+| One Pace TR | [www.onepacetr.net](https://www.onepacetr.net) · API: [onepacetradmin-v3-4f0db9f5d700.herokuapp.com](https://onepacetradmin-v3-4f0db9f5d700.herokuapp.com) |
 
 > Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
 > `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce
@@ -68,6 +73,11 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 > bildiriminin yanlış alan adına gönderilmesi, hiç gönderilmemesiyle aynı
 > kapıya çıkar — bu yüzden adresler artık elle tutulmuyor. Ölü alan adları
 > belgede bilerek tekrarlanmıyor: başkasının eline geçmiş olabilirler.
+
+Tablodaki siteler ve arşiv yalnızca bölüm sayfalarını ve oynatıcı
+bağlantılarını listeler; videonun kendisi çoğunlukla üçüncü taraf video
+barındırıcılarındadır (pixeldrain, sibnet, ok.ru …). Bir videonun kaldırılması
+için bildirimin asıl muhatabı o barındırıcıdır.
 
 Ayrıca **AniList** yalnızca meta veri (başlık, kapak, kullanıcı listesi) için
 kullanılır; video içeriği sunmaz.

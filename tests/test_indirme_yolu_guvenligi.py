@@ -110,6 +110,18 @@ def test_uzun_ad_kirpiliyor():
     assert len(guvenli_ad("a" * 500)) <= 120
 
 
+def test_kirpilan_uzun_adlar_ayrik_ve_kararli():
+    """ESKİ HATA: düz kesme, ilk 120 karakteri ortak iki adı AYNI dosyaya
+    çeviriyordu. Arşivde 29 bölüm böyle: ikinci bölüm birincinin üstüne
+    iniyor ya da yt-dlp "zaten var" deyip atlıyordu."""
+    ortak = "tatoeba-last-dungeon-" * 8
+    birinci, ikinci = guvenli_ad(ortak + "1-bolum"), guvenli_ad(ortak + "2-bolum")
+    assert birinci != ikinci
+    assert len(birinci) <= 120 and len(ikinci) <= 120
+    assert guvenli_ad(ortak + "1-bolum") == birinci, "aynı ad hep aynı sonucu vermeli"
+    assert guvenli_ad("naruto-1-bolum") == "naruto-1-bolum", "kısa ad değişmemeli"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2) Sınır denetimi (temizliğe ek ikinci katman)
 # ─────────────────────────────────────────────────────────────────────────────

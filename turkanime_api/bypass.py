@@ -2,6 +2,14 @@
 BYPASS Modülü, TürkAnime'deki şifreyle saklanan elementlerini çözmek
 ve firewall'i kandirmak için gerekli fonksiyonlari / rutinleri içerir.
 
+DURUM: turkanime.tv KAPANDI. Buradaki her istek kapanan siteye gidiyor ve
+yalnızca zaman aşımı/boş sayfa döndürüyor. Üretim kodu bu modülü çağırmıyor
+(CLI'ın açılıştaki `fetch("/")` oturumu kaldırıldı, "TürkAnime" kaynağı artık
+statik arşiv: `sources/animedepo.py`). Silinmedi: `objects` (geriye uyum için
+duran eski nesne modeli) ve `turkanime_api.session` herkese açık yüzeyi buna
+bağlı. tests/test_kaynak_kaydi.py üretim kodundan buraya yeni bir çağrı
+eklenmesini engelliyor.
+
 - Fetch(url)->str                   Firefox TLS & HTTP/3 taklitli GET/POST Request fonksiyonu
 
 - obtain_key()->bytes               TürkAnime'nin iframe şifrelerken kullandigi AES anahtari bulur

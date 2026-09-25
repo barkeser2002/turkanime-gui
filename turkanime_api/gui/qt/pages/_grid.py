@@ -77,11 +77,28 @@ class CardGridBody(QWidget):
 
     # ── Genel API ───────────────────────────────────────────────────────────
     def set_items(self, items: List[QWidget]) -> None:
-        """Izgarayı verilen kartlarla doldur (öncekiler silinir)."""
-        self.clear()
-        self._items = list(items)
+        """Izgarayı verilen kartlarla doldur.
+
+        Önceki kartlardan yeni listede OLMAYANLAR silinir; listede kalanlar
+        korunur ve yalnızca yeniden dizilir. Arama sonuçları kaynak kaynak
+        geliyor: yeni grup gelince ızgara baştan kuruluyor, ama zaten
+        ekrandaki kartlar (ve inmekte olan kapakları) silinip yeniden
+        yaratılmamalı — silinen kartın kapak sinyali ölü nesneye düşerdi.
+        """
+        yeni = list(items)
+        kalan = {id(item) for item in yeni}
+        while self._grid.count():
+            entry = self._grid.takeAt(0)
+            widget = entry.widget()
+            if widget is not None and id(widget) not in kalan:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._items = yeni
+        self._columns = 0
         for item in self._items:
-            item.setParent(self)
+            # Zaten bizde olan karta `setParent` çağırmak onu GİZLER (Qt).
+            if item.parentWidget() is not self:
+                item.setParent(self)
         self._place(force=True)
 
     def clear(self) -> None:

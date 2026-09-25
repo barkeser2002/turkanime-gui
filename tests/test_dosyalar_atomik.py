@@ -244,5 +244,5 @@ def test_ilk_kurulum_bozuk_ayarla_cokmuyor(tmp_path, monkeypatch, capsys):
 
     d = Dosyalar()                       # eskiden JSONDecodeError
     assert d.ayarlar.get("paralel indirme sayisi") == 3
-    assert d.ayarlar.get("user_id")
+    assert "user_id" not in d.ayarlar   # senkron yok; kimlik üretilmiyor
     assert "okunamadı" in capsys.readouterr().out

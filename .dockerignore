@@ -76,6 +76,13 @@ bin
 tranime_debug.html
 
 # ── İmajda gereksiz olanlar ──────────────────────────────────────────────────
+# Çevrimdışı arşiv aynası (~500 MB JSON). Sunucu kendi arşivini üretiyor;
+# bunu context'e almak her build'i yarım gigabayt şişirir.
+arsiv
+# Depodan çalıştırılan istemcinin indirdiği tam arşiv ve disk önbelleği.
+cevrimdisi_arsiv
+.cevrimdisi_arsiv-*
+arsiv_onbellek
 tests
 docs
 *.md

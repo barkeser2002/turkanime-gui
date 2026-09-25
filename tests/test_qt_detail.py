@@ -201,6 +201,35 @@ def test_unsupported_source_becomes_clear_message(qtbot, page, fake_fetch):
     assert page.btnEpisodes.isEnabled(), "hata sonrası buton kilitli kalmamalı"
 
 
+def test_unreadable_archive_reports_reason_not_empty(qtbot, page, tmp_path,
+                                                     monkeypatch):
+    """ESKİ HATA: TürkAnime arşivine ulaşılamayınca (paketli uygulama
+    çevrimdışı, aynalar düştü, bölüm dosyası önbellekte yok) bölüm okuyucusu
+    hatayı boş listeye çeviriyordu; sayfa "kaynağında bölüm bulunamadı"
+    diyordu. Gerçek köprü + gerçek arşiv istemcisi: ağ conftest'te kapalı,
+    disk önbelleğinde yalnızca dizin var (arama çalışıyor)."""
+    import json
+    from turkanime_api.sources import animedepo
+
+    onbellek = tmp_path / "onbellek"
+    onbellek.mkdir()
+    (onbellek / "dizin.json").write_text(json.dumps(
+        {"index": {"N": {"naruto": {"title": "Naruto"}}}}), "utf-8")
+    monkeypatch.setattr(animedepo, "onbellek_dizini", lambda: onbellek)
+    animedepo.sifirla()
+    assert animedepo.search_animedepo("naruto") == [("naruto", "Naruto")]
+
+    page.show_anime(make_anime("Naruto"), source="TürkAnime", slug="naruto")
+    emitted: list = []
+    page.episodes_ready.connect(lambda *a: emitted.append(a))
+    page.load_episodes()
+
+    qtbot.waitUntil(lambda: "okunamadı" in page.lblStatus.text(), timeout=5000)
+    assert "bulunamadı" not in page.lblStatus.text()
+    assert emitted == []
+    assert page.btnEpisodes.isEnabled(), "hata sonrası buton kilitli kalmamalı"
+
+
 def test_metadata_only_source_is_selectable_and_warns(page):
     """`supported_sources()` AniList'i vermez; gelen kaynak yine de gösterilmeli."""
     page.show_anime(make_anime(), source="AniList", slug="1")
@@ -218,14 +247,22 @@ def test_animecix_non_numeric_slug_message(qtbot, page, fake_fetch):
     qtbot.waitUntil(lambda: "AnimeciX sayısal" in page.lblStatus.text(), timeout=5000)
 
 
-def test_unbound_anime_opens_match_dialog(page, monkeypatch):
-    """Keşiften gelen kayıtta slug yok: kullanıcı çıkmaza girmemeli."""
+def test_unbound_anime_opens_match_dialog(qtbot, page, monkeypatch, fake_engine):
+    """Keşiften gelen kayıtta slug yok: kullanıcı çıkmaza girmemeli.
+
+    ESKİ DAVRANIŞ: diyalog aramadan ÖNCE, her seferinde açılıyordu. Artık önce
+    otomatik eşleştirme deneniyor; eşiği geçen aday yoksa diyalog açılıyor.
+    """
+    fake_engine({"TürkAnime": [{"slug": "baska", "title": "Bambaşka Bir Anime"}]})
     opened: list = []
     monkeypatch.setattr(page, "open_match_dialog", lambda: opened.append(True))
     page.show_anime(make_anime())          # kaynak/slug verilmedi
 
     page.load_episodes()
-    assert opened == [True]
+    qtbot.waitUntil(lambda: opened == [True], timeout=5000)
+    assert page._bindings == {}, "eşiği geçmeyen aday bağlandı"
+    assert "bağlı değil" in page.lblStatus.text()
+    assert page.btnEpisodes.isEnabled()
 
 
 # ── Yarış koruması ──────────────────────────────────────────────────────────
@@ -277,9 +314,11 @@ def test_stale_cover_is_not_applied(page):
     page.show_anime(make_anime("Anime B"))
 
     page._apply_cover(stale, png)
-    assert page.lblCover.pixmap().isNull(), "eski kapak yeni animeye yapıştı"
+    # Kapaksız animede çizilmiş yer tutucu duruyor; eski kapak onu EZMEMELİ.
+    assert page.kapak_yer_tutucuda, "eski kapak yeni animeye yapıştı"
 
     page._apply_cover(page.request_id, png)
+    assert not page.kapak_yer_tutucuda
     assert not page.lblCover.pixmap().isNull()
 
 
@@ -312,7 +351,9 @@ def test_match_dialog_groups_results_by_source(qtbot, fake_engine):
 
     qtbot.waitUntil(lambda: dlg.tree.topLevelItemCount() == 2, timeout=5000)
     groups = {dlg.tree.topLevelItem(i).text(0) for i in range(2)}
-    assert groups == {"TürkAnime (1)", "AnimeciX (2)"}
+    # Grup başlığı kayıttaki etiketi gösteriyor; "TürkAnime (arşiv) (1)" okunmadığı
+    # için sayı ayrı yazılıyor.
+    assert groups == {"TürkAnime (arşiv) — 1 sonuç", "AnimeciX — 2 sonuç"}
     assert "3 aday" in dlg.lblStatus.text()
 
 
@@ -440,7 +481,8 @@ def test_search_result_opens_detail_then_episodes(qtbot, main_window, fake_fetch
     assert isinstance(detail, _DetailPage)
 
     main_window.pages["search"].anime_selected.emit(
-        "TürkAnime", "cowboy-bebop", "Cowboy Bebop")
+        "TürkAnime", "cowboy-bebop", "Cowboy Bebop",
+        {"slug": "cowboy-bebop", "title": "Cowboy Bebop", "image": None})
 
     assert main_window.stack.currentWidget() is detail
     assert detail.lblTitle.text() == "Cowboy Bebop"
@@ -451,7 +493,8 @@ def test_search_result_opens_detail_then_episodes(qtbot, main_window, fake_fetch
     qtbot.waitUntil(lambda: main_window.stack.currentWidget() is episodes,
                     timeout=5000)
     assert len(episodes.visible_rows()) == 2
-    assert "Cowboy Bebop — TürkAnime" == episodes.lblTitle.text()
+    # Kaynak kanonik adla taşınıyor, başlıkta kayıttaki etiket görünüyor.
+    assert "Cowboy Bebop — TürkAnime (arşiv)" == episodes.lblTitle.text()
 
 
 def test_episode_page_does_not_refetch_when_given_list(main_window, fake_fetch):

@@ -118,3 +118,65 @@ def test_patlayan_kaynak_digerlerini_dusurmuyor(monkeypatch):
     sonuc = engine.search_all_sources("cowboy")
     assert sonuc["Patlayan"] == []
     assert sonuc["Hizli"] == [("cb", "Cowboy Bebop")]
+
+
+# ── Zaman aşımı raporu ve artımlı arama ─────────────────────────────────────
+def test_yetisemeyen_kaynak_hatalarda_zaman_asimi_olarak_gorunuyor(motor):
+    """ESKİ HATA: süreye yetişemeyen kaynak ne sonuçta ne hatada görünüyordu;
+    arama sayfası onu "0 sonuç" sanıyordu."""
+    engine, yavas = motor
+    sonuc = engine.search_all_sources_rich("cowboy")
+    assert yavas.basladi.wait(1)
+    assert "zaman aşımı" in sonuc.hatalar["Yavas"]
+    assert "Hizli" not in sonuc.hatalar
+
+
+def test_artimli_arama_kaynak_bittikce_haber_veriyor(motor):
+    engine, yavas = motor
+
+    class Patlayan:
+        def search_anime(self, query, limit=10):
+            raise RuntimeError("kaynak öldü")
+
+    engine.adapters["Patlayan"] = Patlayan()
+    gelen: list = []
+    sonuc, gecen = _sure_olc(lambda: engine.artimli_ara(
+        "cowboy", lambda ad, kayitlar, hata: gelen.append((ad, kayitlar, hata))))
+
+    assert gecen < PAY
+    assert ("Hizli", [{"slug": "cb", "title": "Cowboy Bebop", "image": None}],
+            None) in gelen
+    assert ("Patlayan", [], "kaynak öldü") in gelen
+    # Yetişemeyen kaynak geri çağrılmıyor; sonuçta "zaman aşımı" olarak var.
+    assert "Yavas" not in [ad for ad, _k, _h in gelen]
+    assert "zaman aşımı" in sonuc.hatalar["Yavas"]
+    assert sonuc["Hizli"] == gelen[[a for a, _k, _h in gelen].index("Hizli")][1]
+
+
+def test_hizli_kaynak_yavasi_beklemeden_bildiriliyor(monkeypatch):
+    """Arşiv anlık, ağ kaynağı yavaş: ilk bildirim yavaşı beklememeli."""
+    monkeypatch.setattr(adapters_mod, "OVERALL_SEARCH_TIMEOUT", 5)
+    kapi = threading.Event()
+    engine = SearchEngine()
+    engine.adapters = {"Hizli": HizliAdapter([("cb", "Cowboy Bebop")]),
+                       "Yavas": YavasAdapter(kapi)}
+    ilk: list = []
+    basla = time.monotonic()
+
+    def bildir(ad, kayitlar, hata):
+        if not ilk:
+            ilk.append((ad, time.monotonic() - basla))
+        kapi.set()                          # ilk bildirimden sonra yavaşı bırak
+
+    try:
+        engine.artimli_ara("cowboy", bildir)
+    finally:
+        kapi.set()
+    assert ilk[0][0] == "Hizli"
+    assert ilk[0][1] < 1.0
+
+
+def test_bos_kaynak_kumesi_patlamiyor():
+    engine = SearchEngine()
+    engine.adapters = {}
+    assert dict(engine.search_all_sources_rich("x")) == {}

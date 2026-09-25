@@ -275,3 +275,78 @@ def test_gereksinim_denetimi_ortak_cekirdegi_kullaniyor():
 
     assert ana.gereksinim is requirements
     assert not (KOK / "turkanime_api" / "cli" / "gereksinimler.py").exists()
+
+
+# ── Kayıtlı kaynak kimlikleri CLI'da da yükleniyor ──────────────────────────
+NETSCAPE_CEREZ = ("www.tranimeizle.io\tFALSE\t/\tTRUE\t0\t"
+                  ".AitrWeb.Session\tCLI-OTURUM-DEGERI")
+
+
+@pytest.fixture
+def temiz_kaynak_global(monkeypatch):
+    """Kaynak modüllerinin süreç-içi kimlik global'lerini sıfırla.
+
+    Başka bir test onları doldurmuş olsaydı "açılışta yüklendi" iddiası
+    yalancı yeşil verirdi (bkz. test_qt_settings'teki eşi).
+    """
+    from turkanime_api.sources import openani, tranime
+
+    monkeypatch.setattr(tranime, "SESSION_COOKIE", None)
+    monkeypatch.setattr(tranime, "_EXTRA_COOKIES", {})
+    monkeypatch.setattr(openani, "OPENANI_TOKEN", None)
+    monkeypatch.setattr(openani, "OPENANI_REFRESH_TOKEN", None)
+    return tranime, openani
+
+
+def test_cli_kayitli_cerez_ve_jetonlari_yukluyor(cli, temiz_kaynak_global):
+    """ESKİ HATA: yalnızca Qt açılışta kimlikleri süreç içine basıyordu. CLI'da
+    çerez diskte dururken `tranime.SESSION_COOKIE` None kalıyor, TRAnimeİzle
+    araması hiç istek atmadan boş dönüyor ve kullanıcıya "çerezi Qt
+    uygulamasından alın" deniyordu."""
+    from turkanime_api.cli.dosyalar import Dosyalar
+
+    ana, durum = cli
+    tranime, openani = temiz_kaynak_global
+    Dosyalar().set_ayar(ayar_list={"tranime_cookie": NETSCAPE_CEREZ,
+                                   "openani_token": "T",
+                                   "openani_refresh_token": "R",
+                                   "kaynak": "animecix"})
+
+    ana.main()
+
+    assert tranime.SESSION_COOKIE == "CLI-OTURUM-DEGERI"
+    assert (openani.OPENANI_TOKEN, openani.OPENANI_REFRESH_TOKEN) == ("T", "R")
+    assert durum["menu"] == 1
+
+
+def test_cli_kimlik_yuklenemezse_yine_aciliyor(cli, monkeypatch):
+    ana, durum = cli
+
+    def _patla(_ayarlar):
+        raise RuntimeError("kimlik okunamadı")
+    monkeypatch.setattr(ana.kimlikler, "kaynak_kimliklerini_uygula", _patla)
+    _kaynagi_ayarla("animecix")
+
+    ana.main()
+
+    assert durum["menu"] == 1
+
+
+def _import_edilen_moduller(dosya: Path):
+    for dugum in ast.walk(ast.parse(dosya.read_text(encoding="utf-8"))):
+        if isinstance(dugum, ast.ImportFrom):
+            yield "." * dugum.level + (dugum.module or "")
+        elif isinstance(dugum, ast.Import):
+            yield from (a.name for a in dugum.names)
+
+
+@pytest.mark.parametrize("dosya", [
+    ANA_DOSYA,
+    KOK / "turkanime_api" / "common" / "kimlikler.py",
+])
+def test_cli_yolu_qt_import_etmiyor(dosya):
+    """`gui/qt/__init__.py` PySide6 çeken `app`'i yüklüyor; CLI'ın kullandığı
+    modüller oraya uzanırsa CLI PySide6'sız makinede açılmaz."""
+    yasak = [m for m in _import_edilen_moduller(dosya)
+             if "gui" in m.split(".") or m.startswith("PySide6")]
+    assert yasak == [], f"{dosya.name} Qt'ye uzanıyor: {yasak}"

@@ -355,9 +355,26 @@ def test_main_window_wires_all_discover_modes(main_window):
 
 
 def _yerles(qtbot, widget, width, height=900):
-    """Widget'ı verilen genişliğe getir ve yerleşimin oturmasını bekle."""
+    """Widget'ı verilen genişliğe getir ve yerleşimin OTURMASINI bekle.
+
+    Sabit 10 ms beklemek yetmiyordu: poster kartında yükseklik genişlikten
+    türüyor, yani sütun sayısı değişince yerleşim birkaç tur sürüyor
+    (genişlik → poster yüksekliği → kart yüksekliği → ızgara). Ölçüldü:
+    sütun değişen adımlarda 10-25 ms. Kapaksız kartlar da artık poster
+    (çizilmiş yer tutucu) olduğu için tarama testleri sınırda kalıyordu.
+    Burada geometri iki ölçüm arasında değişmeyene kadar bekleniyor (en çok
+    ~1 sn); KALICI bir taşma yine yakalanır, geçici ara durum yakalanmaz.
+    """
+    from PySide6.QtWidgets import QWidget
+
     widget.resize(width, height)
-    qtbot.wait(10)
+    onceki = None
+    for _ in range(100):
+        qtbot.wait(10)
+        durum = [c.geometry().getRect() for c in widget.findChildren(QWidget)]
+        if durum == onceki:
+            break
+        onceki = durum
 
 
 def _izgara_sayfasi(qtbot, fake_sources, adet=12, width=1200, kapak=None):

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="tr" translate="no" class="notranslate">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="google" content="notranslate">
+    <meta name="googlebot" content="notranslate">
+    <meta http-equiv="content-language" content="tr-TR">
+    <meta name="language" content="Turkish">
+    <meta name="geo.region" content="TR">
+    <meta name="geo.placename" content="Turkey">
+    <meta name="ICBM" content="39.0, 35.0">
+    <title>Video Player</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        iframe { border: 0; width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+    </style>
+<script data-cfasync="false" nonce="e1f9413f-73c5-4337-8ac9-2a139e716a91">try{(function(w,d){!function(j,k,l,m){if(j.zaraz)console.error("zaraz is loaded twice");else{j[l]=j[l]||{};j[l].executed=[];j.zaraz={deferred:[],listeners:[]};j.zaraz._v="20";j.zaraz._n="e1f9413f-73c5-4337-8ac9-2a139e716a91";j.zaraz.q=[];j.zaraz._f=function(n){return async function(){var o=Array.prototype.slice.call(arguments);j.zaraz.q.push({m:n,a:o})}};for(const p of["track","set","debug"])j.zaraz[p]=j.zaraz._f(p);j.zaraz.init=()=>{var q=k.getElementsByTagName(m)[0],r=k.createElement(m),s=k.getElementsByTagName("title")[0];s&&(j[l].t=k.getElementsByTagName("title")[0].text);j[l].x=Math.random();j[l].w=j.screen.width;j[l].h=j.screen.height;j[l].j=j.innerHeight;j[l].e=j.innerWidth;j[l].l=j.location.href;j[l].r=k.referrer;j[l].k=j.screen.colorDepth;j[l].n=k.characterSet;j[l].o=(new Date).getTimezoneOffset();if(j.dataLayer)for(const t of Object.entries(Object.entries(dataLayer).reduce((u,v)=>({...u[1],...v[1]}),{})))zaraz.set(t[0],t[1],{scope:"page"});j[l].q=[];for(;j.zaraz.q.length;){const w=j.zaraz.q.shift();j[l].q.push(w)}r.defer=!0;for(const x of[localStorage,sessionStorage])Object.keys(x||{}).filter(z=>z.startsWith("_zaraz_")).forEach(y=>{try{j[l]["z_"+y.slice(7)]=JSON.parse(x.getItem(y))}catch{j[l]["z_"+y.slice(7)]=x.getItem(y)}});r.referrerPolicy="origin";r.src="/cdn-cgi/zaraz/s.js?z="+btoa(encodeURIComponent(JSON.stringify(j[l])));q.parentNode.insertBefore(r,q)};["complete","interactive"].includes(k.readyState)?zaraz.init():j.addEventListener("DOMContentLoaded",zaraz.init)}}(w,d,"zarazData","script");window.zaraz._p=async cc=>new Promise(cd=>{if(cc){cc.e&&cc.e.forEach(ce=>{try{const cf=d.querySelector("script[nonce]"),cg=cf?.nonce||cf?.getAttribute("nonce"),ch=d.createElement("script");cg&&(ch.nonce=cg);ch.innerHTML=ce;ch.onload=()=>{d.head.removeChild(ch)};d.head.appendChild(ch)}catch(ci){console.error(`Error executing script: ${ce}\n`,ci)}});Promise.allSettled((cc.f||[]).map(cj=>fetch(cj[0],cj[1])))}cd()});zaraz._p({"e":["(function(w,d){})(window,document)"]});})(window,document)}catch(e){throw fetch("/cdn-cgi/zaraz/t"),e;};</script></head>
+<body>
+    <iframe src="https://play.animeler.pw/fireplayer/video/8db66f2fc805310b86589bd1aeaa2cd7" allowfullscreen allow="autoplay; encrypted-media; fullscreen" id="innerPlayer" data-src="https://play.animeler.pw/fireplayer/video/8db66f2fc805310b86589bd1aeaa2cd7"></iframe>
+    <script>
+        (function() {
+            var iframe = document.getElementById('innerPlayer');
+            var embedSrc = iframe.getAttribute('data-src') || iframe.src;
+            var maxRetries = 3;
+            var retryCount = 0;
+            var loadTimeout;
+
+            function startWait() {
+                loadTimeout = setTimeout(function() {
+                    if (retryCount >= maxRetries) return;
+                    retryCount++;
+                    iframe.src = '';
+                    iframe.src = embedSrc;
+                    startWait();
+                }, 5000);
+            }
+
+            iframe.onload = function() { clearTimeout(loadTimeout); };
+            iframe.onerror = function() { clearTimeout(loadTimeout); if (retryCount < maxRetries) { retryCount++; iframe.src = ''; iframe.src = embedSrc; startWait(); } };
+            startWait();
+            document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+        })();
+    </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"821c85f1fd3d4cc68dc61a970e4423f2","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>

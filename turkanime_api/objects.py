@@ -1,11 +1,31 @@
-""" Örnek:
+""" turkanime.tv nesne modeli (Anime / Bolum / Video).
+
+DURUM: turkanime.tv KAPANDI (görselleri bile 503). `Anime(slug)`,
+`Anime.arama_yap`, `Anime.get_anime_listesi`, `Bolum.html/videos` ve
+`bypass.fetch` kapanan siteye istek atıyor; artık yalnızca zaman aşımı ya da
+boş sayfa döner. Üretimdeki HİÇBİR yol bunları çağırmıyor:
+
+- "TürkAnime" kaynağı sitenin statik arşivi: `sources/animedepo.py`, kayıt
+  `sources/kayit.py`. Arama, bölüm ve akışlar ağsız (yerel arşiv) okunuyor.
+- Bölüm/video nesneleri kaynaktan bağımsız olarak `sources.adapter`
+  (`AdapterBolum` / `AdapterVideo`) ile kuruluyor.
+- Adaptörlerin `Anime` nesnesi üretmesi gerekiyorsa `Anime.cevrimdisi(...)`
+  kullanılıyor; o yol siteye HİÇ gitmez.
+
+Modül silinmedi: `from turkanime_api import Anime, Bolum, Video` herkese açık
+yüzey (tests/test_sunucu_bagimliliklari.py), `Video`'nun oynatma/indirme
+mantığı ve `SUPPORTED` oynatıcı sırası hâlâ kullanılıyor.
+tests/test_kaynak_kaydi.py üretim kodunun bu modülden siteye giden yolları
+çağırmadığını denetliyor.
+
+Eski örnek (site açıkken):
 >>> ani = Anime("non-non-biyori")
 >>> bol3 = ani.bolumler[2]
 >>> vid1 = bol3.videos[0]
 >>> vid1.oynat()
 """
-from os import makedirs, remove
-from os.path import dirname, expanduser, join
+from os import remove
+from os.path import expanduser, join
 from tempfile import NamedTemporaryFile
 from html import unescape
 import subprocess as sp
@@ -22,28 +42,13 @@ from .common.utils import get_ydl_opts, get_video_resolution_mpv, extract_video_
 
 from .bypass import get_real_url, unmask_real_url, fetch, get_m3u8_stream
 from .common.utils import get_platform, get_arch
+from .common.oynatici_onceligi import DESTEKLENEN_OYNATICILAR
 
-# Çalıştığı bilinen playerlar ve öncelikleri
-# (KebabLord upstream V9.2.2/V10: MP4UPLOAD false-positive'ler yüzünden çıkarıldı,
-#  ALUCARD/GDRIVE güvenilirlikleri nedeniyle öne alındı.)
-SUPPORTED = [
-    "YADISK",
-    "ALUCARD(BETA)",
-    "GDRIVE",
-    "MAIL",
-    "PIXELDRAIN",
-    "AMATERASU(BETA)",
-    "HDVID",
-    "ODNOKLASSNIKI",
-    "DAILYMOTION",
-    "SIBNET",
-    "VK",
-    "VIDMOLY",
-    "YOURUPLOAD",
-    "SENDVID",
-    "MYVI",
-    "UQLOAD",
-]
+# Çalıştığı bilinen playerlar ve öncelikleri. Liste `common.oynatici_onceligi`
+# içinde yaşıyor: AnimeDepo istemcisi de aynı sırayı kullanıyor ama bu modülü
+# (→ yt_dlp) import edemiyor. Burada liste KOPYASI tutuluyor çünkü çağıranlar
+# `.index()`/`in` bekliyor ve paylaşılan sabit dışarıdan değiştirilemesin.
+SUPPORTED = list(DESTEKLENEN_OYNATICILAR)
 
 class LogHandler:
     """ TODO: ytdlp log handler prototipi """
@@ -76,6 +81,7 @@ def kayit_hedefi(bolum):
     HTML'inden geliyor ve `..` içerebilir (bkz. common.dosya_adi).
     """
     from .cli.dosyalar import Dosyalar
+    from .common.dosya_adi import kayit_hedefi as _kayit_hedefi
     try:
         kok = str(Dosyalar().ayarlar.get("indirilenler") or "").strip()
     except Exception:
@@ -84,11 +90,9 @@ def kayit_hedefi(bolum):
         # `Dosyalar`ın kendi varsayılanıyla aynı değer: ayar okunamadığında
         # çalışma dizinine düşmek paketlenmiş uygulamada Program Files demek.
         kok = join(expanduser("~"), "Downloads")
-    seri = bolum.anime.slug if getattr(bolum, "anime", None) else ""
-    hedef = guvenli_alt_yol(kok, seri, getattr(bolum, "slug", ""), yedek="bolum")
-    makedirs(dirname(hedef), exist_ok=True)
-    # mkv: mpv'nin ham akışı yeniden kodlamadan sarabildiği en genel kap.
-    return hedef + ".mkv"
+    # Yol kuralı artık tek yerde (`common.dosya_adi.kayit_hedefi`): arayüz ve
+    # CLI'nın `AdapterVideo` yolu da aynı hedefe yazıyor.
+    return _kayit_hedefi(kok, bolum)
 
 
 class Anime:
@@ -106,9 +110,24 @@ class Anime:
     - parse_fansubs: Bolum objesi yaratılırken fansubları da parse'lamasını belirt.
     """
     def __init__(self,slug,parse_fansubs=True):
+        # DİKKAT: kurucu turkanime.tv'ye gidiyor (`fetch_info`) ve site kapandı.
+        # Siteye gitmeyen nesne için `Anime.cevrimdisi(...)`.
+        warnings.warn(
+            "Anime(slug) kapanan turkanime.tv'ye istek atar; arşiv için "
+            "sources.kayit / sources.animedepo, nesne için Anime.cevrimdisi() kullanın.",
+            DeprecationWarning, stacklevel=2)
+        self._alanlari_kur(slug, parse_fansubs)
+        self.fetch_info()
+
+    def _alanlari_kur(self, slug, parse_fansubs=True, title=None):
+        """Kurucunun ağsız kısmı: alanlar ve boş künye."""
         self.slug = slug
-        self._title = None
+        self._title = title
+        self._cevrimdisi = False
         self.anime_id = 0
+        self._bolumler_data = None
+        self._bolumler = []
+        self.parse_fansubs = parse_fansubs
         self.info = {
             "Kategori":None,
             "Japonca":None,
@@ -121,13 +140,28 @@ class Anime:
             "Özet":None,
             "Resim":None
         }
-        self.fetch_info()
-        self._bolumler_data = None
-        self._bolumler = []
-        self.parse_fansubs = parse_fansubs
+
+    @classmethod
+    def cevrimdisi(cls, slug, title=None, info=None, parse_fansubs=True):
+        """Siteye HİÇ gitmeyen `Anime`: künye verilenle doldurulur.
+
+        Adaptörlerin fabrika metotları (`OpenAniAdapter.create_anime_object`)
+        eskiden `Anime(slug)` kuruyordu; kurucu `fetch_info` ile turkanime.tv'ye
+        gidiyor, site kapandığı için de `IndexError` ile düşüyordu (boş
+        sayfada regex eşleşmesi yok). Bu nesnede `title`/`bolumler` da siteye
+        gitmez: başlık verilmediyse None, bölüm listesi boş.
+        """
+        nesne = cls.__new__(cls)
+        nesne._alanlari_kur(slug, parse_fansubs, title=title)
+        nesne._cevrimdisi = True
+        if info:
+            nesne.info.update(info)
+        return nesne
 
     def fetch_info(self):
         """Anime detay sayfasını ayrıştır."""
+        if self._cevrimdisi:
+            return
         src = fetch(f'/anime/{self.slug}')
         twitmeta = re.findall(r'twitter.image" content="(.*?serilerb/(.*?)\.jpg)"',src)[0]
         self.info["Resim"], self.anime_id = twitmeta
@@ -152,6 +186,8 @@ class Anime:
 
     def get_bolum_listesi(self):
         """ Anime bölümlerinin [(slug,isim),] formatında listesi. """
+        if self._cevrimdisi:
+            return []
         anime_id = self.anime_id
         src = fetch(f'/ajax/bolumler&animeId={anime_id}')
         # Upstream V10 kalıbı başlık sınırlarını `\" style=` ile tam ankrajlar; bu daha
@@ -176,7 +212,11 @@ class Anime:
 
     @staticmethod
     def arama_yap(query):
-        """ Kullanıcının girdiği kelimeye göre arama yapar ve (slug, isim) döndürür. """
+        """ Kullanıcının girdiği kelimeye göre arama yapar ve (slug, isim) döndürür.
+
+        KULLANILMIYOR: turkanime.tv kapandı. Arşivde arama:
+        `sources.animedepo.search_animedepo` (kayıtta "TürkAnime").
+        """
         src = fetch("/arama", data={"arama": query})
         res = re.findall(r'/anime/([^"\'>]+)["\'] [^>]*?title=["\']([^"]+?) izle', src)
         results = [(slug, unescape(isim_)) for slug, isim_ in res]
@@ -191,7 +231,7 @@ class Anime:
 
     @property
     def title(self):
-        if self._title is None:
+        if self._title is None and not self._cevrimdisi:
             self.fetch_info()
         return self._title
 
@@ -235,6 +275,20 @@ class Bolum:
         self._videos = []
         self._anime = anime
         self._fansubs = []
+        self._cevrimdisi = False
+
+    @classmethod
+    def cevrimdisi(cls, slug, anime=None, title=None):
+        """Siteye HİÇ gitmeyen `Bolum` (bkz. `Anime.cevrimdisi`).
+
+        Kurucu zaten ağa çıkmıyor ama `html`/`videos`/`fansubs` ilk erişimde
+        kapanan turkanime.tv'ye gidiyordu. Bu nesnede sayfa boş sayılır:
+        video yok, `best_video` "hiçbiri çalışmıyor" der.
+        """
+        nesne = cls(slug, anime=anime, title=title, parse_fansubs=False)
+        nesne._cevrimdisi = True
+        nesne._html = ""
+        return nesne
 
     @property
     def html(self):
@@ -245,6 +299,8 @@ class Bolum:
     @property
     def title(self):
         if self._title is None:
+            if self._cevrimdisi:
+                return self.slug
             self._title = re.findall(r'<title>(.*?)<\/title>',self.html)[0]
         return self._title
 
@@ -290,6 +346,8 @@ class Bolum:
 
     def get_videos(self):
         self._videos = []
+        if self._cevrimdisi:
+            return self._videos
         # Yalnızca tek bir fansub varsa
         # `.*birden fazla grup` regex'i yerine düz substring: aynı sonuç, backtracking yok.
         if "birden fazla grup" not in self.html:

@@ -200,8 +200,8 @@ def test_yayin_yolunda_test_kapisi_var():
     """Etiket, testler geçmeden GitHub Release ve PyPI'a gitmemeli.
 
     Kapı eklenene kadar `grep pytest|pylint release.yml` sıfır sonuç veriyordu:
-    709 test yayın akışının hiçbir noktasında koşmuyordu. `main.yml` var ama
-    GitHub'da devre dışı, yani ona güvenilemez — kapı yayın yolunun kendi
+    709 test yayın akışının hiçbir noktasında koşmuyordu. Push/PR CI'ı
+    (`main.yml`) GitHub'da kapalıydı ve silindi — kapı yayın yolunun kendi
     üstünde olmak zorunda.
     """
     isler = _workflow()["jobs"]
@@ -215,6 +215,18 @@ def test_yayin_yolunda_test_kapisi_var():
     # release ve pypi build üzerinden dolaylı olarak teste bağlı
     for is_adi in ("release", "pypi"):
         assert _bagimli(is_adi) & {"test", "build"}, f"{is_adi} kapısız"
+
+
+def test_kapali_ci_workflowu_geri_gelmedi():
+    """`main.yml` GitHub'da elle kapatılmıştı; bakımsız hâliyle (`|| true`'lu
+    lint, çıplak `pytest`, var olmayan turkanime.py) yalnızca "CI var"
+    izlenimi veriyordu. Bakımcının kararı: kapı release.yml'de, push CI'ı yok.
+    Geri eklenecekse release.yml'deki test işinin kurallarıyla eklenmeli.
+    """
+    workflowlar = DEPO_KOKU / ".github" / "workflows"
+    assert not (workflowlar / "main.yml").exists()
+    assert "main.yml` var" not in RELEASE_YML.read_text(encoding="utf-8"), \
+        "release.yml hâlâ var olmayan main.yml'den söz ediyor"
 
 
 def _komut_satirlari(is_adi: str) -> list:
@@ -295,6 +307,14 @@ def test_test_isi_pyyaml_kuruyor():
     assert any("pyyaml" in s.lower() for s in kurulumlar), (
         f"PyYAML kurulmuyor: {kurulumlar}"
     )
+
+
+def test_test_isi_flask_kuruyor():
+    """flask/flask-cors kurulmazsa `test_sunucu_api.py` sessizce atlanır
+    (`pytest.importorskip`) ve sunucunun `/search` doğrulaması hiç sınanmaz."""
+    kurulumlar = " ".join(s.lower() for s in _komut_satirlari("test")
+                          if "pip install" in s).split()
+    assert "flask" in kurulumlar and "flask-cors" in kurulumlar, kurulumlar
 
 
 def test_qt_testleri_offscreen_kosuyor():

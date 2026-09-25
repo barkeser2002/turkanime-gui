@@ -1,0 +1,61 @@
+{
+ "_note": "AES-256-GCM key used for this session (base64) + the raw encrypted body returned by GET /anime/arama?q=frieren with header X-Session-Id",
+ "session_id": "6e3f71ff-f638-43c4-9a49-4eb899e57d5f",
+ "aes_key_b64": "5iL7v+7IEpX0391/Il3nDt32YNIesHODKnyWQuNH4g0=",
+ "status": 200,
+ "response": {
+  "iv": "fhmQRgJq4/ZDJY0D",
+  "authTag": "BAGO6/XFJ/b+1VLEpH9Nuw==",
+  "data": "GDJhgiiqRTRPY1yCW1f1QSbat4qM6WXkoTCei3c/LYupXlmtq1CAlb8JM9qC1rJSeM1+l3YX2ZBxRUxbEKAON/9wh9TiEQydhq7ZhTLdVuie7WHp7gBKKi8oE63+y4MzG/yIrN6dCAwlOBNtGX3nOfIbozR0duFd8duDmEk855uwUkF4qcF2wjft6EhbDY/J28d9OpaNOqnVM/OpkOtlkx+FXJ13EQm7OYv8eUD7Nfu5vwktQOoPf6wyXLB04mymBNASgHu5ltLKAfHJb6VKYLqSeLRQojq/vFnOCIujTEgpFyL7X1DDVbJjDkRZStPI99M11B1Zv/z2lzYQCulB2c47IwpeXz5S20AQBG6zUfdVx+Z/4r88rATlpHVl+cv1lK0Fdp3Ip9svJN1XgkpflZt9crWAJ1ou7yY5q88k0jXZ9+JuZ6VBF+pcaiSW+0xkJQHq4i1I8XgyXDyMDRHMF2uY67e4svefomAAomUtyPSFtQm4WgupsSPlIjyMRQtGEmF1Ko0d+9Ye+fYgD58NNJ/kE6BxsVmKl73+dlF9osb1oL8zo+DFJ923Wek4a6nF5g8BuVPhlQQ9w7sTz3MZdzrcJVuPsAFZGzyYAaBj/nJp5R3xDqb3vkMi9CiZ0o/2T/yVVi9AI53Kwnc5WTxqBWSOC1GEtk1N0A0r89weJeABDSG0SEgJ/LPEABVj9CGtZ0H9cPR2Vlm9nymQJgLT7blCK3nMoLHsPXYq9AdHAF3aUtZQLi19QDzeer2ZTqPbxqaShgKALE4otCRTqRKz8MJkaAvzcWVCyTnwtpCbEGN2Bdak9wNdDnWDWOomzhxW2NiPY3skxgRULX6sB/unZ7LDBsjb3GsL5Gpv2nWu9wxmHNqDy1qKPanJrolluyysw0t6MhWjHnQP5l9G/Xbg9jm7dbp1dxfN+RjUPQREXltvKaUVC0W9keaS8MGYbu/4YaAtNPXlvaymhyC6oeWAnXSQKskrwuEkUAJYRbPGT9mzvWvjUvwYkIF1L7ReQCe7mbbQ1bKZ8ICAk0p1YTgPBxCzFcjt/ulXNVofZZFsBICULreCSJXH92Q9+Xxvj4lc9S6lz4diyXuYNiDx25BOOuvgKG7Hz9NuleUKXQHsVKFKSrb/9nAmFKcjoZyc4yZ3yFOgIxlOswaaRcF9etvUX8CR1yuagaN7JIShw9wOC3VEFVan7zRZM+ZueSWWwLvpotIZh9hFNXKcNTQAeRtYwBtb85bWpCGLaS7i1U1ObJGbjHqwfhy5wfcNbeA2G6H81ZKwBbS4ejB0WZHneCkkiXcUiGS8/NyDvY/C6BQyGWQBZV+e4fx50tpIQ9cJ5M+ytW3Xpom7tx/qei2gBSeamUNIbZgLFFFUKsVvcVv6Bcpc9s7YBnPnhLZMdDyLXPUUYV4qJZdf/aCjL4vEDtd27S2rd6k9MRT5HNjyfI+FQZliDVxThA9qM/+mFSGwiJkjTRBPje+9oUMh9p/M/JDTuwg5WZyvq4RQV3FW+YxrAWcp64kWW9ft87FOSSkIQgG74z9tiuYrrhI6gg0+zayinRUoThpiqcVAg4HZ615fpfV62pbbkEkYsU7pUcIgbtxFQXBFUEHXW2y9Oek7RLIYkt5TiroEbD60D4Yp23A7PDfmJBs5B2KCyXOzaTlTe/DIjBHxhMLuA1G5T4qa5FHHYC/itCM2ojq8sOKmCHYbt1aCMHcCfviRXp8DtgYDlIAVhjK/2uPqR8klMmz6ticc9QHP+ptocrZsQIuq0q2AcXk5wPENBZgwRfeYGrsRz4nYB6jMf0ud2VcLuQYaTNVfcNx8/CJ1gn62eK0Xs3VTZ9BkqEkhLKNFYSWUyTTAErhT+Fvl+oZl3MGObw=="
+ },
+ "decrypted": {
+  "ok": true,
+  "basarili": true,
+  "mesaj": "\"frieren\" için arama sonuçları.",
+  "veri": [
+   {
+    "animpow_core_id": "9072-00004C82E101",
+    "name": "Sousou no Frieren",
+    "name_english": "Frieren: Beyond Journey's End",
+    "poster": "https://wsrv.nl/?url=https://image-cdn.animpow.com/api/image?token=MGRMVUgxTVFlNEh3anAvSExvMkVXQT09OjBaelF3V1RDWG9zSnNRam1VSVowdW1SWWVEKzlmOElMMmNNMUpqVkJwZThYUXEwckY0MUlaZi9ycG85TWhRWExDWnNGN1A0TEFjdTc2Z0s3cFNVb0JORVRsOG9kUFN6ZGRySmRoT0NFSjV3PQ",
+    "title_type": "anime",
+    "is_ecchi": false,
+    "year": 2023,
+    "jikan_score": "9.26",
+    "jikan_rank": 1,
+    "popularity": 103,
+    "total_episodes": 38,
+    "total_seasons": 2,
+    "is_public": false,
+    "is_ready": true,
+    "jikan_status": "Finished Airing"
+   },
+   {
+    "animpow_core_id": "960",
+    "name": "Sousou no Frieren: ●● no Mahou",
+    "name_english": "Frieren: Beyond Journey's End Mini Anime",
+    "poster": "https://wsrv.nl/?url=https://image-cdn.animpow.com/api/image?token=OElvOUNPTDdnNHJXUW5FZ3hIZkVzZz09OmNzeGtzNHg5UmRYb2dFMmRRNUYwOUE4ZUgwSFNuZS8zRjFmdWlsbk5TdWovVG5ERlJnbmZ0MzdWSXJHL1JQZitSREl4YkY4dnZHYmtYWlVaN2QzYjVuczBKQjZVZVFLV296MnErTEF1ZThnPQ",
+    "title_type": "anime",
+    "is_ecchi": false,
+    "year": 2023,
+    "jikan_score": "7.39",
+    "jikan_rank": 2543,
+    "popularity": 5127,
+    "total_episodes": 19,
+    "total_seasons": 2,
+    "is_public": false,
+    "is_ready": true,
+    "jikan_status": "Currently Airing"
+   }
+  ],
+  "zaman_damgasi": "2026-09-24T19:04:47.161Z",
+  "meta": {
+   "toplam": 2,
+   "sayfa": 1,
+   "limit": 20,
+   "toplam_sayfa": 1,
+   "onceki_sayfa": null,
+   "sonraki_sayfa": null
+  }
+ }
+}

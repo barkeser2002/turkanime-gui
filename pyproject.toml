@@ -2,7 +2,7 @@
 name = "turkanime-gui"
 # Sürümün asıl kaynağı turkanime_api/version.py; burası poetry literal
 # istediği için ikinci kopya. tests/test_qt_updates.py ikisini karşılaştırıyor.
-version = "10.1.0"
+version = "10.2.0"
 description = "Türkanime video oynatıcı ve indirici"
 authors = ["barkeser2002 <bariskeser@bariskeser.com>", "Junicchi <junicchi@waifu.club>"]
 readme = "README.md"
@@ -23,11 +23,18 @@ packages = [
   { include = "turkanime_api" }
 ]
 
+# gereksinimler.json: araç listesinin gömülü yedeği. Upstream liste
+# indirilemezse (çevrimdışı, depo silindi) `requirements.gomulu_gereksinim_yolu`
+# buna düşüyor; wheel'e girmezse pip kullanıcısında yedek hiç yoktu ve kurulum
+# sihirbazı "liste alınamadı" diyordu. Wheel kökü site-packages'a açılıyor,
+# fonksiyonun üçüncü adayı (paketin üst dizini) orayı okuyor.
 include = [
     { path = "docs/TurkAnime.png", format = "sdist" },
     { path = "docs/TurkAnime.ico", format = "sdist" },
     { path = "docs/TurkAnime.png", format = "wheel" },
     { path = "docs/TurkAnime.ico", format = "wheel" },
+    { path = "gereksinimler.json", format = "sdist" },
+    { path = "gereksinimler.json", format = "wheel" },
 ]
 
 [tool.poetry.dependencies]

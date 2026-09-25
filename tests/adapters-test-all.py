@@ -368,6 +368,10 @@ def test_anizle_episodes():
 
     if not episodes:
         return False, f"'{title}' bölüm listesi boş", ""
+    # Katalogdaki `lastEpisode` yalnızca en yeni 1-3 bölüm; o "tam liste"
+    # diye dönerse bu kontrol eskiden yine geçiyordu. One Piece 1100+ bölüm.
+    if slug == "one-piece" and len(episodes) < 1000:
+        return False, f"'{title}' yalnızca {len(episodes)} bölüm (kesik liste)", str(episodes[:5])
 
     details = (
         f"Anime: {title} (slug: {slug})\n"

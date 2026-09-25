@@ -1,8 +1,9 @@
-"""Kaynaklar (AnimeciX, Anizle, TRAnimeİzle, OpenAnime, Tranimaci, AnimeDepo)
-için facade.
+"""Kaynaklar (TürkAnime arşivi, AnimeciX, Anizle, TRAnimeİzle, OpenAnime,
+Tranimaci) için facade.
 
-Ek sağlayıcılar bu modülden dışa aktarılır ve `register_provider`
-yardımıyla sisteme kaydedilebilir.
+Kaynak listesinin tek yeri `kayit.py`; buradaki `PROVIDERS` ondan türetilir.
+Yeni kaynak eklemek için `ANIME_PROVIDER_GUIDE.md`'ye bakın —
+`register_provider` yalnızca geriye uyum için duruyor ve üretimde okunmuyor.
 """
 
 from .animecix import CixAnime, search_animecix  # noqa: F401
@@ -30,45 +31,32 @@ from .animedepo import (  # noqa: F401
     get_episode_streams as get_animedepo_streams,
 )
 
-# Mevcut sağlayıcılar
-PROVIDERS = {
-    "animecix": {
-        "name": "AnimeciX",
-        "adapter": None,  # Eski sistem kullanılıyor
-        "enabled": True,
-        "priority": 1
-    },
-    "anizle": {
-        "name": "Anizle",
-        "adapter": None,
-        "enabled": True,
-        "priority": 2
-    },
-    "tranime": {
-        "name": "TRAnimeİzle",
-        "adapter": None,
-        "enabled": True,
-        "priority": 3
-    },
-    "openani": {
-        "name": "OpenAnime",
-        "adapter": OpenAniAdapter,
-        "enabled": True,
-        "priority": 4
-    },
-    "tranimaci": {
-        "name": "Tranimaci",
-        "adapter": None,
-        "enabled": True,
-        "priority": 5
-    },
-    "animedepo": {
-        "name": "AnimeDepo",
-        "adapter": None,  # Fonksiyon-stili (GitLab statik arşiv)
-        "enabled": True,
-        "priority": 6
-    }
-}
+from . import kayit  # noqa: F401  (tek kaynak kaydı; aşağıdaki PROVIDERS ondan türüyor)
+
+
+def _saglayicilar():
+    """`kayit.KAYNAKLAR`'dan eski `PROVIDERS` biçimi: {modül: {...}}.
+
+    Liste eskiden burada elle tutuluyordu ve SearchEngine/köprü/CLI'daki
+    kopyalarıyla ayrışmıştı (TürkAnime hiç yoktu, AnimeDepo ayrı bir kaynaktı).
+    Artık tek kaynak `kayit.py`; anahtarlar yine modül adı ("tranime",
+    "openani"), çünkü sunucu tarayıcısı ve katkı API'si bu adları kullanıyor.
+    TürkAnime burada "animedepo" anahtarıyla duruyor: arşivi okuyan modül o.
+    AniList (yalnızca metadata) sağlayıcı sayılmaz, listede yok.
+    """
+    out = {}
+    for sira, kaynak in enumerate(kayit.kaynaklar(metadata=False), start=1):
+        out[kaynak.modul] = {
+            "name": kaynak.ad,
+            "adapter": globals().get(kaynak.adaptor_sinifi or ""),
+            "enabled": True,
+            "priority": sira,
+        }
+    return out
+
+
+PROVIDERS = _saglayicilar()
+
 
 def register_provider(name: str, adapter_class, enabled: bool = True, priority: int = 5):
     """Yeni bir anime sağlayıcısı kaydet."""

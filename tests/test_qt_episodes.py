@@ -86,7 +86,9 @@ def test_tek_kaynakta_sade_satir(page):
     assert row.btnPlay is not None and row.btnPlay.text() == "Oynat"
     assert row.btnDl is not None and row.btnDl.text() == "İndir"
     assert list(row.source_buttons) == ["TürkAnime"]
-    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime"
+    # Kanonik anahtar "TürkAnime", ekrandaki ad kayıttaki etiket (turkanime.tv
+    # kapandı, veri arşivden geliyor — kullanıcı bunu her sayfada aynı adla görür).
+    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime (arşiv)"
     assert not page.lblSources.isVisible()
 
 
@@ -174,7 +176,9 @@ def test_bos_kaynak_liste_basligini_kirletmiyor(page):
         "TürkAnime": numbered(1), "Anizle": [],
     })
     assert list(page._rows[0].source_buttons) == ["TürkAnime"]
-    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime"
+    # Kanonik anahtar "TürkAnime", ekrandaki ad kayıttaki etiket (turkanime.tv
+    # kapandı, veri arşivden geliyor — kullanıcı bunu her sayfada aynı adla görür).
+    assert page.lblTitle.text() == "Cowboy Bebop — TürkAnime (arşiv)"
 
 
 # ── Mevcut davranışlar: sayfalama / filtre / seçim ──────────────────────────
@@ -338,6 +342,51 @@ def test_dialog_secimi_donduruyor(qtbot):
     assert dialog.result() == QDialog.DialogCode.Accepted
 
 
+# ── Kaynak adı: ekranda kayıttaki etiket, içeride kanonik anahtar ────────────
+ARSIV_ETIKETI = "TürkAnime (arşiv)"
+
+
+def test_cok_kaynakta_turkanime_her_yerde_arsiv_etiketiyle(page):
+    """turkanime.tv kapandı; kullanıcı verinin arşivden geldiğini arama
+    kartında, detay sayfasında ve burada AYNI adla görmeli. Anahtarlar
+    (satır düğmeleri, seçim) kanonik kalıyor — kayıtlı eşleşmeler o adla."""
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes={
+        "TürkAnime": numbered(1), "AnimeciX": numbered(1, "Bölüm {}"),
+    })
+    row = page._rows[0]
+
+    assert set(row.source_buttons) == {"TürkAnime", "AnimeciX"}
+    assert page.lblSources.text() == f"Kaynaklar: {ARSIV_ETIKETI}, AnimeciX"
+    assert f"Kaynaklar: AnimeciX, {ARSIV_ETIKETI}" in row.toolTip()
+    oynat, indir = row.source_buttons["TürkAnime"]
+    assert oynat.toolTip() == f"{ARSIV_ETIKETI} — oynat"
+    assert indir.toolTip() == f"{ARSIV_ETIKETI} — indir"
+    rozetler = [w for w in row.findChildren(type(page.lblTitle))
+                if w.text() == "TA"]
+    assert rozetler and rozetler[0].toolTip() == ARSIV_ETIKETI
+
+
+def test_kaynak_secim_diyalogunda_arsiv_etiketi(qtbot):
+    dialog = SourceSelectDialog({"TürkAnime": 12, "AnimeciX": 3}, 12)
+    qtbot.addWidget(dialog)
+
+    assert dialog.buttons["TürkAnime"].text() == f"{ARSIV_ETIKETI} — 12/12 bölüm"
+    dialog.buttons["TürkAnime"].click()
+    assert dialog.selection == "TürkAnime", "seçim kanonik adla dönmeli"
+
+
+def test_toplu_indirme_mesajinda_arsiv_etiketi(page, monkeypatch):
+    monkeypatch.setattr(page, "_ask_source", lambda counts, total: "TürkAnime")
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes={
+        "TürkAnime": numbered(2), "Anizle": [ep("Bölüm 1")],
+    })
+    page.btnAll.setChecked(True)
+
+    page._download_selected()
+
+    assert f"({ARSIV_ETIKETI})" in page.lblStatus.text()
+
+
 def test_secim_yokken_uyari(page):
     page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(3))
     page._download_selected()
@@ -491,6 +540,10 @@ def test_baglanmamis_kaynak_secilince_eslesme_araniyor(qtbot, detail, fake_engin
         detail.load_episodes()
 
     assert searches == [("Cowboy Bebop", detail_mod.AUTO_MATCH_LIMIT)]
+    # ESKİ HATA: limit 1'di; kaynak listeyi alaka sıralamasından ÖNCE kestiği
+    # için ham ilk sonuç ("Koisuru One Piece") bağlanıyordu. Birden çok aday
+    # gelmeli ki birebir başlık sıralamayı kazanabilsin.
+    assert detail_mod.AUTO_MATCH_LIMIT > 1
     assert calls == [("AnimeciX", "17")], "yanlış kaynağın slug'ı kullanıldı"
     assert set(blocker.args[3]) == {"AnimeciX"}
 
@@ -536,3 +589,91 @@ def test_ana_pencere_cok_kaynakli_yuku_devraliyor(main_window):
     assert len(episodes.visible_rows()) == 1
     assert set(episodes._rows[0].source_buttons) == {"TürkAnime", "AnimeciX"}
     assert episodes.lblTitle.text() == "Cowboy Bebop — 2 kaynak"
+
+
+# ── Toplu seçim: aralık, izlenmemiş/indirilmemiş, Shift+tık ─────────────────
+def test_aralik_coz_saf():
+    from turkanime_api.gui.qt.pages.episodes import aralik_coz
+    assert aralik_coz("1-3, 5, 10-", range(1, 13)) == {1, 2, 3, 5, 10, 11, 12}
+    assert aralik_coz("-2 12", range(1, 13)) == {1, 2, 12}
+    assert aralik_coz("1 - 3", range(1, 13)) == {1, 2, 3}
+    # Yayınlanmamış numara sessizce atlanır.
+    assert aralik_coz("1-5", [1, 2, 4, 5]) == {1, 2, 4, 5}
+    sonuc = aralik_coz("1-2, abc, 9-7", range(1, 13))
+    assert sonuc == {1, 2}
+    assert sonuc.hatali == ["abc", "9-7"], "geçersiz parça istisna değil, dönüşte"
+
+
+def _secili_numaralar(page):
+    return sorted(e["number"] for e in page.selected_episodes())
+
+
+def test_aralik_cizilmemis_satirlari_da_seciyor(page):
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(40))
+    assert len(page._rows) == 30
+
+    assert page.select_range("1-12") == 12
+    assert _secili_numaralar(page) == list(range(1, 13))
+    assert page._rows[0].checked and not page._rows[12].checked
+
+    page.select_range("35-")
+    assert _secili_numaralar(page) == list(range(35, 41)), "seçim değişmeli, eklenmemeli"
+    page._load_more()
+    assert page._rows[36].checked, "sonradan çizilen satır seçimi göstermeli"
+
+
+def test_aralik_metin_kutusundan_enter(page, qtbot):
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(12))
+    page.txtAralik.setText("2-4")
+    qtbot.keyClick(page.txtAralik, Qt.Key.Key_Return)
+    assert _secili_numaralar(page) == [2, 3, 4]
+
+    page.txtAralik.setText("abc")
+    qtbot.keyClick(page.txtAralik, Qt.Key.Key_Return)
+    assert "anlaşılamadı" in page.lblStatus.text()
+
+
+class _Gecmis:
+    def __init__(self, izlendi=(), indirildi=()):
+        self.izlendi, self.indirildi = set(izlendi), set(indirildi)
+
+    def durum(self, obj):
+        return (obj in self.izlendi, obj in self.indirildi)
+
+
+def test_izlenmemisler_ve_indirilmemisler(page, monkeypatch):
+    from turkanime_api.gui.qt import prefs
+    bolumler = numbered(40)
+    objs = [b["obj"] for b in bolumler]
+    sahte = _Gecmis(izlendi=objs[:2], indirildi=objs[2:5])
+    monkeypatch.setattr(prefs.Gecmis, "yukle", classmethod(lambda cls: sahte))
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=bolumler)
+
+    assert page.select_unwatched() == 38
+    assert _secili_numaralar(page) == list(range(3, 41))
+
+    # Kuyruktaki bölüm "indirilmemiş" seçimine girmez.
+    page.kuyrukta_mi = lambda entry: entry.get("obj") is objs[39]
+    page.select_not_downloaded()
+    assert _secili_numaralar(page) == [1, 2] + list(range(6, 40))
+
+
+def test_shift_tik_araligi_seciyor(page, qtbot):
+    from PySide6.QtTest import QTest
+    page.load("TürkAnime", "cb", "Cowboy Bebop", episodes=numbered(12))
+    page.show()
+    satir3, satir7 = page._rows[2], page._rows[6]
+    QTest.mouseClick(satir3.chk, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(satir7.chk, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.ShiftModifier)
+    assert _secili_numaralar(page) == [3, 4, 5, 6, 7]
+    assert all(page._rows[i].checked for i in range(2, 7))
+
+    # Shift'le bırakmak aralığı bırakır.
+    QTest.mouseClick(page._rows[4].chk, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(satir3.chk, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.ShiftModifier)
+    assert _secili_numaralar(page) == [6, 7]
+    # Shift'siz tık tek satır.
+    QTest.mouseClick(page._rows[9].chk, Qt.MouseButton.LeftButton)
+    assert _secili_numaralar(page) == [6, 7, 10]

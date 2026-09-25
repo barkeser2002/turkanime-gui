@@ -61,6 +61,9 @@ def _looks_like_challenge(html: str) -> bool:
 def main() -> int:
     # Görünür pencere olmasın
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # GUI ile aynı Chromium bayrakları; GPU süreci kapalı (bkz. chromium.py).
+    from .chromium import bayraklari_hazirla
+    bayraklari_hazirla()
 
     from PySide6.QtCore import QCoreApplication, Qt, QTimer, QUrl, QObject, Signal, Slot
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)

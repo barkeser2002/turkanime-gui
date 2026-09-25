@@ -1,0 +1,3 @@
+# Çevrimdışı arşiv (AnimeDepo aynası): on binlerce üretilmiş JSON. GitHub dil
+# istatistiğini ve PR diff'lerini boğmasın.
+arsiv/** linguist-vendored linguist-generated -diff

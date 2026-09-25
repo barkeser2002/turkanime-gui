@@ -9,6 +9,7 @@ Ağa çıkılmaz, gerçek yt-dlp/aria2c çalıştırılmaz: `Bolum`/`Video` saht
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -212,12 +213,14 @@ def test_paralel_indirme_sayisi_havuz_boyutunu_belirliyor(manager, ayarla,
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)  # iş başlamasın
 
+    # Farklı bölümler: aynı bölüm ikinci kez kuyruğa girmiyor (bkz.
+    # test_ayni_bolum_ikinci_kez_kuyruga_girmiyor).
     ayarla(**{"paralel indirme sayisi": 6})
-    manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    manager.enqueue(_entry(SahteBolum(slug="naruto-test-1-bolum")), output=str(tmp_path))
     assert long_task_pool().maxThreadCount() == 6
 
     ayarla(**{"paralel indirme sayisi": 2})
-    manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    manager.enqueue(_entry(SahteBolum(slug="naruto-test-2-bolum")), output=str(tmp_path))
     assert long_task_pool().maxThreadCount() == 2
 
 
@@ -270,11 +273,78 @@ def test_cancel_all_bekleyen_isleri_kapatiyor(manager, ayarla, monkeypatch, tmp_
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     ayarla(**{"aria2c kullan": False})
 
-    ids = [manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
-           for _ in range(3)]
+    ids = [manager.enqueue(_entry(SahteBolum(slug=f"naruto-test-{i}-bolum")),
+                           output=str(tmp_path))
+           for i in range(3)]
     assert manager.cancel_all() == 3
     assert all(manager.durum(i) == DURUM_IPTAL for i in ids)
     assert manager.active_ids() == []
+
+
+# ── Aynı bölüm iki kez kuyruğa girmiyor ────────────────────────────────────
+@pytest.fixture
+def baslamayan(monkeypatch):
+    """`run_bg` sahte: işler "bekliyor"da kalsın, çağrılar sayılsın."""
+    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    cagrilar = []
+    monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: cagrilar.append(a))
+    return cagrilar
+
+
+def test_ayni_bolum_ikinci_kez_kuyruga_girmiyor(manager, ayarla, baslamayan, tmp_path):
+    """ESKİ HATA: `enqueue` her çağrıda yeni iş kuruyordu; iki yt-dlp aynı
+    dosyaya yazıyor, ikisi de "tamamlandı" diyor, dosya bozuk çıkıyordu."""
+    eklenen = []
+    manager.added.connect(lambda tid, _t: eklenen.append(tid))
+    bolum = SahteBolum()
+
+    ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    ikinci = manager.enqueue(_entry(bolum), output=str(tmp_path))
+
+    assert ikinci == ilk
+    assert manager.active_ids() == [ilk]
+    assert len(baslamayan) == 1 and eklenen == [ilk]
+    assert manager.kuyruktaki_is(_entry(bolum), output=str(tmp_path)) == ilk
+
+
+def test_ayni_hedefe_giden_baska_nesne_de_ayni_is(manager, ayarla, baslamayan, tmp_path):
+    """Anahtar nesne değil hedef yol: yeniden getirilmiş liste yeni nesne verir."""
+    ilk = manager.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    assert manager.enqueue(_entry(SahteBolum()), output=str(tmp_path)) == ilk
+
+    baska_bolum = manager.enqueue(_entry(SahteBolum(slug="naruto-test-2-bolum")),
+                                  output=str(tmp_path))
+    baska_klasor = manager.enqueue(_entry(SahteBolum()), output=str(tmp_path / "b"))
+    assert len({ilk, baska_bolum, baska_klasor}) == 3
+
+
+@pytest.mark.parametrize("bitir", ["iptal", "hata", "tamam"])
+def test_bitmis_isten_sonra_yeniden_kuyruga_alinabiliyor(manager, ayarla, baslamayan,
+                                                        tmp_path, bitir):
+    from turkanime_api.gui.qt.pages import downloads as dl_mod
+
+    bolum = SahteBolum()
+    ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    is_ = manager._jobs[ilk]
+    if bitir == "iptal":
+        manager.cancel(ilk)
+    else:
+        manager._bitir(is_, bitir == "tamam",
+                       dl_mod.DURUM_TAMAMLANDI if bitir == "tamam" else DURUM_HATA)
+
+    yeni = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    assert yeni is not None and yeni != ilk
+
+
+def test_yeniden_dene_ayni_bolum_kuyruktayken_ikinci_is_acmiyor(
+        manager, ayarla, baslamayan, tmp_path):
+    bolum = SahteBolum()
+    ilk = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    manager.cancel(ilk)
+    ikinci = manager.enqueue(_entry(bolum), output=str(tmp_path))
+
+    assert manager.retry(ilk) is None, "aynı dosyaya ikinci yazıcı olmamalı"
+    assert manager.active_ids() == [ikinci]
 
 
 # ── Yeniden deneme ───────────────────────────────────────────────────────────
@@ -288,6 +358,67 @@ def test_basarisiz_is_otomatik_bir_kez_tekrarlaniyor(qtbot, manager, ayarla, tmp
 
     assert manager.durum(task_id) == DURUM_HATA
     assert bolum.video.deneme == MAX_DENEME
+
+
+class AdresliVideo(SahteVideo):
+    """Adresi olan sahte: kuyruk başarısız adresi `atla`ya ekleyebilsin."""
+
+    def __init__(self, bolum, url, hata=None, part_yolu=None):
+        super().__init__(bolum, hata=hata)
+        self.url = url
+        self.part_yolu = part_yolu
+        self.part_vardi = None
+
+    def indir(self, callback=None, output=""):
+        if self.part_yolu is not None:
+            self.part_vardi = os.path.exists(self.part_yolu)
+        super().indir(callback, output)
+
+
+def test_ikinci_deneme_baska_adayi_istiyor_yarim_dosyayi_siliyor(
+        qtbot, manager, ayarla, tmp_path):
+    """ESKİ HATA: ikinci deneme AYNI adresi yeniden indiriyordu. Aday
+    değişince eski akışın `.part`'ı da silinmeli: yt-dlp ona ekleme yapar ve
+    iki farklı akışın baytları tek dosyada birleşirdi."""
+    ayarla(**{"aria2c kullan": False})
+    bolum = SahteBolum()
+    part = tmp_path / "naruto-test" / "naruto-test-1-bolum.mp4.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"eski akis")
+    a = AdresliVideo(bolum, "https://a.test/v.mp4", hata=RuntimeError("HTTP 403"))
+    b = AdresliVideo(bolum, "https://b.test/v.mp4", part_yolu=str(part))
+    cagrilar = []
+
+    def best_video(**kwargs):
+        cagrilar.append(kwargs)
+        return b if kwargs.get("atla") else a
+    bolum.best_video = best_video
+
+    task_id = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    _bekle(qtbot, manager, task_id)
+
+    assert manager.durum(task_id) == DURUM_TAMAMLANDI
+    assert len(cagrilar) == 2
+    assert set(cagrilar[1]["atla"]) == {"https://a.test/v.mp4"}
+    assert (a.deneme, b.deneme) == (1, 1)
+    assert b.part_vardi is False, "yarım dosya ikinci aday başlamadan silinmeli"
+
+
+def test_baska_aday_yoksa_ayni_video_yeniden_deneniyor(qtbot, manager, ayarla, tmp_path):
+    """Geçici 5xx için: aday kalmadıysa aynı adres, `.part` korunarak."""
+    ayarla(**{"aria2c kullan": False})
+    bolum = SahteBolum()
+    part = tmp_path / "naruto-test" / "naruto-test-1-bolum.mp4.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"yarim")
+    a = AdresliVideo(bolum, "https://a.test/v.mp4", hata=RuntimeError("HTTP 503"))
+    bolum.best_video = lambda **k: None if k.get("atla") else a
+
+    task_id = manager.enqueue(_entry(bolum), output=str(tmp_path))
+    _bekle(qtbot, manager, task_id)
+
+    assert a.deneme == MAX_DENEME
+    assert part.exists(), "aynı adres yeniden denenirken .part silinmemeli"
 
 
 def test_yeniden_dene_basarisiz_isi_kuyruga_aliyor(qtbot, manager, ayarla, tmp_path):
