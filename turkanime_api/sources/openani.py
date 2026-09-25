@@ -68,10 +68,43 @@ OPENANI_TOKEN = None
 OPENANI_REFRESH_TOKEN = None
 
 def set_openani_tokens(token: str, refresh_token: str):
-    """OpenAni API tokens'ı ayarla."""
+    """OpenAni API tokens'ı ayarla ve AÇIK adaptörlerin oturumlarına işle.
+
+    Eskiden yalnızca iki global değişiyordu. Oturum ise `adapter =
+    OpenAniAdapter()` satırında, modül yüklenirken kuruluyor ve tokenlar
+    yalnızca o anda okunuyor; `prefs` modülü import edip hemen ardından
+    tokenları basıyor. Sonuç: tekil adaptörün oturumu HER ZAMAN tokensızdı,
+    Ayarlar'a girilen token hiçbir isteğe gitmiyordu.
+
+    Oturum yeniden kuruluyor (üstüne `set_cookie` değil): token silindiğinde
+    çerezin de gitmesi gerekiyor ve `CFSession`'da çerez silme yolu yok.
+    `globals()` bakışı şart: bu fonksiyon `adapter` ve `_ozel_adaptorler`
+    tanımlanmadan önce de çağrılabilir.
+    """
     global OPENANI_TOKEN, OPENANI_REFRESH_TOKEN
     OPENANI_TOKEN = token
     OPENANI_REFRESH_TOKEN = refresh_token
+    acik = [globals().get("adapter"), *globals().get("_ozel_adaptorler", {}).values()]
+    for adaptor in acik:
+        if adaptor is not None:
+            adaptor.session = _get_cf_session(adaptor.timeout)
+            adaptor._light_session = None
+
+
+def _token_cerezleri() -> Dict[str, str]:
+    """İsteğe eklenecek oturum çerezleri (token girilmediyse boş).
+
+    İstek başına veriliyor, oturuma bırakılmıyor: `_light_get` kendi
+    curl_cffi oturumunu kuruyor ve `CFSession`'ın çerezlerini görmüyor;
+    `CFSession` da `set_cookie` ile verilen çerezleri yalnızca son kademesinde
+    (düz requests) gönderiyor, curl_cffi ve cloudscraper kademelerinde değil.
+    """
+    cerezler: Dict[str, str] = {}
+    if OPENANI_TOKEN:
+        cerezler["token"] = OPENANI_TOKEN
+    if OPENANI_REFRESH_TOKEN:
+        cerezler["refreshToken"] = OPENANI_REFRESH_TOKEN
+    return cerezler
 
 def _get_cf_session(timeout: int = VARSAYILAN_TIMEOUT) -> Any:
     """CF session'ı döndür (singleton)."""
@@ -190,13 +223,13 @@ class OpenAniAdapter:
                 sess = _curl.Session(impersonate="chrome110")
                 self._light_session = sess
             return sess.get(url, headers=headers, timeout=self.timeout,
-                            allow_redirects=False)
+                            allow_redirects=False, cookies=_token_cerezleri())
         except Exception:
             # Yedek yolda da süre veriyoruz: `requests.Session` varsayılanı
             # SONSUZ bekler (CFSession kendi varsayılanını koyar ama düz
             # requests'e düşülen dalda kimse koymuyordu).
             return self.session.get(url, headers=headers, allow_redirects=False,
-                                    timeout=self.timeout)
+                                    timeout=self.timeout, cookies=_token_cerezleri())
 
     def _probe_slug(self, slug: str) -> Optional[Dict[str, Any]]:
         """Doğrudan /anime/<slug> URL'ini deneyip varsa anime kartını döndür.
@@ -358,7 +391,8 @@ class OpenAniAdapter:
             # timeout ŞART: düz `requests.Session` yedeğine düşüldüğünde
             # varsayılan sonsuzdur, yani yanıt vermeyen site GUI'yi asardı.
             response = self.session.get(anime_url, headers=headers,
-                                        timeout=self.timeout)
+                                        timeout=self.timeout,
+                                        cookies=_token_cerezleri())
             if response.status_code != 200:
                 print(f"[OpenAni] Detay hatası: HTTP {response.status_code}")
                 return None
@@ -496,7 +530,8 @@ class OpenAniAdapter:
 
         try:
             response = self.session.get(episode_url, headers=headers,
-                                        timeout=self.timeout)
+                                        timeout=self.timeout,
+                                        cookies=_token_cerezleri())
             if response.status_code != 200:
                 print(f"[OpenAni] Video hatası: HTTP {response.status_code}")
                 return []
