@@ -112,7 +112,10 @@ def guvenli_alt_yol(kok: Any, *parcalar: Any, yedek: str = YEDEK_AD) -> str:
 # "indirme bitti" kanıtı değildir; `.part` ile `.ytdl` başka bir akıştan
 # yeniden başlayan indirmeye devam diye eklenirse dosya bozulur.
 YARIM_SONEKLER = (".part", ".ytdl", ".aria2")
-YARIM_ICERIKLER = (".part-Frag", ".temp.")
+# "İzlerken kaydet"in yarıda kalan kaydı (bkz. `mpv_oynatici.kaydi_sonlandir`):
+# tamamlanmış indirme sayılırsa bir sonraki "Oynat" bölümün yarısını açardı.
+YARIM_KAYIT_EKI = ".yarim"
+YARIM_ICERIKLER = (".part-Frag", ".temp.", YARIM_KAYIT_EKI + ".")
 
 
 def bolum_hedefi(kok: Any, bolum: Any) -> str:
@@ -130,6 +133,21 @@ def bolum_hedefi(kok: Any, bolum: Any) -> str:
     seri = getattr(anime, "slug", "") if anime else ""
     return guvenli_alt_yol(kok, seri or "", getattr(bolum, "slug", ""),
                            yedek="bolum")
+
+
+def kayit_hedefi(kok: Any, bolum: Any) -> str:
+    """"İzlerken kaydet"in yazacağı dosya: ``<kok>/<seri>/<bölüm>.mkv``.
+
+    İndirmeyle AYNI hedef (`bolum_hedefi`): kullanıcı kaydettiği bölümü
+    indirilenlerde arar, tam kayıt da "Oynat"ta yerel dosya olarak açılır.
+    mkv: mpv `--stream-record`'da kabı uzantıdan seçiyor ve ham akışı yeniden
+    kodlamadan sarabildiği en genel kap bu. Seri/bölüm slug'ı kaynaktan
+    geliyor ve `..` içerebilir; `guvenli_alt_yol` kökün dışına çıkmayı
+    engelliyor. Klasör burada kuruluyor: mpv yoksa yazamıyor.
+    """
+    hedef = bolum_hedefi(kok, bolum) + ".mkv"
+    os.makedirs(os.path.dirname(hedef), exist_ok=True)
+    return hedef
 
 
 def _hedefin_dosyalari(hedef: str):
@@ -215,6 +233,6 @@ def yarim_dosyalari_sil(hedef: str) -> int:
 
 
 __all__ = ["guvenli_ad", "guvenli_alt_yol", "alt_yolda_mi",
-           "bolum_hedefi", "indirilen_dosya", "oynatilabilir_dosya",
+           "bolum_hedefi", "kayit_hedefi", "indirilen_dosya", "oynatilabilir_dosya",
            "yarim_dosyalari_sil",
-           "YASAK_KARAKTERLER", "AYRILMIS_ADLAR", "UZUNLUK_SINIRI"]
+           "YASAK_KARAKTERLER", "AYRILMIS_ADLAR", "UZUNLUK_SINIRI", "YARIM_KAYIT_EKI"]

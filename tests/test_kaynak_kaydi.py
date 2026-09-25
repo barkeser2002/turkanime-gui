@@ -855,11 +855,15 @@ def _iki_videolu_bolum(adapter_mod, monkeypatch, oynatilan: List[str],
     """
     monkeypatch.setattr(adapter_mod, "extract_video_info", lambda url, _o: {"url": url})
 
-    def oynat(video, dakika_hatirla=False):
+    def oynat(video, **_ayarlar):
         oynatilan.append(video.url)
         return _Surec(a_kodu if video.url.endswith("/A") else 0)
 
-    monkeypatch.setattr(adapter_mod.AdapterVideo, "oynat", oynat)
+    # Kaynak videosu artık ortak mpv komutuyla açılıyor (`common.mpv_oynatici`;
+    # "İzlerken kaydet" `AdapterVideo.oynat`'a hiç ulaşmıyordu). Sahte mpv o
+    # dikişte duruyor.
+    from turkanime_api.common import mpv_oynatici
+    monkeypatch.setattr(mpv_oynatici, "video_oynat", oynat)
     akislar = [
         {"url": "https://ok.ru/videoembed/A", "label": "Ok X",
          "player": "ODNOKLASSNIKI", "fansub": "X"},
@@ -889,6 +893,25 @@ def test_cli_yeniden_deneme_baska_videoyu_oynatiyor(cli, monkeypatch):
 
     assert oynatilan == ["https://ok.ru/videoembed/A", "https://video.sibnet.ru/B"]
     assert "naruto-1-bolum" in ana.Dosyalar().gecmis["izlendi"]["naruto"]
+
+
+def test_cli_izlerken_kaydet_mpv_ye_ulasiyor(cli, monkeypatch, tmp_path):
+    """ESKİ HATA: CLI menüsündeki "İzlerken kaydet" `AdapterVideo.oynat`'a
+    hiç geçmiyordu (imzasında yok); hiçbir kaynakta kayıt yapılmıyordu."""
+    from turkanime_api.common import mpv_oynatici
+    from turkanime_api.sources import adapter as adapter_mod
+    ana = cli
+    bolum = _iki_videolu_bolum(adapter_mod, monkeypatch, [], a_kodu=0)
+    ayarlar = []
+    monkeypatch.setattr(mpv_oynatici, "video_oynat",
+                        lambda video, **k: ayarlar.append(k) or _Surec(0))
+    monkeypatch.setattr(ana.qa, "select", _sirali_cevaplar([bolum]))
+    dosya = ana.Dosyalar()
+    dosya.set_ayar(ayar_list={"manuel fansub": False, "izlerken kaydet": True,
+                              "indirilenler": str(tmp_path)})
+
+    assert ana._bolum_izle([bolum], ana.Dosyalar()) is True
+    assert ayarlar[0]["kayit"] == str(tmp_path / "naruto" / "naruto-1-bolum.mkv")
 
 
 def test_cli_kullanici_kesince_baska_video_acmiyor_izlendi_yazmiyor(cli, monkeypatch):

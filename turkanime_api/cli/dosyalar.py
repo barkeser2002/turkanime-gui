@@ -158,6 +158,10 @@ class Dosyalar:
             "1080p aday sayisi" : 8,
             "max resolution" : True,
             "dakika hatirla" : True,
+            # Kapalı: izleme ilerlemesi bölüm sonunda kendiliğinden yazılır
+            # (mpv "dosya sonu" ya da %90 raporladıysa). Açık: her bölümden
+            # sonra eski "Kaçıncı bölümü tamamladınız?" diyaloğu.
+            "ilerlemeyi sor" : False,
             "aria2c kullan" : False,
             "kaynak": "turkanime",
             "discord_rich_presence": True,

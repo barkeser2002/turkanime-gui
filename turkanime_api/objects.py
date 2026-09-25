@@ -24,8 +24,8 @@ Eski örnek (site açıkken):
 >>> vid1 = bol3.videos[0]
 >>> vid1.oynat()
 """
-from os import makedirs, remove
-from os.path import dirname, expanduser, join
+from os import remove
+from os.path import expanduser, join
 from tempfile import NamedTemporaryFile
 from html import unescape
 import subprocess as sp
@@ -81,6 +81,7 @@ def kayit_hedefi(bolum):
     HTML'inden geliyor ve `..` içerebilir (bkz. common.dosya_adi).
     """
     from .cli.dosyalar import Dosyalar
+    from .common.dosya_adi import kayit_hedefi as _kayit_hedefi
     try:
         kok = str(Dosyalar().ayarlar.get("indirilenler") or "").strip()
     except Exception:
@@ -89,11 +90,9 @@ def kayit_hedefi(bolum):
         # `Dosyalar`ın kendi varsayılanıyla aynı değer: ayar okunamadığında
         # çalışma dizinine düşmek paketlenmiş uygulamada Program Files demek.
         kok = join(expanduser("~"), "Downloads")
-    seri = bolum.anime.slug if getattr(bolum, "anime", None) else ""
-    hedef = guvenli_alt_yol(kok, seri, getattr(bolum, "slug", ""), yedek="bolum")
-    makedirs(dirname(hedef), exist_ok=True)
-    # mkv: mpv'nin ham akışı yeniden kodlamadan sarabildiği en genel kap.
-    return hedef + ".mkv"
+    # Yol kuralı artık tek yerde (`common.dosya_adi.kayit_hedefi`): arayüz ve
+    # CLI'nın `AdapterVideo` yolu da aynı hedefe yazıyor.
+    return _kayit_hedefi(kok, bolum)
 
 
 class Anime:

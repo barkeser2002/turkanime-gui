@@ -185,6 +185,10 @@ class SettingsPage(QWidget):
         form.addRow("", self.chkRemember)
         self.chkWhileWatching = QCheckBox("İzlerken aynı anda kaydet")
         form.addRow("", self.chkWhileWatching)
+        # Varsayılan kapalı: bölüm sonuna kadar izlendiyse ilerleme kendiliğinden
+        # yazılıyor. Açan kullanıcı her bölümden sonra numarayı elle onaylar.
+        self.chkAskProgress = QCheckBox("Her bölümden sonra izleme ilerlemesini sor")
+        form.addRow("", self.chkAskProgress)
         self.chkAria = QCheckBox("aria2c ile indir")
         form.addRow("", self.chkAria)
         layout.addWidget(box)
@@ -519,6 +523,7 @@ class SettingsPage(QWidget):
         self.chkMaxRes.setChecked(bool(ayarlar.get("max resolution", True)))
         self.chkRemember.setChecked(bool(ayarlar.get("dakika hatirla", True)))
         self.chkWhileWatching.setChecked(bool(ayarlar.get("izlerken kaydet", False)))
+        self.chkAskProgress.setChecked(bool(ayarlar.get("ilerlemeyi sor", False)))
         self.chkAria.setChecked(bool(ayarlar.get("aria2c kullan", False)))
         self.chkWatchedIcon.setChecked(bool(ayarlar.get("izlendi ikonu", True)))
         self.chkManualFansub.setChecked(bool(ayarlar.get("manuel fansub", False)))
@@ -558,6 +563,7 @@ class SettingsPage(QWidget):
                 "max resolution": self.chkMaxRes.isChecked(),
                 "dakika hatirla": self.chkRemember.isChecked(),
                 "izlerken kaydet": self.chkWhileWatching.isChecked(),
+                "ilerlemeyi sor": self.chkAskProgress.isChecked(),
                 "aria2c kullan": self.chkAria.isChecked(),
                 "izlendi ikonu": self.chkWatchedIcon.isChecked(),
                 "manuel fansub": self.chkManualFansub.isChecked(),

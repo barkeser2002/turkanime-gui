@@ -15,6 +15,7 @@ import questionary as qa
 
 from ..common import requirements as gereksinim   # modül olarak: testler sahteleyebilsin
 from ..common import kimlikler
+from ..common import mpv_oynatici
 from ..common.cf_qt_solver import SOLVER_FLAG
 from ..common.oynatma import yedekli_oynat
 from ..sources import kayit
@@ -245,12 +246,35 @@ def _bolum_izle(bolumler: List[Any], dosya: Dosyalar) -> bool:
                 atla=atla,
             )
 
+    # "İzlerken kaydet" menüde duruyordu ama `AdapterVideo.oynat` onu almıyor;
+    # kaynak videoları arayüzle ORTAK mpv komutuyla açılıyor
+    # (`common.mpv_oynatici`). Konum raporu yalnızca kaydın tam olup
+    # olmadığını anlamak için: yarım kayıt indirilmiş bölüm sanılmasın.
+    rapor_yolu = mpv_oynatici.konum_dosyasi_ayir()
+    kayitlar: List[Optional[str]] = []
+
     def _oynat(video):
         print("  Video başlatılacak..")
-        return video.oynat(dakika_hatirla=dosya.ayarlar["dakika hatirla"])
+        if not mpv_oynatici.kaynak_videosu_mu(video):
+            return video.oynat(dakika_hatirla=dosya.ayarlar["dakika hatirla"])
+        kayit = None
+        if dosya.ayarlar.get("izlerken kaydet"):
+            kok = (str(dosya.ayarlar.get("indirilenler") or "").strip()
+                   or path.join(path.expanduser("~"), "Downloads"))
+            kayit = mpv_oynatici.kayit_hedefi_kur(kok, bolum)
+            kayitlar.append(kayit)
+        return mpv_oynatici.video_oynat(
+            video, dakika_hatirla=dosya.ayarlar["dakika hatirla"],
+            konum_dosyasi=rapor_yolu, kayit=kayit)
 
     try:
-        sonuc = yedekli_oynat(_bul, _oynat, bildir=lambda m: print(f"  {m}"))
+        try:
+            sonuc = yedekli_oynat(_bul, _oynat, bildir=lambda m: print(f"  {m}"))
+        finally:
+            rapor = mpv_oynatici.konum_oku(rapor_yolu, sil=True)
+            if kayitlar:
+                mpv_oynatici.kaydi_sonlandir(
+                    kayitlar[-1], tam=bool(rapor and rapor["sebep"] == "eof"))
     except Exception as e:
         # Arşiv okunamadı (TürkAnime çevrimdışı) ya da kaynak hatası:
         # "çalışan video yok" değil, sebebiyle söylenir; CLI kapanmaz.

@@ -164,6 +164,10 @@ a = Analysis(
         ('docs/TurkAnime.ico', 'docs'),
         ('docs/TurkAnime.png', 'docs'),
         ('gereksinimler.json', '.'),
+        # mpv'nin konum raporu betiği: `common.mpv_oynatici.LUA_BETIGI` onu
+        # modülün yanında arıyor; pakette yoksa "kaldığın yer" ve otomatik
+        # ilerleme sessizce eski davranışa (her bölümde soru) düşer.
+        ('turkanime_api/common/mpv_konum.lua', 'turkanime_api/common'),
     ] + pyside_datas + bin_data,
     hiddenimports=hiddenimports,
     hookspath=[],

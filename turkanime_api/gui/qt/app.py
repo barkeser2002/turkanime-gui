@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ...common import kutuphane, mpv_oynatici
+from ...common.episode_parser import extract_episode_info
 from ...common.oynatma import yedekli_oynat
 from . import prefs
 from .anilist import AniListService
@@ -463,35 +465,106 @@ class MainWindow(QMainWindow):
                                         early_subset=tercih.aday_sayisi,
                                         callback=callback, atla=atla)
 
+            # Kaldığı yer bölümün KENDİ anahtarıyla (kaynak + kimlik + bölüm):
+            # mpv'nin adrese bağlı kaydı token'lı adreslerde ve başka aday
+            # seçildiğinde kayboluyordu. Rapor dosyasını mpv betiği yazar.
+            kayit = entry or {"obj": bolum}
+            eski = prefs.konum_getir(kayit)
+            baslangic = (eski or {}).get("konum")
+            rapor_yolu = mpv_oynatici.konum_dosyasi_ayir()
+            kayit_yolu = []          # "İzlerken kaydet" hedefi (akışta)
+
             def oynat(video):
                 yerelden = isinstance(video, prefs.YerelVideo)
                 self._status(f"{title} — "
                              + ("indirilmiş dosya açılıyor…" if yerelden
                                 else "oynatıcı açılıyor…"))
-                return prefs.oynat(video, tercih)
+                if (not yerelden and tercih.izlerken_kaydet
+                        and mpv_oynatici.kaynak_videosu_mu(video)):
+                    kayit_yolu.append(mpv_oynatici.kayit_hedefi_kur(
+                        prefs.indirme_dizini(tercih), bolum))
+                return prefs.oynat(video, tercih, baslangic=baslangic,
+                                   konum_dosyasi=rapor_yolu, bolum=bolum)
 
-            sonuc = yedekli_oynat(
-                bul, oynat, bildir=lambda m: self._status(f"{title} — {m}"))
+            try:
+                sonuc = yedekli_oynat(
+                    bul, oynat, bildir=lambda m: self._status(f"{title} — {m}"))
+            finally:
+                rapor = mpv_oynatici.konum_oku(rapor_yolu, sil=True)
+            bitti = rapor is not None and kutuphane.bitti_mi(
+                rapor["konum"], rapor["sure"], rapor["sebep"])
+            if kayit_yolu:
+                # Kayıt yalnızca baştan sona izlendiyse "indirilmiş" sayılır.
+                mpv_oynatici.kaydi_sonlandir(
+                    kayit_yolu[-1], tam=bool(sonuc.basarili and rapor
+                                             and rapor["sebep"] == "eof"
+                                             and not (tercih.dakika_hatirla
+                                                      and baslangic)))
             if not sonuc.basarili:
                 self._status(f"{title} — {sonuc.sebep}", 10000)
                 return
-            # Buraya gelindiyse mpv düzgün kapandı: izleme geçmişi + ilerleme.
-            prefs.gecmis_kaydet(bolum, "izlendi")
-            # Kitaplık: "izlemeye devam et" + bölüm geçmişi (kaynak ve kaynağın
-            # kendi kimliğiyle; kaynaksız kayıt yazılmaz, bkz. prefs).
-            prefs.kitapliga_yaz(entry or {"obj": bolum}, title)
-            self._status(f"{title} — oynatma bitti.")
-            self.ui.post(lambda: self._on_play_finished(bolum, title))
+            # Buraya gelindiyse mpv düzgün kapandı. Kitaplık: "izlemeye devam
+            # et" + bölüm geçmişi (kaynaksız kayıt yazılmaz, bkz. prefs).
+            prefs.kitapliga_yaz(kayit, title)
+            if rapor is None:
+                # mpv rapor vermedi (Lua'sız derleme, eski `oynat`): bölümün
+                # bitip bitmediği bilinmiyor — eski davranış, izlendi + soru.
+                prefs.gecmis_kaydet(bolum, "izlendi")
+                self._status(f"{title} — oynatma bitti.")
+                self.ui.post(lambda: self._on_play_finished(bolum, title, "sor"))
+            elif bitti:
+                prefs.gecmis_kaydet(bolum, "izlendi")
+                prefs.konum_yaz(kayit, None)        # bir dahaki sefere baştan
+                self._status(f"{title} — izlendi.")
+                kip = "sor" if tercih.ilerlemeyi_sor else "otomatik"
+                self.ui.post(lambda: self._on_play_finished(bolum, title, kip))
+            else:
+                # Yarıda kapatıldı: izlendi YAZILMAZ, ilerleme sorulmaz; yer
+                # saklanır ve bölüm listesi "Devam et" gösterir.
+                konum = rapor["konum"] or 0
+                if konum >= kutuphane.ASGARI_KONUM:
+                    prefs.konum_yaz(kayit, konum, rapor["sure"])
+                    self._status(f"{title} — kaldığınız yer "
+                                 f"({kutuphane.sure_metni(konum)}) kaydedildi; "
+                                 "bir dahaki sefere oradan devam edilecek.")
+                else:
+                    self._status(f"{title} — oynatma kapatıldı.")
+                self.ui.post(lambda: self._on_play_finished(bolum, title, ""))
         except Exception as exc:
             self._status(f"{title} — oynatma hatası: {exc}")
         finally:
             self._playing = False
 
-    def _on_play_finished(self, bolum, title: str) -> None:
-        """Oynatma bitti (GUI thread'i): rozetleri tazele, ilerlemeyi sor."""
+    def _on_play_finished(self, bolum, title: str, ilerleme: str = "sor") -> None:
+        """Oynatma bitti (GUI thread'i): rozetleri tazele, ilerlemeyi işle.
+
+        ``ilerleme``: "sor" → diyalog (rapor yok ya da ayar açık), "otomatik"
+        → bölüm numarası başlıktan yazılır, "" → dokunulmaz (yarıda kaldı).
+        Her bölümden sonra açılan modal soru, bölümü sonuna kadar izleyen
+        kullanıcıya her seferinde aynı cevabı yazdırıyordu.
+        """
         self.discord.sayfa(self._current_page)
         self._refresh_episode_history()
-        self._ask_progress(bolum, title)
+        if ilerleme == "sor":
+            self._ask_progress(bolum, title)
+        elif ilerleme == "otomatik":
+            self._otomatik_ilerleme(bolum, title)
+
+    def _otomatik_ilerleme(self, bolum, title: str) -> None:
+        """Bitmiş bölümün numarasını yerel ilerlemeye ve AniList'e yaz.
+
+        Numara diyaloğunkiyle aynı yoldan (`extract_episode_info`, seri adı
+        verilerek: "86 2nd Season 5. Bölüm"de 86 bölüm sanılmasın). İlerleme
+        GERİ ALINMAZ: 10. bölümdeki kullanıcı 3'ü yeniden izlerse AniList'e 3
+        yazmak yanlış olurdu.
+        """
+        seri, _slug = prefs.bolum_kimligi(bolum)
+        ad = anime_adi(bolum, seri)
+        _, no = extract_episode_info(title or _slug, ad)
+        if not (seri and no) or no <= prefs.yerel_ilerleme().get(seri, 0):
+            return
+        if prefs.ilerleme_kaydet(seri, no):
+            self._on_progress_saved(seri, no, ad)
 
     def _ask_progress(self, bolum, title: str) -> None:
         """İzleme ilerlemesi diyaloğunu aç (eski `show_progress_dialog`)."""

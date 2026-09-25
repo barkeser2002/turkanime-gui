@@ -37,6 +37,9 @@ class Tercihler:
     aria2c: bool = False
     dakika_hatirla: bool = True
     izlerken_kaydet: bool = False
+    # Kapalıyken ilerleme bölüm sonunda KENDİLİĞİNDEN yazılır; açıkken eski
+    # "Kaçıncı bölümü tamamladınız?" diyaloğu her bölümden sonra açılır.
+    ilerlemeyi_sor: bool = False
     izlendi_ikonu: bool = True
     manuel_fansub: bool = False
     discord: bool = True
@@ -94,6 +97,7 @@ def oku() -> Tercihler:
         aria2c=bool(ayarlar.get("aria2c kullan", False)),
         dakika_hatirla=bool(ayarlar.get("dakika hatirla", True)),
         izlerken_kaydet=bool(ayarlar.get("izlerken kaydet", False)),
+        ilerlemeyi_sor=bool(ayarlar.get("ilerlemeyi sor", False)),
         izlendi_ikonu=bool(ayarlar.get("izlendi ikonu", True)),
         manuel_fansub=bool(ayarlar.get("manuel fansub", False)),
         discord=bool(ayarlar.get("discord_rich_presence", True)),
@@ -225,13 +229,34 @@ def yerel_dosya(bolum, tercih: Optional[Tercihler] = None,
         return None
 
 
-def oynat(video, tercih: Optional[Tercihler] = None):
-    """`video.oynat()`'ı kullanıcının ayarlarıyla çağır."""
+def oynat(video, tercih: Optional[Tercihler] = None, *,
+          baslangic: Optional[float] = None, konum_dosyasi: Optional[str] = None,
+          bolum: Any = None):
+    """Videoyu kullanıcının ayarlarıyla oynat.
+
+    Kaynak videosu (`AdapterVideo`) ve yerel dosya ortak mpv komutuyla
+    (`common.mpv_oynatici`) açılıyor: bölümün kaldığı saniye (``baslangic``),
+    konum raporu (``konum_dosyasi``) ve "İzlerken kaydet" ancak orada
+    verilebiliyor. `AdapterVideo.oynat` yalnızca `dakika_hatirla` alıyordu;
+    ayar sayfasındaki "İzlerken aynı anda kaydet" hiçbir kaynakta çalışmıyordu.
+    Diğer nesneler (eski `objects.Video`, sahteler) kendi `oynat`'larıyla.
+    """
+    from ...common import mpv_oynatici
     tercih = tercih or oku()
+    if not tercih.dakika_hatirla:
+        baslangic = None
     if isinstance(video, YerelVideo):
-        from ...common import mpv_oynatici
         return mpv_oynatici.yerel_oynat(video.url,
-                                        dakika_hatirla=tercih.dakika_hatirla)
+                                        dakika_hatirla=tercih.dakika_hatirla,
+                                        baslangic=baslangic,
+                                        konum_dosyasi=konum_dosyasi)
+    if mpv_oynatici.kaynak_videosu_mu(video):
+        kayit = None
+        if tercih.izlerken_kaydet and bolum is not None:
+            kayit = mpv_oynatici.kayit_hedefi_kur(indirme_dizini(tercih), bolum)
+        return mpv_oynatici.video_oynat(video, dakika_hatirla=tercih.dakika_hatirla,
+                                        baslangic=baslangic,
+                                        konum_dosyasi=konum_dosyasi, kayit=kayit)
     kwargs: Dict[str, Any] = {}
     if _kabul_ediyor(video.oynat, "dakika_hatirla"):
         kwargs["dakika_hatirla"] = tercih.dakika_hatirla
@@ -343,6 +368,35 @@ def kitapliga_yaz(entry: Optional[Dict[str, Any]], bolum_baslik: str = "") -> bo
         k["kaynak"], k["kimlik"], k["baslik"], k["bolum_slug"],
         bolum_baslik=bolum_baslik or str((entry or {}).get("title") or ""),
         kapak=k["kapak"])
+
+
+def konum_getir(entry: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Bölümün kitaplıktaki konumu (``{"konum", "sure", ...}``) ya da None.
+
+    Anahtar kitaplığınki (kaynak + kaynağın kimliği + bölüm slug'ı): mpv'nin
+    adrese bağlı kaydı token'lı/değişen adreslerde kayboluyordu.
+    """
+    from ...common import kutuphane
+    k = kitaplik_kimligi(entry)
+    if not (k["kaynak"] and k["kimlik"] and k["bolum_slug"]):
+        return None
+    try:
+        return kutuphane.konum_getir(k["kaynak"], k["kimlik"], k["bolum_slug"])
+    except Exception:
+        return None
+
+
+def konum_yaz(entry: Optional[Dict[str, Any]], konum: Optional[float],
+              sure: Optional[float] = None) -> bool:
+    """Konumu yaz; ``konum`` None ise sil (bölüm bitti, baştan başlasın)."""
+    from ...common import kutuphane
+    k = kitaplik_kimligi(entry)
+    if not (k["kaynak"] and k["kimlik"] and k["bolum_slug"]):
+        return False
+    if konum is None:
+        return kutuphane.konum_sil(k["kaynak"], k["kimlik"], k["bolum_slug"])
+    return kutuphane.konum_kaydet(k["kaynak"], k["kimlik"], k["bolum_slug"],
+                                  konum, sure)
 
 
 def ilerleme_kaydet(seri: str, bolum_no: int) -> bool:
@@ -470,6 +524,6 @@ __all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
            "kaynak_kimliklerini_uygula",
            "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
            "seri_adi", "kitaplik_kimligi", "kitapliga_yaz", "YerelVideo",
-           "yerel_dosya",
+           "yerel_dosya", "konum_getir", "konum_yaz",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

@@ -397,7 +397,15 @@ class EpisodePage(QWidget):
         head.addStretch(1)
         self.lblStatus = StatusLabel()
         head.addWidget(self.lblStatus)
+        # "▶ Devam et: 5. Bölüm (12:14)" / "▶ Sıradaki: 6. Bölüm" — hedefi
+        # `devam_hedefi` belirler; hedef yoksa düğme gizli.
+        self.btnDevam = QPushButton("")
+        self.btnDevam.setObjectName("Primary")
+        self.btnDevam.clicked.connect(self._devam_oynat)
+        self.btnDevam.hide()
+        head.addWidget(self.btnDevam)
         layout.addLayout(head)
+        self._devam_kaydi: Optional[Dict[str, Any]] = None
 
         self.lblSources = QLabel("")
         self.lblSources.setObjectName("Muted")
@@ -476,6 +484,8 @@ class EpisodePage(QWidget):
         self.lblSources.setVisible(False)
         self._clear_rows()
         self.btnMore.hide()
+        self._devam_kaydi = None          # önceki animenin hedefi kalmasın
+        self.btnDevam.hide()
         if episodes is not None:
             self._on_episodes(episodes)
             return
@@ -515,6 +525,7 @@ class EpisodePage(QWidget):
             return
         self._shown = 0
         self._load_more()
+        self._devam_guncelle()
         suffix = f" • {len(names)} kaynak" if len(names) > 1 else ""
         self.lblStatus.ok(f"{len(self._all)} bölüm{suffix}")
         self._update_selection_label()
@@ -550,6 +561,62 @@ class EpisodePage(QWidget):
         self._reload_gecmis()
         for row in self._rows:
             row.apply_history(self._gecmis)
+        self._devam_guncelle()
+
+    # ── Devam et / Sıradaki ─────────────────────────────────────────────────
+    def devam_hedefi(self) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """``(düğme metni, oynatılacak kayıt)`` ya da None.
+
+        Önce yarıda bırakılan bölüm (kitaplıkta konumu olan, en son izlenen):
+        kullanıcı büyük olasılıkla onu bitirmek istiyor. Yoksa en ilerideki
+        izlenen bölümün ardı (`kutuphane.sonraki_bolum`); hiç izlenmemiş ya
+        da bitmiş seride düğme yok — "Sıradaki: 1. Bölüm" gürültü olurdu.
+        Çok kaynaklı satırda bölüm herhangi bir kaynaktan izlendiyse izlenmiş
+        sayılır (rozetle aynı kural).
+        """
+        from ....common import kutuphane
+        if not self._all:
+            return None
+        veri = kutuphane.oku()
+        yarimlar: List[Tuple[float, Dict[str, Any], Dict[str, Any], Any]] = []
+        for episode in self._all:
+            for name, entry in (episode.get("sources") or {}).items():
+                if not entry or not entry.get("kimlik"):
+                    continue
+                _seri, slug = prefs.bolum_kimligi(entry.get("obj"))
+                konum = kutuphane.konum_getir(name, entry["kimlik"], slug, veri)
+                if konum:
+                    yarimlar.append((float(konum.get("zaman") or 0), episode,
+                                     entry, konum.get("konum")))
+        if yarimlar:
+            _zaman, episode, entry, saniye = max(yarimlar, key=lambda y: y[0])
+            return (f"▶ Devam et: {episode.get('title') or 'bölüm'} "
+                    f"({kutuphane.sure_metni(saniye)})", entry)
+
+        gecmis = self._gecmis or prefs.Gecmis.yukle()
+        izlenen = [i for i, episode in enumerate(self._all)
+                   if any(gecmis.durum((e or {}).get("obj"))[0]
+                          for e in (episode.get("sources") or {}).values() if e)]
+        if not izlenen:
+            return None
+        sira = kutuphane.sonraki_bolum(range(len(self._all)), izlenen)
+        if sira is None:
+            return None
+        episode = self._all[sira]
+        entry = primary_entry(episode)
+        if entry is None:
+            return None
+        return f"▶ Sıradaki: {episode.get('title') or 'bölüm'}", entry
+
+    def _devam_guncelle(self) -> None:
+        hedef = self.devam_hedefi()
+        self._devam_kaydi = hedef[1] if hedef else None
+        self.btnDevam.setText(hedef[0] if hedef else "")
+        self.btnDevam.setVisible(hedef is not None)
+
+    def _devam_oynat(self) -> None:
+        if self._devam_kaydi:
+            self.play_requested.emit(self._devam_kaydi)
 
     # ── Liste yönetimi ──────────────────────────────────────────────────────
     def _clear_rows(self) -> None:
