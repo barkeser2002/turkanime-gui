@@ -30,6 +30,27 @@ def test_kullanicinin_verdigi_deger_ezilmiyor(monkeypatch):
     assert chromium.bayraklari_hazirla() == "--kendi-bayragim"
 
 
+def test_root_ta_kum_havuzu_kapatiliyor(monkeypatch):
+    """Chromium root olarak kum havuzuyla çalışmıyor, süreci öldürüyor.
+
+    Gitea runner'ında iş root olarak koşuyor; test kapısı orada özetsiz
+    "exit 1" ile bitiyordu.
+    """
+    monkeypatch.delenv(chromium.KUM_HAVUZU_ANAHTARI, raising=False)
+    monkeypatch.setattr(chromium.os, "geteuid", lambda: 0, raising=False)
+    chromium.bayraklari_hazirla()
+    import os
+    assert os.environ[chromium.KUM_HAVUZU_ANAHTARI] == "1"
+
+
+def test_normal_kullanicida_kum_havuzuna_dokunulmuyor(monkeypatch):
+    monkeypatch.delenv(chromium.KUM_HAVUZU_ANAHTARI, raising=False)
+    monkeypatch.setattr(chromium.os, "geteuid", lambda: 1000, raising=False)
+    chromium.bayraklari_hazirla()
+    import os
+    assert chromium.KUM_HAVUZU_ANAHTARI not in os.environ
+
+
 def test_gui_ortak_bayraklari_kullaniyor(monkeypatch):
     """`prepare_qt_env` bayrakları ortak modülden almalı (ikinci kopya yok)."""
     monkeypatch.delenv(chromium.ORTAM_ANAHTARI, raising=False)

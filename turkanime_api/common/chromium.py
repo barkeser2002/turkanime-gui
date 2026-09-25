@@ -29,9 +29,29 @@ BAYRAKLAR = " ".join((
 ))
 
 
+KUM_HAVUZU_ANAHTARI = "QTWEBENGINE_DISABLE_SANDBOX"
+
+
+def root_mu() -> bool:
+    """Süreç root (uid 0) olarak mı çalışıyor? Windows'ta hep False."""
+    geteuid = getattr(os, "geteuid", None)
+    return bool(geteuid) and geteuid() == 0
+
+
 def bayraklari_hazirla() -> str:
-    """Bayrakları ortama koy (zaten verilmişse dokunma); geçerli değeri döndür."""
+    """Bayrakları ortama koy (zaten verilmişse dokunma); geçerli değeri döndür.
+
+    ROOT: Chromium root olarak kum havuzuyla (sandbox) çalışmayı reddediyor
+    ve süreci olduğu gibi sonlandırıyor — uygulama çerez penceresi açıldığı
+    an kapanıyordu. Konteynerde (Gitea runner, Docker) iş root olarak koşuyor;
+    test kapısı orada özetsiz "exit 1" ile bitiyordu (yerelde root olarak
+    yeniden üretildi). Root'ta kum havuzu kapatılıyor: Chromium'un o durumda
+    kabul ettiği tek yol bu. Normal kullanıcıda kum havuzuna dokunulmaz.
+    """
+    if root_mu():
+        os.environ.setdefault(KUM_HAVUZU_ANAHTARI, "1")
     return os.environ.setdefault(ORTAM_ANAHTARI, BAYRAKLAR)
 
 
-__all__ = ["ORTAM_ANAHTARI", "BAYRAKLAR", "bayraklari_hazirla"]
+__all__ = ["ORTAM_ANAHTARI", "BAYRAKLAR", "KUM_HAVUZU_ANAHTARI", "root_mu",
+           "bayraklari_hazirla"]
