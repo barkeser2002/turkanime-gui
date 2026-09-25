@@ -189,8 +189,36 @@ def test_mevcut_tag_tetikleyicileri_korundu():
 
 
 def test_build_isi_elle_calistirmada_da_kosuyor():
-    """Elle çalıştırma bir derleme denemesi olarak kullanılabilmeli."""
-    assert "if" not in _workflow()["jobs"]["build"]
+    """Elle çalıştırma bir derleme denemesi olarak kullanılabilmeli.
+
+    build'in tek koşulu "GitHub'da mı" (Gitea aynasında Windows/macOS runner
+    yok); etikete bağlanmamalı.
+    """
+    kosul = _workflow()["jobs"]["build"].get("if", "")
+    assert "ref_type" not in kosul and "tag" not in kosul and "ref" not in kosul, kosul
+
+
+def test_derleme_ve_yayin_yalnizca_github_da():
+    """Gitea aynası aynı iş akışını koşuyor; yalnızca Linux runner'ı var.
+
+    build GitHub'a bağlı değilse Windows/macOS işleri Gitea'da sonsuza dek
+    runner bekliyor, oraya ulaşırsa da release/pypi yayını ikinci kez
+    deniyordu. release ve pypi build'e bağlı; build atlanınca onlar da atlanır.
+    """
+    isler = _workflow()["jobs"]
+    assert isler["build"].get("if") == "github.server_url == 'https://github.com'"
+    for ad in ("release", "pypi"):
+        gerekli = isler[ad].get("needs") or []
+        assert "build" in ([gerekli] if isinstance(gerekli, str) else gerekli), ad
+    assert "if" not in isler["test"], "test kapısı Gitea'da da koşmalı"
+
+
+def test_test_kapisi_libgl_kuruyor():
+    """Gitea runner imajında libGL.so.1 yok; QtGui import'u orada düşüyordu."""
+    adim = _adim("test", "Sistem bağımlılıkları (offscreen Qt)")
+    betik = adim.get("run", "")
+    for paket in ("libgl1", "libegl1", "libfontconfig1", "libxkbcommon0"):
+        assert paket in betik, paket
 
 
 # ─────────────────────────────────────────────────────────────────────────────
