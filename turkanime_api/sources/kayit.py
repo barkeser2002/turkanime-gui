@@ -314,6 +314,16 @@ def _deokwave() -> KaynakUclari:
     return KaynakUclari(search_deokwave, get_anime_episodes, get_episode_streams)
 
 
+def _animezer() -> KaynakUclari:
+    # Arama yanıtı kapak görselini de taşıyor; `zengin_ara` aynı isteği
+    # kullanıyor, görsel için ek istek yok.
+    from .animezer import (
+        get_anime_episodes, get_episode_streams, search_animezer, search_animezer_zengin,
+    )
+    return KaynakUclari(search_animezer, get_anime_episodes, get_episode_streams,
+                        zengin_ara=search_animezer_zengin)
+
+
 def _asyaanimeleri() -> KaynakUclari:
     # Arama kartı kapak görselini de taşıyor; `zengin_ara` aynı isteği
     # kullanıyor, görsel için ek istek yok.
@@ -440,6 +450,17 @@ def _deokwave_adresi(bolum_id: str) -> str:
     return watch_url(bolum_id)
 
 
+def _animezer_adresi(bolum_id: str) -> str:
+    """"<tür>/<slug>/<sezon>/<bölüm>/<ara>" → sitenin izleme sayfası.
+
+    Tembel import (bkz. `_deokwave_adresi`): kimlik biçimi tek yerde
+    (`animezer.watch_url`) kalsın; ara bölümün "5a" yazımı ve filmin
+    /izle adresi orada.
+    """
+    from .animezer import watch_url
+    return watch_url(bolum_id)
+
+
 def _animeler_adresi(bolum_id: str) -> str:
     # Bölüm kimliği sitedeki yol ("one-piece/bolum-1161"). Adres burada elle
     # kuruluyor: kayıt modülü kaynak modülünü import etmiyor (bkz. üst not).
@@ -503,6 +524,11 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("AnimeTR", "AnimeTR", "AT", "#d63031", "ANIMETR", _animetr,
            modul="animetr", cli_kodu="animetr", bolum_adresi=_animetr_adresi,
            bolum_slugu=_animetr_bolum_slugu, taranabilir=True),
+    # Deneysel: çoğu gömme anizmplayer'ın istemciye bağlı imzalı HLS'i;
+    # doğrudan adres bazı ağlarda 403 veriyor, o zaman sitenin vekiline düşülüyor.
+    Kaynak("Animezer", "Animezer", "AM", "#e67e22", "ANIMEZER", _animezer,
+           modul="animezer", cli_kodu="animezer", bolum_adresi=_animezer_adresi,
+           taranabilir=True, deneysel=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").

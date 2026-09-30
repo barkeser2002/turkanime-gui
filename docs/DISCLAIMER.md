@@ -67,6 +67,7 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 | Animeler | [animeler.pw](https://animeler.pw) · oynatıcı: [play.animeler.pw](https://play.animeler.pw), [anizmplayer.com](https://anizmplayer.com), [loveulikeido.site](https://loveulikeido.site) |
 | One Pace TR | [www.onepacetr.net](https://www.onepacetr.net) · API: [onepacetradmin-v3-4f0db9f5d700.herokuapp.com](https://onepacetradmin-v3-4f0db9f5d700.herokuapp.com) |
 | AnimeTR | [animetr.co](https://animetr.co) |
+| Animezer | [animezer.com](https://animezer.com) · oynatıcı: [anizmplayer.com](https://anizmplayer.com), sitenin vekili /api/proxy · video: sibnet, mail.ru, vidmoly, ok.ru |
 
 > Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
 > `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce
