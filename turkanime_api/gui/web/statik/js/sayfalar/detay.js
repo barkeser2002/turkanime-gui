@@ -445,9 +445,16 @@
         self.durum[ad] = "hata";
         self.hata[ad] = e.message;
         TA.bosalt(el.durum).appendChild(h("span.ak-hata", { title: e.message }, TA.ikon("uyari"), "hata"));
+        // Bot doğrulaması (köprü yükünde `erisim`): önce "Erişimi aç", erişim
+        // açılınca bölümler kendiliğinden yeniden istenir (js/erisim.js).
+        var erisim = e.veri && e.veri.erisim;
         TA.bosalt(el.liste).appendChild(h("li.bolum-hata", null,
           h("span", null, e.message),
-          h("button.dugme.cerceve.kucuk", { onclick: function () { self.bolumYukle(ad); } }, TA.ikon("yenile"), "Tekrar dene")));
+          h("div.bolum-hata-eylem", null,
+            erisim ? TA.erisimDugmesi(erisim, function () {
+              if (rid === self.rid) self.bolumYukle(ad);
+            }) : null,
+            h("button.dugme.cerceve.kucuk", { onclick: function () { self.bolumYukle(ad); } }, TA.ikon("yenile"), "Tekrar dene"))));
         self.acik[ad] = true;
         self.acKapaUygula(ad);
       });

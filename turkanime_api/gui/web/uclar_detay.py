@@ -305,6 +305,11 @@ class DetayUclari:
             # "AniList yalnızca metadata kaynağı", "AnimeciX sayısal kimlik
             # bekliyor": kullanıcıya yazılmış cümleler, olduğu gibi gitsin.
             raise UcHatasi(str(exc)) from None
+        except Exception as exc:
+            # Bot doğrulamasıysa sayfa akordiyonda "Erişimi aç" göstersin.
+            from ...common import oturumlar
+            oturumlar.erisim_isaretle(exc, kaynak)
+            raise
         bolumler = [e for e in (ham or []) if isinstance(e, dict)]
         kapak = cover_url(oturum.anime) or ""
         for entry in bolumler:

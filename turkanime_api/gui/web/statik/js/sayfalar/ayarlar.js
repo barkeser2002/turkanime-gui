@@ -156,6 +156,8 @@
       var aday = this.girdi("aday", { tip: "number", min: 1, max: 30 });
 
       this.cerezEl = h("div.oturum-durumu");
+      // "Erişimi aç" oturumları; liste js/erisim.js'te çiziliyor.
+      this.erisimEl = h("div.erisim-oturumlari");
       this.bagisEl = h("p.ipucu");
       this.bagisDugme = this.dugme("Bağışımı geri çek", "kapat", function () { self.bagisGeriCek(); });
       this.anilistEl = h("div.oturum-durumu");
@@ -196,6 +198,9 @@
               TA.cagir("cerez_temizle").then(function (c) { self.cerezGoster(c); self.durumYaz("Çerez temizlendi."); },
                 function (e) { self.durumYaz("Temizlenemedi: " + e.message, "hata"); });
             })),
+          h("div.alt-baslik", null, "Erişim oturumları (bot doğrulaması)"),
+          h("p.ipucu", null, "“Erişimi aç” ile bot doğrulamasını uygulamanın içindeki tarayıcıda geçtiğin kaynaklar. Oturum (çerezler + o tarayıcının kimliği) kaynağın istekleri doğrulamaya takılmasın diye saklanır; süresi dolunca site yeniden doğrulama isteyebilir."),
+          this.erisimEl,
           h("div.alt-baslik", null, "OpenAnime oturumu"),
           this.satir("Token", this.girdi("openani_token", { tip: "password", yer: "token çerezi (opsiyonel)" })),
           this.satir("Refresh Token", this.girdi("openani_refresh", { tip: "password", yer: "refreshToken çerezi (opsiyonel)" }),
@@ -254,6 +259,7 @@
       this.secretIpucu.classList.toggle("uyari", !!v.anilist.sizan_uyari);
       this.discordEl.textContent = v.discord_metni;
       this.cerezGoster(v.cerez);
+      TA.erisimOturumlari(this.erisimEl);
       this.bagisGoster(v.bagis);
       this.anilistGoster(v.anilist);
     },
