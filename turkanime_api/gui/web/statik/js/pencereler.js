@@ -199,12 +199,34 @@
 
   // ── Gereksinim sihirbazı ─────────────────────────────────────────────────
   // "Atla" = bir daha sorma (Python tercihi yazar); Esc/×/"Kapat" yalnızca kapatır.
+  // FlareSolverr isteğe bağlı: kurulabiliyorsa kendi seçim kutusuyla (varsayılan
+  // işaretli), hazır paketi olmayan platformda neden olmadığını anlatan notla.
   turler.gereksinim = function (v, api) {
     var d = Object.assign({}, v);
+    var fs = v.flaresolverr || {};
+    var araclar = v.eksikler || [];
     var alan = ilerlemeAlani();
+    var fsKutu = null;
+    var fsSatiri = null;
+    if (fs.goster) {
+      if (fs.kurulabilir) {
+        fsKutu = h("input", { type: "checkbox" });
+        fsKutu.checked = fs.sec !== false;
+        fsKutu.addEventListener("change", function () { ciz(); });
+        fsSatiri = h("div.fs-satiri", { dataset: { fs: fs.durum } },
+          h("label.onay-kutusu", null, fsKutu,
+            h("span", null, "FlareSolverr'ı da kur (önerilir, ~" + fs.boyut_mb + " MB)")),
+          h("p.soluk", null, fs.metin));
+      } else {
+        fsSatiri = h("div.fs-satiri", { dataset: { fs: fs.durum } },
+          h("span.hap", null, TA.ikon("bilgi"), "FlareSolverr"),
+          h("p.soluk", null, fs.metin));
+      }
+    }
+    function secimVar() { return araclar.length > 0 || !!(fsKutu && fsKutu.checked); }
     var kur = dugme("birincil", "İndir ve Kur", function () {
       kur.disabled = true;
-      api.eylem("kur").then(ciz, function (e) {
+      api.eylem("kur", { flaresolverr: !!(fsKutu && fsKutu.checked) }).then(ciz, function (e) {
         d.metin = e.message;
         d.durum = "hata";
         ciz();
@@ -220,7 +242,8 @@
       var durum = d.durum;
       alan.ciz(durum !== "hazir", d.yuzde, d.metin,
         durum === "hata" ? "hata" : durum === "tamam" ? "tamam" : "");
-      kur.disabled = durum === "kuruluyor" || durum === "tamam";
+      kur.disabled = durum === "kuruluyor" || durum === "tamam" || !secimVar();
+      if (fsKutu) fsKutu.disabled = durum === "kuruluyor" || durum === "tamam";
       etiketYaz(kur, { kuruluyor: "Kuruluyor…", tamam: "Tamamlandı", hata: "Tekrar Dene" }[durum] || "İndir ve Kur",
         durum === "tamam" ? "tamam" : "indir");
       atla.textContent = durum === "tamam" ? "Kapat" : "Atla";
@@ -231,11 +254,12 @@
       sinif: "soru-penceresi", dataset: { soru: "gereksinim" }, etiket: "Eksik Gereksinimler",
       vazgec: vazgec, disTik: false,
       icerik: [
-        TA.pencereBasligi("Bazı araçlar bulunamadı", null, vazgec),
-        h("div.arac-listesi", null, (v.eksikler || []).map(function (a) {
+        TA.pencereBasligi(araclar.length ? "Bazı araçlar bulunamadı" : "Önerilen bileşen", null, vazgec),
+        araclar.length ? h("div.arac-listesi", null, araclar.map(function (a) {
           return h("span.hap", null, TA.ikon("uyari"), a);
-        })),
-        h("p.soluk", null, "Bunlar olmadan oynatma, birleştirme veya indirme çalışmayabilir. Otomatik kurulumu şimdi yapabilirsiniz."),
+        })) : null,
+        araclar.length ? h("p.soluk", null, "Bunlar olmadan oynatma, birleştirme veya indirme çalışmayabilir. Otomatik kurulumu şimdi yapabilirsiniz.") : null,
+        fsSatiri,
         alan.el,
         h("div.dugme-satiri.sag", null, atla, kur)
       ]

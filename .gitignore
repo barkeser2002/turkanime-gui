@@ -65,3 +65,13 @@ tranime_debug.html
 # tam_arsiv_indir'in geçici/eski kopyaları (kesilen indirmeden kalabilir)
 /.cevrimdisi_arsiv-indirme-*/
 /.cevrimdisi_arsiv-eski-*/
+
+# ── Yerel FlareSolverr (common/flaresolverr.py) ─────────────────────────────
+# Depodan çalışınca veri kökü depo kökü: sihirbazın kurduğu ~800 MB'lık kopya,
+# günlüğü ve yarıda kalmış kurulum klasörü buraya düşüyor. `bin/flaresolverr/`
+# geliştiricinin elle koyduğu kopya (spec onu zaten pakete almıyor).
+/flaresolverr/
+/bin/flaresolverr/
+/flaresolverr.log
+/flaresolverr.log.1
+/.flaresolverr-kurulum-*/

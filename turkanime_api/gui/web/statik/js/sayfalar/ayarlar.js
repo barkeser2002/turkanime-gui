@@ -61,6 +61,10 @@
         self.arsivSonucYaz(v.mesaj, v.tur);
         self.arsivTazele();
       });
+      // Yerel FlareSolverr CF zincirinde kendiliğinden de başlıyor: durum
+      // olaydan geliyor, düğmeler ona göre.
+      TA.dinle("flaresolverr_durum", function (v) { self.fsSon = v; self.fsGoster(v); });
+      TA.dinle("flaresolverr_ilerleme", function (v) { self.fsIlerleme(v); });
     },
 
     goster: function () {
@@ -162,6 +166,7 @@
       this.secretIpucu = h("p.ipucu");
       this.discordEl = h("p.ipucu");
       this.arsivKur();
+      this.fsKur();
 
       TA.bosalt(this.govde);
       TA.ekle(this.govde, [
@@ -209,8 +214,12 @@
           h("div.dugme-satiri", null, this.bagisDugme)
         ]),
         this.kart("baglanti", "Bağlantı", "Cloudflare korumalı siteler için.", [
-          this.satir("FlareSolverr", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
-            "Boş bırakılırsa yalnızca yerel QtWebEngine çözücü kullanılır.")
+          h("div.alt-baslik", null, "Yerel FlareSolverr"),
+          this.fsEl,
+          this.anahtar("flaresolverr_yerel", "Yerel FlareSolverr'ı kullan",
+            "Cloudflare engelinde istekler bu bilgisayardaki FlareSolverr'dan geçer (yalnızca 127.0.0.1). İlk engelde kendiliğinden başlar, uygulama kapanınca durur."),
+          this.satir("FlareSolverr adresi", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
+            "Kendi sunucunun adresini yazarsan yerel yerine o kullanılır. Varsayılan adres (projenin uzak sunucusu) yalnızca yerel FlareSolverr kullanılamazken denenir. Boş: uzak sunucu hiç kullanılmaz; yerel FlareSolverr ve yerleşik QtWebEngine çözücü yine çalışır.")
         ]),
         this.kart("anilist", "AniList Hesabı", "İzleme Listesi ve ilerleme senkronu için.", [
           this.anilistEl,
@@ -256,6 +265,7 @@
       this.cerezGoster(v.cerez);
       this.bagisGoster(v.bagis);
       this.anilistGoster(v.anilist);
+      if (v.flaresolverr) { this.fsSon = v.flaresolverr; this.fsGoster(v.flaresolverr); }
     },
 
     formDegerleri: function () {
@@ -263,7 +273,8 @@
       var out = {};
       ["indirilenler", "paralel", "aday", "max_res", "dakika_hatirla", "izlerken_kaydet",
         "ilerlemeyi_sor", "aria2c", "izlendi_ikonu", "manuel_fansub", "flaresolverr",
-        "openani_token", "openani_refresh", "kimlik_paylas", "sunucu_adresi", "sunucu_anahtari"
+        "flaresolverr_yerel", "openani_token", "openani_refresh", "kimlik_paylas",
+        "sunucu_adresi", "sunucu_anahtari"
       ].forEach(function (alan) {
         var el = self.alanlar[alan];
         if (!el) return;
@@ -324,6 +335,78 @@
     anilistGiris: function () {
       var self = this;
       TA.cagir("anilist_giris", this.anilistDegerleri()).catch(function (e) { self.durumYaz(e.message, "hata"); });
+    },
+
+    // ── Yerel FlareSolverr ──────────────────────────────────────────────────
+    // Durum: kurulu_degil / durdu / basliyor / calisiyor / hata / eksik /
+    // kuruluyor / desteklenmiyor. Kur/Başlat/Durdur anlık (Kaydet beklemez).
+    fsKur: function () {
+      var self = this;
+      this.fsRozet = h("span.rozet");
+      this.fsMetin = h("span.secilebilir");
+      this.fsSurum = h("dd", null, "—");
+      this.fsAdres = h("dd.secilebilir", null, "—");
+      this.fsYer = h("dd.secilebilir", null, "—");
+      this.fsGunluk = h("dd.secilebilir", null, "—");
+      this.fsCubuk = h("i");
+      this.fsIlerlemeMetni = h("span");
+      this.fsIptal = this.dugme("İptal", "kapat", function () { TA.cagir("flaresolverr_iptal"); });
+      this.fsIlerlemeEl = h("div.fs-ilerleme", { hidden: true },
+        h("div.fs-cubuk", null, this.fsCubuk),
+        h("div.fs-ilerleme-satir", null, this.fsIlerlemeMetni, this.fsIptal));
+      function eylem(ad, bekleyen) {
+        return function () {
+          TA.cagir(ad).then(function () { if (bekleyen) self.fsMetin.textContent = bekleyen; },
+            function (e) { self.durumYaz(e.message, "hata"); });
+        };
+      }
+      this.fsKurDugme = this.dugme("Kur", "indir", eylem("flaresolverr_kur", "İndirme başlıyor…"), "birincil");
+      this.fsBaslat = this.dugme("Başlat", "oynat", eylem("flaresolverr_baslat", "Başlatılıyor…"));
+      this.fsDurdur = this.dugme("Durdur", "kapat", eylem("flaresolverr_durdur"));
+      this.fsEl = h("div.fs-paneli", null,
+        h("div.oturum-durumu", null, this.fsRozet, this.fsMetin),
+        h("dl.bilgi-tablosu", null,
+          h("dt", null, "Sürüm"), this.fsSurum, h("dt", null, "Adres"), this.fsAdres,
+          h("dt", null, "Konum"), this.fsYer, h("dt", null, "Günlük"), this.fsGunluk),
+        this.fsIlerlemeEl,
+        h("div.dugme-satiri", null, this.fsKurDugme, this.fsBaslat, this.fsDurdur));
+      if (this.fsSon) this.fsGoster(this.fsSon);
+    },
+
+    fsGoster: function (s) {
+      if (!this.fsEl || !s) return;
+      var renk = { calisiyor: ".yesil", basliyor: ".mavi", kuruluyor: ".mavi", hata: ".turuncu", eksik: ".turuncu" }[s.durum] || "";
+      this.fsRozet.className = "rozet" + renk.replace(".", " ");
+      this.fsEl.dataset.durum = s.durum;
+      TA.bosalt(this.fsRozet);
+      TA.ekle(this.fsRozet, [TA.ikon(s.durum === "calisiyor" ? "tamam" : s.durum === "hata" || s.durum === "eksik" ? "uyari" : "bilgi"), s.etiket]);
+      this.fsMetin.textContent = s.metin || "";
+      this.fsSurum.textContent = s.surum ? s.surum + (s.guncel || !s.kurulu ? "" : " (güncel sürüm " + s.sabit_surum + ")") : "—";
+      this.fsAdres.textContent = s.adres || "—";
+      this.fsYer.textContent = s.kurulu ? s.yol + (s.gomulu ? " (uygulamayla geldi)" : "") : "—";
+      this.fsGunluk.textContent = s.gunluk || "—";
+      var mesgul = s.durum === "kuruluyor";
+      var guncelle = s.kurulu && !s.gomulu && !s.guncel;
+      this.fsKurDugme.hidden = !(s.kurulabilir && (!s.kurulu || guncelle));
+      TA.bosalt(this.fsKurDugme);
+      TA.ekle(this.fsKurDugme, [TA.ikon("indir"), guncelle ? "Güncelle (" + s.sabit_surum + ")" : "Kur (~" + s.boyut_mb + " MB)"]);
+      this.fsKurDugme.disabled = mesgul;
+      this.fsBaslat.hidden = !s.kurulu;
+      this.fsDurdur.hidden = !s.kurulu;
+      this.fsBaslat.disabled = mesgul || s.durum === "calisiyor" || s.durum === "basliyor" || s.durum === "eksik";
+      this.fsDurdur.disabled = !(s.durum === "calisiyor" || s.durum === "basliyor");
+      if (!mesgul) this.fsIlerlemeEl.hidden = true;
+    },
+
+    fsIlerleme: function (v) {
+      if (!this.fsIlerlemeEl || !v) return;
+      if (v.bitti) { this.fsIlerlemeEl.hidden = true; return; }
+      this.fsIlerlemeEl.hidden = false;
+      this.fsIlerlemeMetni.textContent = v.metin || "";
+      var cubuk = this.fsIlerlemeEl.querySelector(".fs-cubuk");
+      cubuk.classList.toggle("belirsiz", v.oran == null);
+      this.fsCubuk.style.width = v.oran == null ? "" : Math.round(v.oran * 100) + "%";
+      this.fsIptal.disabled = v.metin === "İptal ediliyor…";
     },
 
     // ── Arşiv ───────────────────────────────────────────────────────────────

@@ -828,6 +828,13 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         try:
+            # Yerel FlareSolverr (ve açtığı Chrome'lar) pencereyle birlikte
+            # gider; çöküş yolunu `common.flaresolverr`'ın bekçisi karşılıyor.
+            from ...common import flaresolverr
+            flaresolverr.kapat()
+        except Exception:
+            pass
+        try:
             from .workers import shutdown_pools
             shutdown_pools(KAPANIS_MUHLETI)
         except Exception:
@@ -869,6 +876,14 @@ def run() -> int:
     # beklenecek bir şey kalmamıştır.
     from .workers import shutdown_pools
     if not shutdown_pools(0):
+        # `os._exit` atexit'i atlıyor: yerel FlareSolverr burada açıkça
+        # durdurulmalı (normalde `closeEvent` çoktan durdurdu; bu, pencere
+        # başka yoldan kapandıysa diye).
+        try:
+            from ...common import flaresolverr
+            flaresolverr.kapat()
+        except Exception:
+            pass
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(kod)

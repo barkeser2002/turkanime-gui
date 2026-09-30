@@ -140,6 +140,27 @@ def eksik_araclar(araclar: Optional[Sequence[str]] = None) -> List[str]:
     return [ad for ad in (araclar or ARACLAR) if not arac_var_mi(ad)]
 
 
+# İsteğe bağlı ama önerilen bileşenler. `ARACLAR`dan ayrı, çünkü ne PATH'te
+# aranan bir komut ne de `gereksinimler.json`'dan kurulan bir dosya:
+# FlareSolverr'ın sabit sürümlü, SHA-256 ile doğrulanan kendi kurulumu var
+# (`common/flaresolverr.py`). Sihirbaz onları ayrı satırda, seçilebilir
+# gösteriyor.
+ONERILENLER: Sequence[str] = ("flaresolverr",)
+
+
+def onerilen_eksikler() -> List[str]:
+    """Kurulması önerilen ama kurulu olmayan bileşenler.
+
+    FlareSolverr yalnızca hazır paketi olan platformlarda (Windows/Linux x64)
+    ve hiçbir kopya (uygulamayla gelen ya da kurulan) yokken önerilir.
+    """
+    try:
+        from . import flaresolverr
+        return [flaresolverr.AD] if flaresolverr.kurulum_oner() else []
+    except Exception:
+        return []
+
+
 # ── Paket listesi ───────────────────────────────────────────────────────────
 def _liste_suz(veri: Any) -> List[Dict[str, Any]]:
     """Ham JSON'dan yalnızca sözlük kayıtlarını al (biçim bozuksa boş liste)."""
@@ -309,8 +330,9 @@ def indir_ve_kur(ad: str, url: str, hedef_dizin: str,
     return hedef
 
 
-__all__ = ["ARACLAR", "GEREKSINIM_URL", "GEREKSINIM_DOSYASI", "arac_var_mi",
-           "eksik_araclar", "gomulu_arac_yolu", "gomulu_gereksinim_yolu",
+__all__ = ["ARACLAR", "ONERILENLER", "GEREKSINIM_URL", "GEREKSINIM_DOSYASI",
+           "arac_var_mi", "eksik_araclar", "onerilen_eksikler",
+           "gomulu_arac_yolu", "gomulu_gereksinim_yolu",
            "gomulu_gereksinim_listesi", "gereksinim_listesi_getir",
            "paket_kaydi", "paket_url", "indir_ve_kur", "arama_yollari",
            "path_hazirla"]
