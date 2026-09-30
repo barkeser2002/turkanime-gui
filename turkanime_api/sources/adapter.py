@@ -92,6 +92,10 @@ class AdapterAnime:
 class AdapterVideo:
     """TürkAnime Video arayüzüne minimum uyumlu basit video nesnesi."""
 
+    # Sınıf düzeyinde varsayılan: `__init__`'i atlayıp kurulan nesneler
+    # (`__new__` ile kuran testler, eski pickle'lar) da UA'sız sayılsın.
+    user_agent: Optional[str] = None
+
     def __init__(
         self,
         bolum: 'AdapterBolum',
@@ -99,12 +103,17 @@ class AdapterVideo:
         label: Optional[str] = None,
         player: str = "ANIMECIX",
         referer: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         self.bolum = bolum
         self._url = url or ""
         self.label = label
         self.player = player or "ANIMECIX"
         self.referer = referer
+        # Kaynak adresi belirli bir tarayıcıya bağladıysa (ok.ru: `srcAg=`)
+        # yt-dlp da mpv de AYNI UA ile istemeli; yoksa None ve herkes kendi
+        # varsayılanını kullanır (eski davranış). Bkz. `mpv_oynatici.video_oynat`.
+        self.user_agent = user_agent or None
         self._info: Optional[Dict[str, Any]] = None
         self.is_supported = True
         self._is_working: Optional[bool] = None
@@ -118,6 +127,11 @@ class AdapterVideo:
             self.ydl_opts["http_headers"] = {
                 **(self.ydl_opts.get("http_headers") or {}),
                 "Referer": self.referer,
+            }
+        if self.user_agent:
+            self.ydl_opts["http_headers"] = {
+                **(self.ydl_opts.get("http_headers") or {}),
+                "User-Agent": self.user_agent,
             }
 
     @property
@@ -219,6 +233,8 @@ class AdapterVideo:
             return self.player
         elif key == 'referer':
             return self.referer
+        elif key == 'user_agent':
+            return self.user_agent
         return default
 
     def oynat(self, dakika_hatirla: bool = False):
@@ -247,8 +263,10 @@ class AdapterVideo:
         
         cmd = [mpv_path, self.url]
 
-        # User-agent ekle (HLS için gerekli olabilir)
-        cmd.extend(["--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"])
+        # User-agent ekle (HLS için gerekli olabilir); kaynak kendi UA'sını
+        # verdiyse o (adres o UA'ya bağlı, bkz. `__init__`).
+        ua = self.user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        cmd.extend([f"--user-agent={ua}"])
 
         # Referer, user-agent ile aynı gerekçeyle: CDN'ler kaynak sayfayı
         # görmezse 403 döner ve mpv boş ekranla kapanır.
@@ -515,7 +533,8 @@ class AdapterBolum:
             callback({"current": sira, "total": toplam, "player": oynatici,
                       "status": "üstbilgi çekiliyor"})
             vid = AdapterVideo(self, aday.get("url"), aday.get("label"),
-                               player=oynatici, referer=aday.get("referer"))
+                               player=oynatici, referer=aday.get("referer"),
+                               user_agent=aday.get("user_agent"))
             if vid.is_working:
                 callback({"current": sira, "total": toplam,
                           "player": oynatici, "status": "çalışıyor"})

@@ -211,8 +211,12 @@ def video_oynat(video: Any, *, dakika_hatirla: bool = False,
     mpv = _mpv()
     if not mpv:
         return None
+    # Kaynağın bildirdiği UA (ok.ru adresleri isteyenin tarayıcı ailesine
+    # bağlı; yt-dlp o UA ile çözdü, mpv de onunla istemeli). Yoksa varsayılan.
+    ua = getattr(video, "user_agent", None)
     return calistir(mpv_komutu(str(video.url), mpv=mpv,
                                referer=getattr(video, "referer", None),
+                               user_agent=ua if isinstance(ua, str) and ua else USER_AGENT,
                                dakika_hatirla=dakika_hatirla,
                                baslangic=baslangic, konum_dosyasi=konum_dosyasi,
                                kayit=kayit))

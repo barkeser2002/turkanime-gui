@@ -19,7 +19,11 @@ yeni kaynak eklemek = kaynak modülü (`sources/<modul>.py`, üç uç) + aşağ�
 Üç uç sözleşmesi (sunucu tarayıcısının kullandığıyla aynı):
     ara(sorgu, limit=...)  -> [(kaynak_id, başlık), ...]
     bolumler(kaynak_id)    -> [(bolum_id, başlık), ...]
-    akislar(bolum_id)      -> [{"url", "label", "type"?, "referer"?, "fansub"?}, ...]
+    akislar(bolum_id)      -> [{"url", "label", "type"?, "referer"?, "fansub"?,
+                                "user_agent"?}, ...]
+
+``user_agent`` yalnızca adresi belirli bir tarayıcıya bağlayan barındırıcılarda
+(SeiCode'un ok.ru adresleri: `srcAg=`) dolu; yt-dlp ve mpv o UA ile ister.
 
 TÜRKANİME = ARŞİV: turkanime.tv kapandı (görselleri bile 503 dönüyor). Sitenin
 anime/bölüm/video kayıtları AnimeDepo'nun statik JSON arşivinde yaşıyor
@@ -314,6 +318,16 @@ def _deokwave() -> KaynakUclari:
     return KaynakUclari(search_deokwave, get_anime_episodes, get_episode_streams)
 
 
+def _seicode() -> KaynakUclari:
+    # Arama yanıtı TMDB kapak adresini de taşıyor; `zengin_ara` aynı isteği
+    # kullanıyor, görsel için ek istek yok.
+    from .seicode import (
+        get_anime_episodes, get_episode_streams, search_seicode, search_seicode_zengin,
+    )
+    return KaynakUclari(search_seicode, get_anime_episodes, get_episode_streams,
+                        zengin_ara=search_seicode_zengin)
+
+
 def _asyaanimeleri() -> KaynakUclari:
     # Arama kartı kapak görselini de taşıyor; `zengin_ara` aynı isteği
     # kullanıyor, görsel için ek istek yok.
@@ -413,6 +427,27 @@ def _deokwave_adresi(bolum_id: str) -> str:
     return watch_url(bolum_id)
 
 
+def _seicode_adresi(bolum_id: str) -> str:
+    """"<slug>/<sezon>/<bölüm>" → sitenin izleme sayfası (/anime/<slug>/<s>/<e>).
+
+    Tembel import: bölüm nesneleri kurulurken modül `bolumler` için zaten
+    yüklenmiş oluyor; kimlik biçimi tek yerde (`seicode.izleme_adresi`) kalsın.
+    """
+    from .seicode import izleme_adresi
+    return izleme_adresi(bolum_id)
+
+
+def _seicode_bolum_slugu(bolum_id: str) -> str:
+    """"jujutsu-kaisen/3/1" → "seicode-jujutsu-kaisen-3-1".
+
+    Başlıktan üretilen slug arama sonucunun/eşleşmenin adını içerir; aynı
+    bölüm AniList eşleşmesiyle başka adla açılınca izleme geçmişinin anahtarı
+    ve indirme dosyasının adı değişirdi. Sitenin slug'ı her açılışta aynı;
+    önek, başka kaynağın aynı slug'lı bölümüyle çakışmasın diye.
+    """
+    return "seicode-" + str(bolum_id).strip("/").replace("/", "-")
+
+
 def _animeler_adresi(bolum_id: str) -> str:
     # Bölüm kimliği sitedeki yol ("one-piece/bolum-1161"). Adres burada elle
     # kuruluyor: kayıt modülü kaynak modülünü import etmiyor (bkz. üst not).
@@ -473,6 +508,18 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("One Pace TR", "One Pace TR", "OP", "#fdcb6e", "ONEPACETR", _onepacetr,
            modul="onepacetr", cli_kodu="onepacetr", bolum_adresi=_onepacetr_adresi,
            bolum_slugu=_onepacetr_bolum_slugu, taranabilir=True),
+    # Deneysel: bölümlerin %63'ünün yt-dlp'nin açabildiği tek kopyası
+    # tau-video ve o veri merkezi IP'lerini Cloudflare ile engelliyor (ev
+    # bağlantısından doğrulanmadı); kalan %37'de Sibnet/ok.ru/SendVid çalışıyor.
+    Kaynak("SeiCode", "SeiCode", "SC", "#badc58", "SEICODE", _seicode,
+           modul="seicode", cli_kodu="seicode", bolum_adresi=_seicode_adresi,
+           bolum_slugu=_seicode_bolum_slugu, taranabilir=True, deneysel=True,
+           # Boş liste kesin: site/ağ hatası `SeiCodeHatasi` olarak yükseliyor.
+           # Geriye iki sebep kalıyor, ikisi de kullanıcının seçimiyle çözülür.
+           bos_akis_mesaji="bu bölümün desteklenen bir kopyası yok ya da tek "
+                           "kopyası tau-video'da ve tau-video bu ağı engelliyor "
+                           "(VPN/veri merkezi IP'lerinde olur); başka bir kaynak "
+                           "deneyin"),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").
