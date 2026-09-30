@@ -346,6 +346,19 @@ def _onepacetr() -> KaynakUclari:
                         zengin_ara=zengin_ara)
 
 
+def _buguitr() -> KaynakUclari:
+    from .buguitr import get_anime_episodes, get_episode_streams, search_buguitr
+    return KaynakUclari(search_buguitr, get_anime_episodes, get_episode_streams)
+
+
+def _buguitr_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği yazının slug'ı; iki bölümü birlikte taşıyan yazıda
+    # "#<bölüm>" parçası da var (adresler ayrık kalsın). Biçim tek yerde
+    # (`buguitr.bolum_adresi`); tembel import: kayıt modülü hafif kalmalı.
+    from .buguitr import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
 def _onepacetr_adresi(bolum_id: str) -> str:
     # "wano/hasir-sapkali-luffy-1" → ark sayfası + bölüm parçası (sitenin
     # /bolum/<n> adresi kayan bir sıra numarası, kimlik olamaz). Adresi modül
@@ -473,6 +486,11 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("One Pace TR", "One Pace TR", "OP", "#fdcb6e", "ONEPACETR", _onepacetr,
            modul="onepacetr", cli_kodu="onepacetr", bolum_adresi=_onepacetr_adresi,
            bolum_slugu=_onepacetr_bolum_slugu, taranabilir=True),
+    # Fansub grubunun kendi blogu: ~20 animasyon (çoğu BL anime ve donghua);
+    # sitenin canlı çekim dizileri bilerek dışarıda (bkz. modül başlığı).
+    Kaynak("BuguiTR", "BuguiTR", "BG", "#b33771", "BUGUITR", _buguitr,
+           modul="buguitr", cli_kodu="buguitr", bolum_adresi=_buguitr_adresi,
+           taranabilir=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").
