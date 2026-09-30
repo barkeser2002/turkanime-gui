@@ -377,6 +377,33 @@ def _arsiv_bolum_slugu(bolum_id: str) -> str:
     return str(bolum_id).rsplit("/", 1)[-1]
 
 
+def _animetr() -> KaynakUclari:
+    # Arama kartı ve JSON kaydı kapak görselini taşıyor; `zengin_ara` aynı
+    # istekleri kullanıyor, görsel için ek istek yok.
+    from .animetr import get_anime_episodes, get_episode_streams, search_animetr, zengin_ara
+    return KaynakUclari(search_animetr, get_anime_episodes, get_episode_streams,
+                        zengin_ara=zengin_ara)
+
+
+def _animetr_adresi(bolum_id: str) -> str:
+    # "one-piece/bolum-1162" → /izle/ sayfası. Adresi modül kuruyor çünkü alan
+    # adı ortam değişkeniyle değiştirilebiliyor (`animetr.ORTAM_ANAHTARI`; site
+    # DMCA baskısı altında). Tembel import: kayıt modülü hafif kalmalı.
+    from .animetr import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
+def _animetr_bolum_slugu(bolum_id: str) -> str:
+    """"one-piece/bolum-1162" → "one-piece-bolum-1162".
+
+    Sitenin kimliğinden türüyor, başlıktan değil: aynı dizi AniList
+    eşleşmesiyle başka adla açıldığında da izleme geçmişinin anahtarı ve
+    indirilen dosyanın adı aynı kalır. Yalnızca "bolum-1162" almak farklı
+    serilerin bölümlerini tek dosya adına düşürürdü.
+    """
+    return str(bolum_id).strip("/").replace("/", "-")
+
+
 def _openani_adresi(bolum_id: str) -> str:
     return f"https://openani.me/anime/{bolum_id}"
 
@@ -473,6 +500,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("One Pace TR", "One Pace TR", "OP", "#fdcb6e", "ONEPACETR", _onepacetr,
            modul="onepacetr", cli_kodu="onepacetr", bolum_adresi=_onepacetr_adresi,
            bolum_slugu=_onepacetr_bolum_slugu, taranabilir=True),
+    Kaynak("AnimeTR", "AnimeTR", "AT", "#d63031", "ANIMETR", _animetr,
+           modul="animetr", cli_kodu="animetr", bolum_adresi=_animetr_adresi,
+           bolum_slugu=_animetr_bolum_slugu, taranabilir=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").
