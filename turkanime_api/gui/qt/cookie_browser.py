@@ -9,6 +9,12 @@ Yeni akış: uygulamanın **içine gömülü** bir `QWebEngineView`. Kullanıcı
 kontrolünü/captcha'yı aynı pencerede çözer; cookie'ler `QWebEngineCookieStore`
 üzerinden **olay tabanlı** (`cookieAdded`) toplanır — yoklama yok.
 
+Pencere artık genel "Erişimi aç" penceresinin (`erisim_penceresi`) bir
+yapılandırması: gerekli çerez (".AitrWeb.Session"), geçici profil, Netscape
+çıktısı ve eski cümleler burada. Bütün kaynaklar aynı pencereyi kullanıyor;
+TRAnimeİzle'nin farkı oturumun `ayarlar.json`'a (`tranime_cookie`) Netscape
+metni olarak yazılması.
+
 Public kontrat eski modülle birebir aynıdır (`on_status` / `on_cookies` /
 `on_error`, `start()` / `stop()` / `is_running`) ve üretilen Netscape metni de
 aynı formatta olduğu için `tranime.set_session_cookie()` değişmeden çalışır.
@@ -17,11 +23,12 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QUrl, Signal
 from PySide6.QtNetwork import QNetworkCookie
-from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QWidget
+
+from ...common.oturumlar import ErisimHedefi
+from .erisim_penceresi import ErisimPenceresi, is_available, qcookie_sozluk
 
 # ── Eski modülle aynı sabitler ──────────────────────────────────────────────
 TRANIME_BASE = "https://www.tranimeizle.io"
@@ -31,30 +38,10 @@ REQUIRED_COOKIES = {".AitrWeb.Session"}
 MAX_WAIT_SECONDS = 300  # 5 dakika
 
 
-def is_available() -> bool:
-    """QtWebEngine kullanılabilir mi? (eski modülde: Selenium kurulu mu)"""
-    try:
-        import PySide6.QtWebEngineWidgets  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 # ── Cookie dönüşümü ─────────────────────────────────────────────────────────
 def _qcookie_to_dict(cookie: QNetworkCookie) -> Dict:
-    """QNetworkCookie -> eski Selenium cookie sözlüğüyle aynı şekil."""
-    expiry = 0
-    exp = cookie.expirationDate()
-    if exp.isValid():
-        expiry = max(0, exp.toSecsSinceEpoch())
-    return {
-        "domain": cookie.domain(),
-        "path": cookie.path() or "/",
-        "secure": bool(cookie.isSecure()),
-        "expiry": expiry,
-        "name": bytes(cookie.name()).decode("utf-8", "replace"),
-        "value": bytes(cookie.value()).decode("utf-8", "replace"),
-    }
+    """QNetworkCookie -> eski Selenium cookie sözlüğüyle aynı şekil (+ httponly)."""
+    return qcookie_sozluk(cookie)
 
 
 def _cookies_to_netscape(cookies: List[Dict]) -> str:
@@ -92,63 +79,51 @@ def _filter_tranime_cookies(cookies: List[Dict]) -> List[Dict]:
     return [c for c in cookies if COOKIE_DOMAIN in c.get("domain", "")]
 
 
+def tranime_hedefi() -> ErisimHedefi:
+    """Modül sabitlerinden hedef — ÇAĞRI anında okunuyor (testler sahteliyor)."""
+    return ErisimHedefi(kaynak="TRAnimeİzle", etiket="TRAnimeİzle",
+                        adres=TARGET_ANIME, alanlar=(COOKIE_DOMAIN,),
+                        profil_adi="tranime",
+                        gerekli_cerezler=frozenset(REQUIRED_COOKIES),
+                        cerez_akisi=True)
+
+
 # ── Gömülü tarayıcı diyaloğu ────────────────────────────────────────────────
-class CookieBrowserDialog(QDialog):
+class CookieBrowserDialog(ErisimPenceresi):
     """İçinde gerçek bir tarayıcı olan cookie toplama penceresi."""
 
     cookies_ready = Signal(str)   # Netscape metni
-    failed = Signal(str)
-    status = Signal(str)
+
+    BASLIK = "TRAnimeİzle — Bot kontrolünü çözün"
+    METIN_YUKLENIYOR = "Sayfa yükleniyor… Bot kontrolü çıkarsa pencerede çözün."
+    METIN_BEKLENIYOR = ("Bot kontrolünü/captcha'yı bu pencerede çözün. "
+                        "Oturum çerezi alınınca pencere kendiliğinden kapanacak.")
+    METIN_YUKLENEMEDI = "Sayfa yüklenemedi; bağlantınızı kontrol edin."
+    METIN_TAMAM = "Oturum çerezi alındı."
+    METIN_ZAMAN_ASIMI = "Süre doldu ({saniye} sn): oturum çerezi alınamadı."
 
     def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setWindowTitle("TRAnimeİzle — Bot kontrolünü çözün")
-        self.resize(1000, 760)
-        self.setSizeGripEnabled(True)
+        super().__init__(tranime_hedefi(), parent, azami_bekleme=MAX_WAIT_SECONDS)
 
-        self._cookies: Dict[str, Dict] = {}
-        self._finished = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        self.lblStatus = QLabel("Tarayıcı hazırlanıyor…")
-        self.lblStatus.setObjectName("Muted")
-        self.lblStatus.setWordWrap(True)
-        layout.addWidget(self.lblStatus)
-
-        self.view = self._build_view()
-        layout.addWidget(self.view, 1)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        self.btnCancel = QPushButton("İptal")
-        self.btnCancel.clicked.connect(self.reject)
-        row.addWidget(self.btnCancel)
-        layout.addLayout(row)
-
-        self._timeout = QTimer(self)
-        self._timeout.setSingleShot(True)
-        self._timeout.timeout.connect(self._on_timeout)
-        self._timeout.start(MAX_WAIT_SECONDS * 1000)
-
-    def _build_view(self):
+    def _profil_kur(self):
         from PySide6.QtWebEngineCore import QWebEngineProfile
-        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWidgets import QApplication
 
         # GEÇİCİ (off-the-record) profil — bilinçli tercih.
         #
         # Kalıcı profil kullanmak gerçek bir hataya yol açıyordu: çerez diske
-        # yazıldıktan sonra sunucu AYNI değeri gönderdiğinde Chromium çerezi
-        # "değişmedi" sayıp `cookieAdded` yaymıyor. Qt6'da cookie store'un
-        # okuma API'si de yok (`loadAllCookies()` mevcut çerezleri yeniden
-        # yayınlamıyor), dolayısıyla çerezi daha önce almış kullanıcı sonsuza
-        # dek "bot kontrolünü çözün" ekranında kalıyordu.
+        # yazıldıktan sonra sunucu çerezi YENİDEN GÖNDERMİYOR (oturum zaten
+        # var) ve Chromium diskten yüklediği çerez için `cookieAdded` yaymıyor.
+        # Qt6'da cookie store'un okuma API'si de yok (`loadAllCookies()`
+        # mevcut çerezleri yeniden yayınlamıyor; Qt 6.11'de de ölçüldü),
+        # dolayısıyla çerezi daha önce almış kullanıcı sonsuza dek "bot
+        # kontrolünü çözün" ekranında kalıyordu.
         #
         # Kalıcılığa zaten ihtiyacımız yok: çerez `ayarlar.json`'a
         # (`tranime_cookie`) bizim tarafımızdan kaydediliyor. Her oturumu temiz
-        # başlatmak `cookieAdded`'in daima tetiklenmesini garantiler.
+        # başlatmak `cookieAdded`'in daima tetiklenmesini garantiler. (Diğer
+        # kaynaklar kalıcı profil kullanıyor; o sorunu `erisim_penceresi`
+        # kayıttan geri besleyerek çözüyor.)
         #
         # YAŞAM SÜRESİ: Qt, profilin sayfadan **uzun yaşamasını** şart koşar.
         # Profil dialog'a çocuk yapılırsa yıkım sırası profili sayfadan önce
@@ -158,23 +133,9 @@ class CookieBrowserDialog(QDialog):
         # Çözüm: profili QApplication'a bağla — uygulama boyunca yaşar, yani
         # her zaman sayfadan sonra yıkılır. Ebeveynli `QWebEngineProfile(parent)`
         # yine **off-the-record**'dur (kalıcı profil ancak isim verilince olur).
-        from PySide6.QtWidgets import QApplication
-        self._profile = QWebEngineProfile(QApplication.instance())
-
-        store = self._profile.cookieStore()
-        store.cookieAdded.connect(self._on_cookie_added)
-        try:
-            store.loadAllCookies()
-        except Exception:
-            pass
-
-        self._seed_age_cookie(store)
-
-        view = QWebEngineView(self)
-        from PySide6.QtWebEngineCore import QWebEnginePage
-        view.setPage(QWebEnginePage(self._profile, view))
-        view.loadFinished.connect(self._on_load_finished)
-        return view
+        profile = QWebEngineProfile(QApplication.instance())
+        self._seed_age_cookie(profile.cookieStore())
+        return profile
 
     @staticmethod
     def _seed_age_cookie(store) -> None:
@@ -187,69 +148,25 @@ class CookieBrowserDialog(QDialog):
         except Exception:
             pass
 
-    # ── Akış ────────────────────────────────────────────────────────────────
-    def begin(self) -> None:
-        """Yüklemeyi başlat.
-
-        ÖNEMLİ: Bu çağrıdan önce pencere `show()` edilmiş olmalı. Gösterilmemiş
-        bir `QWebEngineView` render sürecini başlatmaz ve yükleme sessizce
-        `loadFinished(False)` ile düşer (çerez de toplanmaz).
-        `CookieBrowserWorker.start()` bu sırayı garanti eder.
-        """
-        self._set_status("Sayfa yükleniyor… Bot kontrolü çıkarsa pencerede çözün.")
-        store = self._profile.cookieStore()
+    def _tohumla(self, store) -> None:
         # Yükleme başlamadan hemen önce tekrar tohumla: WebEngine çekirdeği ilk
         # yüklemeyle ayağa kalktığı için bu, çerezin kesinlikle uygulanmasını garantiler.
         self._seed_age_cookie(store)
-        self.view.load(QUrl(TARGET_ANIME))
-
-    def _set_status(self, msg: str) -> None:
-        self.lblStatus.setText(msg)
-        self.status.emit(msg)
-
-    def _on_cookie_added(self, cookie: QNetworkCookie) -> None:
-        data = _qcookie_to_dict(cookie)
-        if COOKIE_DOMAIN not in data.get("domain", ""):
-            return
-        self._cookies[data["name"]] = data
-        self._check_done()
 
     def _on_load_finished(self, ok: bool) -> None:
         if self._finished:
             return
         if not ok:
-            self._set_status("Sayfa yüklenemedi; bağlantınızı kontrol edin.")
+            self._set_status(self.METIN_YUKLENEMEDI)
             return
         if not self._check_done():
-            self._set_status(
-                "Bot kontrolünü/captcha'yı bu pencerede çözün. "
-                "Oturum çerezi alınınca pencere kendiliğinden kapanacak."
-            )
+            self._set_status(self.METIN_BEKLENIYOR)
 
-    def _check_done(self) -> bool:
-        cookies = _filter_tranime_cookies(list(self._cookies.values()))
-        if not _has_required_cookies(cookies):
-            return False
-        self._finished = True
-        self._timeout.stop()
-        self._set_status("Oturum çerezi alındı.")
-        self.cookies_ready.emit(_cookies_to_netscape(cookies))
-        QTimer.singleShot(400, self.accept)
-        return True
+    def _hedef_cerezleri(self) -> List[Dict]:
+        return _filter_tranime_cookies(list(self._cerezler.values()))
 
-    def _on_timeout(self) -> None:
-        if self._finished:
-            return
-        self.failed.emit(
-            f"Süre doldu ({MAX_WAIT_SECONDS} sn): oturum çerezi alınamadı."
-        )
-        self.reject()
-
-    def reject(self):  # noqa: D102 (Qt imzası)
-        if not self._finished:
-            self._finished = True
-            self._timeout.stop()
-        super().reject()
+    def _basari_yay(self, sonuc: Dict) -> None:
+        self.cookies_ready.emit(_cookies_to_netscape(sonuc["cerezler"]))
 
 
 # ── Eski API ile uyumlu sarmalayıcı ─────────────────────────────────────────
@@ -260,6 +177,9 @@ class CookieBrowserWorker(QObject):
     ayrı bir thread yok; bu yüzden `dispatch` parametresine gerek kalmadı.
     `dispatch` ve `allow_download` yalnızca çağıran kodu bozmamak için kabul
     edilir ve yok sayılır (Chromium indirme mekanizması tamamen kalktı).
+
+    ``on_cancel``: kullanıcı pencereyi çerez almadan kapattı ("Erişimi aç"
+    sonucu bekleyen sayfa bununla haber alıyor; eski çağıranlar vermiyor).
     """
 
     def __init__(
@@ -270,11 +190,13 @@ class CookieBrowserWorker(QObject):
         dispatch: Optional[Callable] = None,      # geriye dönük uyumluluk
         allow_download: Optional[Callable] = None,  # geriye dönük uyumluluk
         parent: Optional[QWidget] = None,
+        on_cancel: Optional[Callable[[], None]] = None,
     ):
         super().__init__(parent)
         self.on_status = on_status or (lambda m: None)
         self.on_error = on_error or (lambda m: None)
         self.on_cookies = on_cookies or (lambda m: None)
+        self.on_cancel = on_cancel or (lambda: None)
         self._parent_widget = parent
         self._dialog: Optional[CookieBrowserDialog] = None
         self._done = False
@@ -295,13 +217,19 @@ class CookieBrowserWorker(QObject):
         dlg = CookieBrowserDialog(self._parent_widget)
         dlg.status.connect(lambda m: self._safe(self.on_status, m))
         dlg.cookies_ready.connect(self._on_cookies_ready)
-        dlg.failed.connect(lambda m: self._safe(self.on_error, m))
+        dlg.failed.connect(self._on_failed)
         dlg.finished.connect(self._on_dialog_finished)
         self._dialog = dlg
 
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         dlg.show()
         dlg.begin()
+
+    def one_getir(self) -> None:
+        """Açık pencereyi öne getir ("Erişimi aç"a ikinci kez basıldı)."""
+        if self._dialog is not None:
+            self._dialog.raise_()
+            self._dialog.activateWindow()
 
     def stop(self) -> None:
         """İptal et ve pencereyi kapat."""
@@ -315,9 +243,17 @@ class CookieBrowserWorker(QObject):
         self._done = True
         self._safe(self.on_cookies, netscape)
 
+    def _on_failed(self, mesaj: str) -> None:
+        if self._done:
+            return
+        self._done = True
+        self._safe(self.on_error, mesaj)
+
     def _on_dialog_finished(self, _result: int) -> None:
         if not self._done:
+            self._done = True
             self._safe(self.on_status, "Cookie toplama iptal edildi.")
+            self._safe(self.on_cancel)
         # Referansı bu slot'un içinde DÜŞÜRMÜYORUZ: dialog hâlâ `finished`
         # sinyalini yayıyor; son referansı burada bırakmak nesneyi yayın
         # sırasında yok eder (use-after-free). Yıkımı olay döngüsüne bırakıyoruz.
@@ -337,6 +273,7 @@ __all__ = [
     "CookieBrowserWorker",
     "CookieBrowserDialog",
     "is_available",
+    "tranime_hedefi",
     "TRANIME_BASE",
     "TARGET_ANIME",
     "COOKIE_DOMAIN",
