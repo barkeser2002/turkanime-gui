@@ -4,7 +4,8 @@ Deokwave kaynağı — https://deokwave.com
 Türk fansub gruplarının (HolySubs, ShiroSubs, YukiSubs, Adonis...) çevirilerini
 tek sayfada toplayan bir PHP sitesi. Aynı bölümün birden çok grubu var; her
 grubun videosu Türkçe altyazısı görüntüye gömülü (hardsub) doğrudan MP4.
-Giriş, tarayıcı ya da JS çözümü gerekmiyor (2026-09-24'te ölçüldü).
+Giriş, tarayıcı ya da JS çözümü gerekmiyordu (2026-09-24'te ölçüldü);
+2026-09-30'da site Cloudflare doğrulamasının arkasındaydı (aşağıya bkz.).
 
 Akış:
 - Arama:    GET /api/v1/animes/search/?q=<q>&page=<n>
@@ -27,6 +28,26 @@ Kimlikler:
 - Kaynak kimliği: 7 haneli büyük harf onaltılık ("0C61BB4").
 - Bölüm kimliği: "<ID>/<sezon>/<bölüm>" — kendi başına yeter, akış isteği
   ikinci bir sayfa okumadan kurulur. Film: "<ID>/0/0" (site böyle soruyor).
+
+Cloudflare doğrulaması (2026-09-30'da ölçüldü):
+- deokwave.com'un BÜTÜN yolları (ana sayfa, /robots.txt, /fe/*.js, /anime/,
+  /watch/video-info/, /api/v1/*, /search_api.php) 403 + `cf-mitigated:
+  challenge` ile "Just a moment..." sayfası dönüyor (`cType: 'managed'`,
+  yani JS/Turnstile doğrulaması). Dört curl_cffi profilinin dördü de aynı
+  sayfayı aldı, ayrı bir ağdan yapılan istek de 403 aldı; 2,5 dk arayla
+  yoklanınca ~30 dk boyunca kalkmadı (geçici kısıt değil). Herkese mi,
+  yalnızca veri merkezi IP'lerine mi uygulandığı dışarıdan ölçülemiyor.
+- Bu doğrulama bilerek GEÇİLMİYOR (çözücü, `cf_bypass`, profil döndürme,
+  çerez taşıma yok): bot doğrulaması, geçmek için yazılmış kod onu atlatmak
+  olurdu. Doğrulama sayfası gelince `DeokwaveDogrulamasi` yükselir; profil
+  değiştirilmez, yedek uca da gidilmez (aynı alan adı, aynı doğrulama).
+- Doğrulamasız kalanlar: sw2.deokwave.com/v/... (video) ve yeni API alan
+  adı api.deokwave.com/v1/ (arama ve oynatma anahtarı açık; bölüm listesi
+  /v1/anime/episodes/ "Giriş yapmanız gerekli" diyor, video-info orada
+  yok; oradan alınan taze anahtarı sw2 bilinen bir videoda 401 ile reddetti).
+  Bölüm listesi ve video kimlikleri yalnızca doğrulamalı alan adında olduğu
+  için kaynak API alan adına taşınmadı: yalnızca arama çalışsa açılamayan
+  sonuçlar gösterirdi.
 """
 from __future__ import annotations
 
@@ -67,6 +88,12 @@ HTTP_TIMEOUT = 15
 # O sırada başka bir parmak izi geçiyor. Saniyede 1 istek 45/45 geçti; bu
 # yüzden istekler arasında en az 1 sn bırakılıyor ve engelde profil
 # değiştirilip yeniden deneniyor.
+#
+# Profil değiştirmek YALNIZCA bu parmak izine bağlı kısıt için. Cloudflare'ın
+# "Just a moment..." doğrulaması (bkz. modül başlığı) başka bir şey: parmak
+# izi değil tarayıcıda JS/Turnstile çözümü istiyor. Orada profil döndürmek
+# hem boşuna (4 profilin 4'ü de aynı sayfayı aldı) hem de doğrulamayı atlatma
+# denemesi olurdu; ilk doğrulama sayfasında durulur.
 _MIN_INTERVAL = 1.0
 _PROFILES = ("chrome131", "safari17_0", "chrome124", "firefox133")
 _SITE_ENGEL_IZLERI = (
@@ -75,6 +102,13 @@ _SITE_ENGEL_IZLERI = (
     "lsrecaptcha",
 )
 _ENGEL_IZLERI = tuple(dict.fromkeys((*_SITE_ENGEL_IZLERI, *_CF_IZLERI)))
+# Cloudflare doğrulama sayfasına ÖZGÜ izler. Genel CF listesindeki
+# "challenge-platform" burada kullanılamaz: CF, kaynak sunucunun her HTML
+# yanıtına (LiteSpeed'in kısıt 403'ü dahil) /cdn-cgi/challenge-platform/
+# betiğini ekliyor; o iz kısıtı doğrulama sanıp profil döndürmeyi keserdi.
+# Asıl ölçüt `cf-mitigated: challenge` başlığı; gövde izleri başlığı
+# düşüren bir ara katman için yedek.
+_CF_DOGRULAMA_IZLERI = ("window._cf_chl_opt", "<title>Just a moment...</title>")
 _YEDEK_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
@@ -112,6 +146,24 @@ class DeokwaveHatasi(RuntimeError):
     def __init__(self, mesaj: str, status_code: Optional[int] = None):
         super().__init__(mesaj)
         self.status_code = status_code
+
+
+class DeokwaveDogrulamasi(DeokwaveHatasi):
+    """Site Cloudflare bot doğrulaması ("Just a moment...") istedi.
+
+    Ayrı sınıf, çünkü davranışı LiteSpeed kısıtından farklı: yeniden deneme,
+    profil değiştirme ve aynı alan adındaki yedek uç sonucu değiştirmiyor,
+    çağıranlar ilk seferde vazgeçsin. Mesajda "Cloudflare" geçiyor ve durum
+    403: `common.hatalar` bunu `KaynakEngellendi`, sunucu tarayıcısı
+    (`nezaket.hata_turu`) "engellenme" sayıp kaynağı en uzun süre dinlendiriyor.
+    """
+
+    def __init__(self, status_code: int = 403):
+        super().__init__(
+            "Deokwave siteye erişimi Cloudflare bot doğrulamasına (\"Just a "
+            f"moment...\", HTTP {status_code}) bağladı; uygulama bu doğrulamayı "
+            "otomatik geçmiyor. Başka bir kaynak seçin ya da daha sonra yeniden "
+            "deneyin.", status_code=status_code)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,13 +204,28 @@ def _engellendi_mi(yanit) -> bool:
     return any(iz in bas for iz in _ENGEL_IZLERI)
 
 
+def _cf_dogrulamasi_mi(yanit) -> bool:
+    """Yanıt Cloudflare'ın "Just a moment..." doğrulama sayfası mı?"""
+    try:
+        isaret = str((getattr(yanit, "headers", None) or {}).get("cf-mitigated") or "")
+    except Exception:            # başlık nesnesi beklenmedik biçimdeyse gövdeye bak
+        isaret = ""
+    if isaret.strip().lower() == "challenge":
+        return True
+    if yanit.status_code not in _ENGEL_DURUMLARI or yanit.status_code == 429:
+        return False
+    bas = (yanit.text or "")[:6000]
+    return any(iz in bas for iz in _CF_DOGRULAMA_IZLERI)
+
+
 def _get(yol: str, *, params: Optional[Dict[str, Any]] = None,
          headers: Optional[Dict[str, str]] = None):
     """Kısıta dayanıklı GET: istekler arasında aralık, engelde profil değiştir.
 
     Ağ hatası ve bütün profillerin engellenmesi `DeokwaveHatasi` olarak
-    yükselir; diğer HTTP durumlarında yanıt olduğu gibi döner (çağıran
-    yorumlar).
+    yükselir; Cloudflare doğrulaması ilk yanıtta `DeokwaveDogrulamasi`
+    (profil değiştirilmeden). Diğer HTTP durumlarında yanıt olduğu gibi döner
+    (çağıran yorumlar).
     """
     global _son_istek
     adres = yol if yol.startswith("http") else BASE_URL + yol
@@ -178,6 +245,11 @@ def _get(yol: str, *, params: Optional[Dict[str, Any]] = None,
                                timeout=HTTP_TIMEOUT)
         except Exception as hata:
             raise DeokwaveHatasi(f"Deokwave'e bağlanılamadı: {hata}") from hata
+        if _cf_dogrulamasi_mi(yanit):
+            # Profil döndürmek burada işe yaramıyor ve doğrulamayı atlatma
+            # denemesi olurdu (bkz. _PROFILES üstündeki not).
+            raise DeokwaveDogrulamasi(yanit.status_code
+                                      if yanit.status_code in _ENGEL_DURUMLARI else 403)
         if not _engellendi_mi(yanit):
             return yanit
         with _kilit:
@@ -252,8 +324,9 @@ def search_deokwave(query: str, limit: int = 20) -> List[Tuple[str, str]]:
     """Deokwave'de anime ara → [(animeid, başlık), ...]; sonuç yoksa [].
 
     Site 2 karakterden kısa sorguya boş dönüyor (kendi JS'i de öyle). Siteye
-    hiç ulaşılamazsa `DeokwaveHatasi` yükselir: arama sayfası "sonuç yok"
-    yerine sebebi göstersin.
+    hiç ulaşılamazsa `DeokwaveHatasi` (Cloudflare doğrulamasında
+    `DeokwaveDogrulamasi`) yükselir: arama sayfası "sonuç yok" yerine sebebi
+    göstersin.
     """
     q = (query or "").strip()
     if len(q) < 2 or limit <= 0:
@@ -266,6 +339,12 @@ def search_deokwave(query: str, limit: int = 20) -> List[Tuple[str, str]]:
     while sayfa <= min(toplam_sayfa, 5) and len(kayitlar) < limit:
         try:
             veri = _json("/api/v1/animes/search/", params={"q": q, "page": sayfa})
+        except DeokwaveDogrulamasi:
+            if kayitlar:
+                break
+            # Yedek uç aynı alan adında, aynı doğrulamanın arkasında: ona
+            # gitmek sonucu değiştirmez, yalnızca bir istek daha harcar.
+            raise
         except DeokwaveHatasi as e:
             hata = e
             break
@@ -434,6 +513,8 @@ def _oynatma_anahtari(episode_id: str) -> str:
         aday = _json("/api/v1/video/token/").get("token")
         if isinstance(aday, str) and _TOKEN_RE.match(aday):
             anahtar = aday
+    except DeokwaveDogrulamasi:
+        raise                    # izleme sayfası da aynı doğrulamanın arkasında
     except DeokwaveHatasi as e:
         ilk_hata = e
     if not anahtar:
@@ -537,5 +618,6 @@ __all__ = [
     "get_episode_streams",
     "watch_url",
     "DeokwaveHatasi",
+    "DeokwaveDogrulamasi",
     "BASE_URL",
 ]
