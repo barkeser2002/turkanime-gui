@@ -409,11 +409,12 @@ def main_window(qtbot):
 
     apply_theme(QApplication.instance())
     win = MainWindow()
-    # Süren indirme varken kapanış modal soru açıyor; teardown asla beklememeli.
+    # Süren indirme varken kapanış sayfada soru açıyor ve pencere cevaba kadar
+    # kapanmıyor; teardown asla beklememeli (cevap eşzamanlı "Evet").
     # `yield`'den ÖNCE: pytest-qt `addWidget` ile kaydedilen pencereyi
     # fixture sonlandırıcılarından önce (kendi teardown kancasında) kapatıyor.
     # Soruyu sınayan testler bunu kendi `monkeypatch`'leriyle eziyor.
-    win._kapanis_onayi = lambda _adet: True
+    win._kapanis_onayi = lambda _adet, geri: geri(True)
     qtbot.addWidget(win)
     win.show()
     yield win
@@ -546,6 +547,37 @@ def web(qtbot, main_window):
     return WebSurucu(qtbot, main_window.web).hazir()
 
 
+# ── Soru pencereleri (gui.web.sorular) ───────────────────────────────────────
+class SoruKaydi(list):
+    """Sorulan her pencere (`Soru`), sorulma sırasıyla; ``kayit("ilerleme")``
+    yalnızca o türdekiler. ``soru.veri`` pencerenin gördüğü her şey."""
+
+    def __call__(self, tur: str) -> list:
+        return [s for s in self if s.tur == tur]
+
+
+@pytest.fixture
+def sorulanlar(monkeypatch):
+    """`SoruMerkezi.sor`'u kaydeden casus; sorular gerçekten sorulur.
+
+    Eski diyalog testleri `Dialog.exec`'i sahteleyip "açıldı mı?"ya
+    bakıyordu; web penceresi kimseyi bekletmiyor, yalnızca kaydediliyor.
+    Cevap sayfasız da verilebilir: ``merkez.cevapla(soru.kimlik, cevap)``.
+    """
+    from turkanime_api.gui.web.sorular import SoruMerkezi
+
+    kayit = SoruKaydi()
+    asil = SoruMerkezi.sor
+
+    def sor(self, *args, **kwargs):
+        soru = asil(self, *args, **kwargs)
+        kayit.append(soru)
+        return soru
+
+    monkeypatch.setattr(SoruMerkezi, "sor", sor)
+    return kayit
+
+
 # ── Köprü uçları (web sayfası olmadan) ───────────────────────────────────────
 class SahteKopru:
     """`Kopru.yay` olaylarını kaydeden ikame (her thread'den güvenli)."""
@@ -565,6 +597,20 @@ class SahteKopru:
     def son(self, ad: str):
         olaylar = self.hepsi(ad)
         return olaylar[-1] if olaylar else None
+
+
+@pytest.fixture
+def soru_merkezi(qtbot):
+    """Sayfasız `SoruMerkezi`: sayfa bağlı sayılır, olaylar ``merkez.olaylar``da
+    (`SahteKopru`). Cevaplar ``merkez.cevapla`` / ``merkez.soru_eylem`` ile."""
+    from turkanime_api.gui.web.sorular import SoruMerkezi
+
+    kopru = SahteKopru()
+    merkez = SoruMerkezi(kopru)
+    merkez.bagli = True
+    merkez.olaylar = kopru
+    yield merkez
+    merkez.hepsini_bitir()
 
 
 @pytest.fixture
@@ -709,6 +755,21 @@ def ayarla(preserved_settings):
     Amaç ayarın GERÇEKTEN okunduğunu doğrulamak: `prefs.oku`'yu sahtelemek
     "ayar okunuyor mu?" sorusunu yanıtlamaz, yalnızca sahteyi test ederdi.
     """
+    from turkanime_api.cli.dosyalar import Dosyalar
+
+    def _ayarla(**degerler):
+        Dosyalar().set_ayar(ayar_list=degerler)
+
+    return _ayarla
+
+
+@pytest.fixture
+def izole_ayarla(izole_ev):
+    """`ayarla`nın `izole_ev`deki karşılığı: ayar yine gerçekten diske yazılıp
+    okunuyor, ama geçici kökte. Veri kökü `.git` klasörü olmayan yerde (git
+    worktree'sinde `.git` bir dosya) kullanıcının evine düşüyor ve aynı
+    makinede koşan iki test paketi aynı `ayarlar.json`'u yedekleyip geri
+    yüklemeye çalışıyordu."""
     from turkanime_api.cli.dosyalar import Dosyalar
 
     def _ayarla(**degerler):

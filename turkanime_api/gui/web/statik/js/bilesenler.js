@@ -130,36 +130,91 @@
   };
 })();
 
-/* Onay penceresi: Promise<bool>. Esc/dışarı tık = hayır. */
+/* Pencereler (modal): ortak yığın ve onay penceresi. */
 (function () {
   "use strict";
 
   var TA = window.TA;
   var h = TA.h;
 
-  TA.onayla = function (s) {
-    return new Promise(function (coz) {
-      var ortu;
-      function kapat(deger) {
+  // Açık pencerelerin yığını: Esc (ve isteyen pencerede Enter) yalnızca EN
+  // ÜSTTEKİNE gider. Açılışta iki pencere birden gelebiliyor (güncelleme +
+  // gereksinim); her pencere kendi `keydown`'ını dinleseydi tek bir Esc
+  // ikisini birden kapatırdı.
+  var yigin = [];
+  document.addEventListener("keydown", function (e) {
+    var ust = yigin[yigin.length - 1];
+    if (!ust) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      ust.vazgec();
+    } else if (e.key === "Enter" && ust.enter) {
+      ust.enter(e);
+    }
+  });
+
+  // Pencere aç. s: {icerik, etiket, sinif ("a.b"), rol, dataset,
+  //   vazgec: Esc/dış tık/× (yoksa yalnızca kapatır), disTik: false → dış tık
+  //   kapatmaz (süren işi olan pencereler), enter: fn(olay) (Enter'ı üstlenir)}
+  // Dönen: {pencere, ortu, kapat()} — `kapat` tekrar çağrılabilir.
+  TA.pencere = function (s) {
+    var kayit;
+    var pencere = h("div.modal" + (s.sinif ? "." + s.sinif : ""), {
+      role: s.rol || "dialog", "aria-modal": "true", "aria-label": s.etiket, dataset: s.dataset
+    }, s.icerik);
+    var ortu = h("div.modal-ortu", {
+      onclick: function (e) { if (e.target === ortu && s.disTik !== false) kayit.vazgec(); }
+    }, pencere);
+    kayit = {
+      pencere: pencere,
+      ortu: ortu,
+      enter: s.enter,
+      vazgec: function () { if (s.vazgec) s.vazgec(); else kayit.kapat(); },
+      kapat: function () {
+        var i = yigin.indexOf(kayit);
+        if (i >= 0) yigin.splice(i, 1);
         ortu.remove();
-        document.removeEventListener("keydown", tus);
+      }
+    };
+    yigin.push(kayit);
+    document.body.appendChild(ortu);
+    return kayit;
+  };
+
+  // Başlık satırı + × düğmesi (× = vazgeç, Qt penceresinin kapat düğmesi gibi).
+  TA.pencereBasligi = function (baslik, alt, vazgec) {
+    return h("header.modal-baslik", null,
+      h("div", null, h("h3", null, baslik), alt ? h("p.soluk.cok-satir", null, alt) : null),
+      vazgec ? h("button.ikon-dugme", { type: "button", onclick: vazgec, "aria-label": "Kapat", title: "Kapat" },
+        TA.ikon("kapat")) : null);
+  };
+
+  // Onay penceresi: Promise<bool>. Esc/dışarı tık = hayır. Dönen sözün
+  // `kapat()`ı pencereyi dışarıdan kapatır (sonuç: false).
+  TA.onayla = function (s) {
+    var kapat;
+    var sonuc = new Promise(function (coz) {
+      var pk;
+      kapat = function (deger) {
+        pk.kapat();
         coz(deger);
-      }
-      function tus(e) {
-        if (e.key === "Escape") kapat(false);
-      }
+      };
       var evet = h("button.dugme." + (s.tehlikeli ? "tehlike" : "birincil"), { onclick: function () { kapat(true); } }, s.evet || "Tamam");
-      var pencere = h("div.modal.onay-penceresi", { role: "alertdialog", "aria-modal": "true", "aria-label": s.baslik },
-        h("h3", null, s.baslik),
-        h("p.soluk", null, s.metin),
-        h("div.dugme-satiri.sag", null,
-          h("button.dugme.hayalet", { onclick: function () { kapat(false); } }, s.hayir || "Vazgeç"),
-          evet));
-      ortu = h("div.modal-ortu", { onclick: function (e) { if (e.target === ortu) kapat(false); } }, pencere);
-      document.body.appendChild(ortu);
-      document.addEventListener("keydown", tus);
+      pk = TA.pencere({
+        sinif: "onay-penceresi", rol: "alertdialog", etiket: s.baslik, dataset: s.dataset,
+        vazgec: function () { kapat(false); },
+        icerik: [
+          h("h3", null, s.baslik),
+          h("p.soluk", null, s.metin),
+          h("div.dugme-satiri.sag", null,
+            h("button.dugme.hayalet", { onclick: function () { kapat(false); } }, s.hayir || "Vazgeç"),
+            evet)
+        ]
+      });
       // Tehlikeli eylemde odak "Vazgeç"te: yanlışlıkla Enter silmesin.
-      (s.tehlikeli ? pencere.querySelector(".dugme.hayalet") : evet).focus();
+      (s.tehlikeli ? pk.pencere.querySelector(".dugme.hayalet") : evet).focus();
     });
+    sonuc.kapat = function () { kapat(false); };
+    return sonuc;
   };
 })();

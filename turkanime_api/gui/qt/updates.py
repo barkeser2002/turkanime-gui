@@ -1,8 +1,9 @@
-"""Güncelleme servisi ve diyaloğu (eski CTk `UpdateManager`'ın Qt karşılığı).
+"""Güncelleme servisi (eski CTk `UpdateManager`'ın Qt karşılığı).
 
-Ağ ve dosya işleri `common.updater`'da; burada yalnızca thread → sinyal köprüsü
-ve arayüz var. Diyalog hiçbir zaman ağ görmez, servis hiçbir zaman widget'a
-dokunmaz — indirme ilerlemesi arka plan thread'inden sinyalle taşınır.
+Ağ ve dosya işleri `common.updater`'da; burada yalnızca thread → sinyal
+köprüsü var. Pencere web arayüzünde (`gui.web.pencereler.GuncellemePenceresi`)
+ve hiçbir zaman ağ görmez; servis hiçbir zaman pencereye dokunmaz — indirme
+ilerlemesi arka plan thread'inden sinyalle taşınır.
 """
 from __future__ import annotations
 
@@ -10,10 +11,6 @@ import os
 from typing import Any, Dict, Optional
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget,
-)
 
 from . import prefs
 from .workers import run_bg
@@ -37,7 +34,7 @@ class UpdateService(QObject):
 
     @property
     def mevcut_surum(self) -> str:
-        """Çalışan sürüm (diyalogda gösterilir)."""
+        """Çalışan sürüm (pencerede gösterilir)."""
         return self._mevcut
 
     # ── Denetim ─────────────────────────────────────────────────────────────
@@ -105,109 +102,4 @@ class UpdateService(QObject):
                                  or prefs.indirme_dizini())
 
 
-class UpdateDialog(QDialog):
-    """Sürüm bilgisi, changelog, indirme ilerlemesi ve "Daha Sonra"."""
-
-    def __init__(self, servis: UpdateService, version_data: Dict[str, Any],
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setWindowTitle("Güncelleme Mevcut")
-        self.setModal(True)
-        self.setMinimumWidth(460)
-
-        self.servis = servis
-        self.version_data = version_data or {}
-        self.indirilen: str = ""
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(10)
-
-        head = QLabel("Yeni sürüm yayımlandı")
-        head.setObjectName("Subtitle")
-        layout.addWidget(head)
-
-        tarih = str(self.version_data.get("release_date") or "")[:10]
-        bilgi = (f"Mevcut sürüm: {servis.mevcut_surum}\n"
-                 f"Yeni sürüm: {self.version_data.get('version', '?')}")
-        if tarih:
-            bilgi += f"\nYayın tarihi: {tarih}"
-        self.lblInfo = QLabel(bilgi)
-        self.lblInfo.setObjectName("Muted")
-        layout.addWidget(self.lblInfo)
-
-        layout.addWidget(QLabel("Değişiklikler"))
-        self.txtChangelog = QPlainTextEdit(
-            str(self.version_data.get("changelog") or "Değişiklik bilgisi yok."))
-        self.txtChangelog.setReadOnly(True)
-        self.txtChangelog.setFixedHeight(120)
-        layout.addWidget(self.txtChangelog)
-
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setVisible(False)
-        layout.addWidget(self.bar)
-
-        self.lblStatus = QLabel("")
-        self.lblStatus.setObjectName("Muted")
-        self.lblStatus.setWordWrap(True)
-        layout.addWidget(self.lblStatus)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        self.btnOpen = QPushButton("Klasörü Aç")
-        self.btnOpen.setVisible(False)
-        self.btnOpen.clicked.connect(self._klasoru_ac)
-        row.addWidget(self.btnOpen)
-        self.btnDownload = QPushButton("Güncellemeyi İndir")
-        self.btnDownload.setObjectName("Primary")
-        self.btnDownload.clicked.connect(self._indir)
-        row.addWidget(self.btnDownload)
-        self.btnLater = QPushButton("Daha Sonra")
-        self.btnLater.clicked.connect(self.reject)
-        row.addWidget(self.btnLater)
-        layout.addLayout(row)
-
-        servis.progress.connect(self._on_progress)
-        servis.download_ready.connect(self._on_ready)
-        servis.download_failed.connect(self._on_failed)
-
-    # ── Davranış ────────────────────────────────────────────────────────────
-    def _indir(self) -> None:
-        if not self.servis.indir(self.version_data):
-            return
-        self.btnDownload.setEnabled(False)
-        self.btnDownload.setText("İndiriliyor…")
-        self.bar.setVisible(True)
-        self.bar.setValue(0)
-        self.lblStatus.setText("Güncelleme indiriliyor…")
-
-    def _on_progress(self, yuzde: int, ayrinti: str) -> None:
-        self.bar.setValue(max(0, min(100, yuzde)))
-        self.lblStatus.setText(f"İndiriliyor… {ayrinti}")
-
-    def _on_ready(self, yol: str) -> None:
-        """İndirme + SHA-256 doğrulaması geçti; kurulum talimatını göster."""
-        self.indirilen = yol
-        self.bar.setValue(100)
-        self.lblStatus.setText("İndirildi ve doğrulandı.\n\n"
-                               + updater.kurulum_talimati(yol))
-        self.btnDownload.setVisible(False)
-        self.btnOpen.setVisible(True)
-        self.btnLater.setText("Kapat")
-
-    def _on_failed(self, mesaj: str) -> None:
-        self.bar.setVisible(False)
-        self.lblStatus.setText(f"Güncelleme indirilemedi: {mesaj}")
-        self.lblStatus.setStyleSheet("color: #d63031;")
-        self.btnDownload.setEnabled(True)
-        self.btnDownload.setText("Tekrar Dene")
-
-    def _klasoru_ac(self) -> None:
-        if not self.servis.konumu_ac(self.indirilen):
-            self.lblStatus.setText(
-                f"Klasör açılamadı. Dosya: {self.indirilen}")
-
-
-__all__ = ["UpdateService", "UpdateDialog"]
+__all__ = ["UpdateService"]

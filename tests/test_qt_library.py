@@ -9,7 +9,6 @@ import pytest
 
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.common import kutuphane
-from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 
 
 class Surec:
@@ -47,11 +46,6 @@ class Bolum:
         return Video(self.kod) if self.cagri <= 3 else None
 
 
-@pytest.fixture
-def diyalogsuz(monkeypatch):
-    monkeypatch.setattr(ProgressDialog, "exec", lambda self: 0)
-
-
 def _oynat_ve_bekle(main_window, qtbot, tetikle):
     tetikle()
     qtbot.waitUntil(lambda: main_window._playing is False, timeout=10000)
@@ -70,7 +64,7 @@ def _oynat_dugmesi(web, kaynak, sira=0):
 
 
 def test_basarili_oynatma_kaynak_ve_kimlikle_yaziliyor(
-        izole_ev, main_window, web, qtbot, diyalogsuz, sahte_bolumler):
+        izole_ev, main_window, web, qtbot, sahte_bolumler):
     bolum = Bolum("07-ghost", "07-ghost-1-bolum")
     _detay(main_window, web, sahte_bolumler, "TürkAnime", "07-ghost", "07-Ghost",
            [{"title": "07-Ghost 1. Bölüm", "obj": bolum}])
@@ -85,7 +79,7 @@ def test_basarili_oynatma_kaynak_ve_kimlikle_yaziliyor(
 
 
 def test_basarisiz_oynatma_kitapliga_yazilmiyor(
-        izole_ev, main_window, web, qtbot, diyalogsuz, sahte_bolumler):
+        izole_ev, main_window, web, qtbot, sahte_bolumler):
     bolum = Bolum("07-ghost", "07-ghost-1-bolum", kod=2)
     _detay(main_window, web, sahte_bolumler, "TürkAnime", "07-ghost", "07-Ghost",
            [{"title": "07-Ghost 1. Bölüm", "obj": bolum}])
@@ -95,7 +89,7 @@ def test_basarisiz_oynatma_kitapliga_yazilmiyor(
 
 
 def test_sayisal_kaynak_kimligi_slugla_degismiyor(
-        izole_ev, main_window, web, qtbot, diyalogsuz, sahte_bolumler):
+        izole_ev, main_window, web, qtbot, sahte_bolumler):
     """`AdapterAnime` "1234"ü başlık slug'ına çeviriyor; kitaplık "1234" tutmalı."""
     bolum = Bolum("naruto", "naruto-1")
     _detay(main_window, web, sahte_bolumler, "AnimeciX", "1234", "Naruto",
@@ -105,7 +99,7 @@ def test_sayisal_kaynak_kimligi_slugla_degismiyor(
 
 
 def test_cok_kaynakli_listede_tiklanan_kaynagin_kimligi(
-        izole_ev, main_window, web, qtbot, diyalogsuz, sahte_bolumler, monkeypatch):
+        izole_ev, main_window, web, qtbot, sahte_bolumler, monkeypatch):
     """İkinci kaynak (AnimeciX) sonradan bağlanıyor; onun akordiyonundan
     oynatılan bölüm kitaplığa AnimeciX'in KENDİ kimliğiyle yazılmalı."""
     from turkanime_api.gui.web import uclar_detay

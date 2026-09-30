@@ -3,21 +3,29 @@
 Buradaki testlerin ağırlık merkezi tek bir cümle: **onay verilmeden hiçbir şey
 gönderilmez.** Bu yüzden gönderim fonksiyonu sahtelenirken "çağrılmadı" kontrolü
 her kapı için ayrı ayrı yapılıyor (ayar kapalı, ayar açık ama onay yok, onay
-diyaloğu kaza sonucu onaylanamaz). Kalan testler metnin dürüstlüğünü ve geri
+penceresi kaza sonucu onaylanamaz). Kalan testler metnin dürüstlüğünü ve geri
 çekmenin numarayı temizlediğini bekliyor.
 
-Ağa çıkılmıyor: `katki_dialog.bagis_gonder` / `bagis_geri_cek` sahteleniyor,
+Onay penceresi eskiden Qt diyaloğuydu (`KimlikBagisDialog`); artık web
+arayüzünde (`gui.web.katki.onay_al`, tür ``bagis_onayi``). Diyaloğun
+güvenceleri (pasif onay düğmesi, odak Vazgeç'te, Enter bağış yapmaz) burada
+gerçek QtWebEngine sayfasında sınanıyor; Python tarafı ayrıca yalnızca
+``{"onay": true, "okudum": true}``'yu onay sayıyor.
+
+Ağa çıkılmıyor: `katki.bagis_gonder` / `bagis_geri_cek` sahteleniyor,
 gerçek HTTP yolunun test edildiği yerde de yapılandırma boş bırakılıp isteğin
 hiç başlamadığı doğrulanıyor.
 """
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QDialog
 
 from turkanime_api.cli.dosyalar import Dosyalar
-from turkanime_api.gui.qt import katki_dialog
+from turkanime_api.gui.web import katki
 from turkanime_api.gui.web.uclar_ayarlar import bagis_kimlikleri
+
+# Casusun sahtelemediği gerçek fonksiyon (akışın tamamını sınayanlar için).
+ONAY_AL = katki.onay_al
 
 CEREZ = (
     "# Netscape HTTP Cookie File\n"
@@ -52,26 +60,26 @@ def casus(monkeypatch):
     kayit = {"gonderim": [], "geri_cekme": [], "onay_sorusu": 0}
     ayar = {"onay": False, "gonderim_hatasi": None, "geri_cekme_hatasi": None}
 
-    def _onay_al(kaynak=katki_dialog.KAYNAK_TRANIME, parent=None):
+    def _onay_al(sorular, kaynak, geri):
         kayit["onay_sorusu"] += 1
-        return ayar["onay"]
+        geri(ayar["onay"])
 
-    def _gonder(deger, kaynak=katki_dialog.KAYNAK_TRANIME, ayarlar=None,
+    def _gonder(deger, kaynak=katki.KAYNAK_TRANIME, ayarlar=None,
                 zaman_asimi=15):
         kayit["gonderim"].append((deger, kaynak))
         if ayar["gonderim_hatasi"]:
-            raise katki_dialog.KatkiHatasi(ayar["gonderim_hatasi"])
+            raise katki.KatkiHatasi(ayar["gonderim_hatasi"])
         return "BAGIS-1234"
 
     def _geri_cek(bagis_id, ayarlar=None, zaman_asimi=15):
         kayit["geri_cekme"].append(bagis_id)
         if ayar["geri_cekme_hatasi"]:
-            raise katki_dialog.KatkiHatasi(ayar["geri_cekme_hatasi"])
+            raise katki.KatkiHatasi(ayar["geri_cekme_hatasi"])
         return True
 
-    monkeypatch.setattr(katki_dialog, "onay_al", _onay_al)
-    monkeypatch.setattr(katki_dialog, "bagis_gonder", _gonder)
-    monkeypatch.setattr(katki_dialog, "bagis_geri_cek", _geri_cek)
+    monkeypatch.setattr(katki, "onay_al", _onay_al)
+    monkeypatch.setattr(katki, "bagis_gonder", _gonder)
+    monkeypatch.setattr(katki, "bagis_geri_cek", _geri_cek)
     return kayit, ayar
 
 
@@ -93,7 +101,7 @@ def test_sayfa_kapali_ayari_yansitiyor(sayfa):
 
 # ── Onay verilmeden gönderim yok (asıl mesele) ──────────────────────────────
 def test_ayar_kapaliyken_onay_bile_sorulmuyor(sayfa, casus):
-    """Kapalı ayar: diyalog açılmaz, gönderim olmaz."""
+    """Kapalı ayar: pencere açılmaz, gönderim olmaz."""
     kayit, _ = casus
     sayfa._cerez_geldi(CEREZ)
 
@@ -125,7 +133,7 @@ def test_onay_verilirse_gonderiliyor_ve_numara_saklaniyor(sayfa, casus):
     sayfa._cerez_geldi(CEREZ)
 
     assert [d for d, _ in kayit["gonderim"]] == [CEREZ]
-    assert kayit["gonderim"][0][1] == katki_dialog.KAYNAK_TRANIME
+    assert kayit["gonderim"][0][1] == katki.KAYNAK_TRANIME
     assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
     assert geri_cek_acik(sayfa) is True
 
@@ -158,14 +166,14 @@ def test_bos_cerez_teklif_bile_edilmiyor(sayfa, casus):
 # ── Onay metni ──────────────────────────────────────────────────────────────
 def test_onay_metni_uc_kritik_ifadeyi_iceriyor():
     """Metin ne verildiğini, riskini ve geri dönüşü açıkça söylemeli."""
-    metin = katki_dialog.onay_metni().lower()
+    metin = katki.onay_metni().lower()
     assert "senin adına giriş" in metin
     assert "hesabın kapanabilir" in metin
     assert "geri çekebilirsin" in metin
 
 
 def test_onay_metni_pazarlama_dili_kullanmiyor():
-    metin = katki_dialog.onay_metni()
+    metin = katki.onay_metni()
     for yasak in ("destek ol", "bağış yaparak projeye", "teşekkür ederiz"):
         assert yasak not in metin.lower()
     # Site adı somut olmalı: "bir siteye" değil, hangi site olduğu yazılı.
@@ -174,41 +182,187 @@ def test_onay_metni_pazarlama_dili_kullanmiyor():
     assert "TRAnimeİzle" in metin
 
 
-def test_diyalog_metni_gosteriyor(qtbot):
-    dialog = katki_dialog.KimlikBagisDialog()
-    qtbot.addWidget(dialog)
-    assert dialog.lblMetin.text() == katki_dialog.onay_metni()
+# ── Onay penceresi (sayfa) ──────────────────────────────────────────────────
+PENCERE = "document.querySelector('[data-soru=bagis_onayi]')"
+ONAY = PENCERE + ".querySelector('.dugme.tehlike')"
+VAZGEC = PENCERE + ".querySelector('.dugme.cerceve')"
+KUTU = PENCERE + ".querySelector('input[type=checkbox]')"
 
 
-def test_onay_tek_tikla_verilemiyor(qtbot):
+@pytest.fixture
+def pencere(main_window, web):
+    """Sayfada açılmış bağış onayı penceresi; ``sonuc`` `onay_al`'ın cevapları."""
+    sonuc: list = []
+    katki.onay_al(main_window.sorular, katki.KAYNAK_TRANIME, sonuc.append)
+    web.bekle("!!" + PENCERE)
+    web.sonuc = sonuc
+    return web
+
+
+def _bitti(web, beklenen):
+    web.qtbot.waitUntil(lambda: bool(web.sonuc), timeout=5000)
+    assert web.sonuc == [beklenen]
+    web.bekle("!" + PENCERE)
+
+
+def test_pencere_metni_duz_metin_olarak_gosteriyor(pencere):
+    assert pencere.js(PENCERE + ".querySelector('.bagis-metni').textContent") == \
+        katki.onay_metni()
+    # HTML olarak yorumlanıp bir kısmı görünmez olmasın: düz metin, alt öğe yok.
+    assert pencere.js(PENCERE + ".querySelector('.bagis-metni').children.length") == 0
+    assert katki.ONAY_KUTUSU in pencere.js(PENCERE + ".innerText")
+    assert pencere.js(PENCERE + ".getAttribute('aria-label')") == katki.ONAY_BASLIK
+
+
+def test_onay_tek_tikla_verilemiyor(pencere):
     """Onay düğmesi, risk kutusu işaretlenmeden etkin olmamalı."""
-    dialog = katki_dialog.KimlikBagisDialog()
-    qtbot.addWidget(dialog)
+    assert pencere.js(KUTU + ".checked") is False
+    assert pencere.js(ONAY + ".disabled") is True
+    # Pasif düğmeye tıklama (programla bile) hiçbir şey göndermez.
+    pencere.js(ONAY + ".click()")
+    pencere.qtbot.wait(150)
+    assert pencere.sonuc == []
 
-    assert dialog.btnOnay.isEnabled() is False
-    dialog.chkAnladim.setChecked(True)
-    assert dialog.btnOnay.isEnabled() is True
-    dialog.chkAnladim.setChecked(False)
-    assert dialog.btnOnay.isEnabled() is False
-
-
-def test_varsayilan_dugme_vazgec(qtbot):
-    """Enter'a basmak bağış yapmamalı."""
-    dialog = katki_dialog.KimlikBagisDialog()
-    qtbot.addWidget(dialog)
-
-    assert dialog.btnIptal.isDefault() is True
-    assert dialog.btnOnay.isDefault() is False
-    assert dialog.btnOnay.autoDefault() is False
+    pencere.js(KUTU + ".click()")
+    assert pencere.js(ONAY + ".disabled") is False
+    pencere.js(KUTU + ".click()")
+    assert pencere.js(ONAY + ".disabled") is True
+    # Kutu işaretsizken düğme bir şekilde etkinleşse de gönderilmez.
+    pencere.js(ONAY + ".disabled = false; " + ONAY + ".click()")
+    pencere.qtbot.wait(150)
+    assert pencere.sonuc == []
 
 
-def test_reddedilen_diyalog_onay_dondurmuyor(qtbot, monkeypatch):
-    """`onay_al` yalnızca Accepted'ı onay sayar."""
-    for kod, beklenen in ((QDialog.DialogCode.Rejected, False),
-                          (QDialog.DialogCode.Accepted, True)):
-        monkeypatch.setattr(katki_dialog.KimlikBagisDialog, "exec",
-                            lambda self, _k=kod: _k)
-        assert katki_dialog.onay_al() is beklenen
+def test_varsayilan_dugme_vazgec(pencere):
+    """Odak Vazgeç'te; Enter — odak onay düğmesindeyken ve kutu işaretliyken
+    bile — bağış yapmaz (Qt'de Enter varsayılan düğmeye, Vazgeç'e gidiyordu)."""
+    assert pencere.js("document.activeElement.textContent") == "Vazgeç"
+    pencere.js(KUTU + ".click(); " + ONAY + ".focus()")
+    assert pencere.js(ONAY + ".disabled") is False
+    assert pencere.js("document.activeElement.textContent") == katki.ONAY_DUGMESI
+    pencere.js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', "
+               "{key: 'Enter', bubbles: true}))")
+    _bitti(pencere, False)
+
+
+@pytest.mark.parametrize("vazgec", [
+    VAZGEC + ".click()",
+    "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))",
+    PENCERE + ".querySelector('.modal-baslik .ikon-dugme').click()",
+    PENCERE + ".parentElement.click()",                     # dış tık
+], ids=["vazgec", "esc", "kapat", "dis-tik"])
+def test_vazgecmenin_her_yolu_onay_degil(pencere, vazgec):
+    pencere.js(KUTU + ".click()")          # kutu işaretli olsa da
+    pencere.js(vazgec)
+    _bitti(pencere, False)
+
+
+def test_bilerek_onay_veriliyor(pencere):
+    pencere.js(KUTU + ".click()")
+    pencere.js(ONAY + ".click()")
+    _bitti(pencere, True)
+
+
+def test_yalnizca_acik_onay_cevabi_onay_sayiliyor(soru_merkezi):
+    """`onay_al` yalnızca {onay: true, okudum: true}'yu onay sayar (Accepted'ın karşılığı)."""
+    for cevap, beklenen in ((None, False), (False, False), ({"onay": False}, False),
+                            ({"onay": True}, False),                 # kutusuz onay
+                            ({"onay": True, "okudum": False}, False),
+                            ({"onay": 1, "okudum": 1}, False),
+                            ({"onay": "true", "okudum": "true"}, False),
+                            ([True], False),
+                            ({"onay": True, "okudum": True}, True)):
+        sonuc: list = []
+        soru = katki.onay_al(soru_merkezi, katki.KAYNAK_TRANIME, sonuc.append)
+        soru_merkezi.cevapla(soru.kimlik, cevap)
+        assert sonuc == [beklenen], cevap
+
+
+@pytest.mark.parametrize("bitir", ["kapanis", "sayfa_gitti", "teslim_yok"])
+def test_cevapsiz_biten_pencere_onay_degil(soru_merkezi, qtbot, bitir):
+    """Uygulama kapandı / sayfa öldü / sayfa hiç bağlanmadı: onay YOK."""
+    sonuc: list = []
+    if bitir == "teslim_yok":
+        soru_merkezi.bagli = False
+        soru = katki.onay_al(soru_merkezi, katki.KAYNAK_TRANIME, sonuc.append)
+        soru._zamanlayici.start(1)
+        qtbot.waitUntil(lambda: bool(sonuc), timeout=3000)
+    elif bitir == "kapanis":
+        katki.onay_al(soru_merkezi, katki.KAYNAK_TRANIME, sonuc.append)
+        soru_merkezi.hepsini_bitir()
+    else:
+        katki.onay_al(soru_merkezi, katki.KAYNAK_TRANIME, sonuc.append)
+        soru_merkezi.sayfa_gitti()
+    assert sonuc == [False]
+
+
+def test_soru_merkezi_yoksa_onay_yok():
+    sonuc: list = []
+    assert katki.onay_al(None, katki.KAYNAK_TRANIME, sonuc.append) is None
+    assert sonuc == [False]
+
+
+# ── Akışın tamamı: çerez → pencere → gönderim ───────────────────────────────
+@pytest.fixture
+def pencereli_sayfa(ayar_uclari, izole_ev, soru_merkezi, casus, monkeypatch):
+    """Gerçek `onay_al` (casusun sahtesi geri alınmış) + sayfasız soru merkezi;
+    gönderim yine casusta."""
+    monkeypatch.setattr(katki, "onay_al", ONAY_AL)
+    uclar = ayar_uclari(sorular=soru_merkezi)
+    return uclar, soru_merkezi
+
+
+def test_pencere_acikken_hicbir_sey_gonderilmiyor(pencereli_sayfa, casus):
+    kayit, _ = casus
+    sayfa, merkez = pencereli_sayfa
+    Dosyalar().set_ayar("kimlik paylas", True)
+
+    sayfa._cerez_geldi(CEREZ)
+
+    (soru,) = merkez.bekleyenler("bagis_onayi")
+    assert soru.veri["metin"] == katki.onay_metni()
+    assert kayit["gonderim"] == [], "cevap gelmeden gönderim olmamalı"
+    # Çerez yine de kaydedildi: bağış ayrı karar.
+    assert ".AitrWeb.Session" in Dosyalar().ayarlar.get("tranime_cookie", "")
+
+    merkez.cevapla(soru.kimlik, {"onay": True, "okudum": True})
+    assert [d for d, _ in kayit["gonderim"]] == [CEREZ]
+    assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
+
+
+def test_vazgecilen_pencere_gondermiyor(pencereli_sayfa, casus):
+    kayit, _ = casus
+    sayfa, merkez = pencereli_sayfa
+    Dosyalar().set_ayar("kimlik paylas", True)
+    sayfa._cerez_geldi(CEREZ)
+    (soru,) = merkez.bekleyenler("bagis_onayi")
+    merkez.cevapla(soru.kimlik, {"onay": False})
+    assert kayit["gonderim"] == []
+    assert "bağışlanmadı" in durum(sayfa)
+
+
+def test_pencere_acikken_ayar_kapatilirsa_gonderilmiyor(pencereli_sayfa, casus):
+    """Kapı 1 gönderim anında yeniden denetleniyor: son söz "gönderme"."""
+    kayit, _ = casus
+    sayfa, merkez = pencereli_sayfa
+    Dosyalar().set_ayar("kimlik paylas", True)
+    sayfa._cerez_geldi(CEREZ)
+    (soru,) = merkez.bekleyenler("bagis_onayi")
+
+    Dosyalar().set_ayar("kimlik paylas", False)
+    merkez.cevapla(soru.kimlik, {"onay": True, "okudum": True})
+
+    assert kayit["gonderim"] == []
+    assert bagis_kimlikleri(Dosyalar().ayarlar) == []
+    assert "bağışlanmadı" in durum(sayfa)
+
+
+def test_ayar_kapaliyken_pencere_hic_acilmiyor(pencereli_sayfa, casus):
+    kayit, _ = casus
+    sayfa, merkez = pencereli_sayfa
+    sayfa._cerez_geldi(CEREZ)
+    assert merkez.bekleyenler() == []
+    assert kayit["gonderim"] == []
 
 
 # ── Geri çekme ──────────────────────────────────────────────────────────────
@@ -246,26 +400,26 @@ def test_bagis_yokken_geri_cekme_aga_cikmiyor(sayfa, casus):
 
 # ── Yapılandırma kapısı (gerçek HTTP yolu; istek hiç başlamıyor) ────────────
 def test_sunucu_adresi_yoksa_gonderim_baslamiyor():
-    with pytest.raises(katki_dialog.KatkiHatasi):
-        katki_dialog.bagis_gonder(CEREZ, ayarlar={"sunucu api anahtari": "k"})
+    with pytest.raises(katki.KatkiHatasi):
+        katki.bagis_gonder(CEREZ, ayarlar={"sunucu api anahtari": "k"})
 
 
 def test_api_anahtari_yoksa_gonderim_baslamiyor():
-    with pytest.raises(katki_dialog.KatkiHatasi):
-        katki_dialog.bagis_gonder(
+    with pytest.raises(katki.KatkiHatasi):
+        katki.bagis_gonder(
             CEREZ, ayarlar={"sunucu adresi": "http://127.0.0.1:1"})
 
 
 def test_bos_cerez_gonderilmiyor():
-    with pytest.raises(katki_dialog.KatkiHatasi):
-        katki_dialog.bagis_gonder("", ayarlar={"sunucu adresi": "http://127.0.0.1:1",
+    with pytest.raises(katki.KatkiHatasi):
+        katki.bagis_gonder("", ayarlar={"sunucu adresi": "http://127.0.0.1:1",
                                                "sunucu api anahtari": "k"})
 
 
 def test_yapilandirma_ayarlardan_okunuyor(izole_ev):
     Dosyalar().set_ayar(ayar_list={"sunucu adresi": "https://ornek.test/",
                                    "sunucu api anahtari": " gizli "})
-    assert katki_dialog.sunucu_yapilandirmasi() == ("https://ornek.test", "gizli")
+    assert katki.sunucu_yapilandirmasi() == ("https://ornek.test", "gizli")
 
 
 def test_ayarlar_sayfasi_sunucu_bilgisini_kaydediyor(sayfa):

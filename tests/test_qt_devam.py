@@ -15,7 +15,7 @@ import pytest
 
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.common import kutuphane, mpv_oynatici
-from turkanime_api.gui.qt.progress_dialog import ProgressDialog
+from turkanime_api.gui.web.sorular import SoruMerkezi
 from turkanime_api.sources.adapter import AdapterVideo
 
 ANAHTAR = "--script-opts-append=" + mpv_oynatici.KONUM_ANAHTARI + "="
@@ -66,8 +66,17 @@ def mpv(monkeypatch, izole_ev):
 
     monkeypatch.setattr(mpv_oynatici, "mpv_bul", lambda: "/opt/sahte/mpv")
     monkeypatch.setattr(mpv_oynatici.sp, "Popen", Proc)
-    monkeypatch.setattr(ProgressDialog, "exec",
-                        lambda self: durum["diyalog"].append(self) or 0)
+    # İlerleme sorusu sayfada bir pencere (`gui.web.pencereler.ilerleme_sor`);
+    # açılanlar kaydediliyor, cevapsız kalıyorlar (kapanışta varsayılanla biter).
+    asil = SoruMerkezi.sor
+
+    def sor(self, tur, *a, **k):
+        soru = asil(self, tur, *a, **k)
+        if tur == "ilerleme":
+            durum["diyalog"].append(soru)
+        return soru
+
+    monkeypatch.setattr(SoruMerkezi, "sor", sor)
     return durum
 
 

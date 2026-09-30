@@ -183,7 +183,7 @@ def test_acilista_geri_yuklenen_isler_sayfada(qtbot, sahte_kaynak, monkeypatch,
         assert "Devam et" in eylemler and "Duraklat" not in eylemler
         assert "Tümünü Sürdür" in web.js("document.querySelector('[data-sayfa=downloads] .sayfa-eylem').innerText")
     finally:
-        win._kapanis_onayi = lambda _adet: True
+        win._kapanis_onayi = lambda _adet, geri: geri(True)
         win.close()
 
 
@@ -275,7 +275,8 @@ def test_kapanista_hayir_pencereyi_ve_isi_birakiyor(main_window, baslatma, tmp_p
                                                     monkeypatch):
     win = main_window
     sorular: list = []
-    monkeypatch.setattr(win, "_kapanis_onayi", lambda adet: sorular.append(adet) or False)
+    monkeypatch.setattr(win, "_kapanis_onayi",
+                        lambda adet, geri: sorular.append(adet) or geri(False))
     durduruldu: list = []
     monkeypatch.setattr(win.downloads, "pause_all", lambda: durduruldu.append(1))
     monkeypatch.setattr(win.downloads, "cancel_all", lambda: durduruldu.append(1))
@@ -290,7 +291,7 @@ def test_kapanista_hayir_pencereyi_ve_isi_birakiyor(main_window, baslatma, tmp_p
 def test_kapanista_evet_duraklatip_kaydediyor(main_window, baslatma, tmp_path,
                                               monkeypatch):
     win = main_window
-    monkeypatch.setattr(win, "_kapanis_onayi", lambda adet: True)
+    monkeypatch.setattr(win, "_kapanis_onayi", lambda adet, geri: geri(True))
     kaydedildi: list = []
     asil = win.downloads.kapanista_kaydet
     monkeypatch.setattr(win.downloads, "kapanista_kaydet",
@@ -304,5 +305,80 @@ def test_kapanista_evet_duraklatip_kaydediyor(main_window, baslatma, tmp_path,
 
 def test_is_yokken_kapanis_sormuyor(main_window, monkeypatch):
     monkeypatch.setattr(main_window, "_kapanis_onayi",
-                        lambda adet: pytest.fail("iş yokken sorulmamalı"))
+                        lambda adet, geri: pytest.fail("iş yokken sorulmamalı"))
     assert main_window.close() is True
+
+
+# ── Kapanış sorusu (sayfadaki pencere) ───────────────────────────────────────
+KAPANIS = "document.querySelector('[data-soru=kapanis]')"
+
+
+@pytest.fixture
+def gercek_kapanis_sorusu(main_window, monkeypatch):
+    """conftest'in "hep Evet" sahtesini kaldır: soru sayfada sorulsun."""
+    monkeypatch.delattr(main_window, "_kapanis_onayi")
+    return main_window
+
+
+def test_kapanis_sorusu_sayfada_hayir_pencereyi_birakiyor(
+        gercek_kapanis_sorusu, web, baslatma, tmp_path):
+    win = gercek_kapanis_sorusu
+    web.qtbot.waitUntil(lambda: win.sorular.bagli, timeout=5000)
+    tid = win.downloads.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+
+    # Cevap sonra geliyor: olay şimdilik reddedilir, pencere açık.
+    assert win.close() is False
+    web.bekle("!!" + KAPANIS)
+    metin = web.js(KAPANIS + ".innerText")
+    assert "1 indirme sürüyor" in metin and "Duraklatılıp çıkılsın mı?" in metin
+    # QMessageBox gibi varsayılan "Evet" (odak orada).
+    assert web.js("document.activeElement.textContent") == "Evet"
+    # Soru açıkken yeniden kapatmak ikinci soru açmaz.
+    assert win.close() is False
+    assert len(win.sorular.bekleyenler("kapanis")) == 1
+
+    web.js("[..." + KAPANIS + ".querySelectorAll('button')].find(b => b.textContent === 'Hayır').click()")
+    web.bekle("!" + KAPANIS)
+    web.qtbot.wait(100)
+    assert win.isVisible()
+    assert win.downloads.durum(tid) == DURUM_BEKLIYOR
+
+    # Esc de "Hayır".
+    assert win.close() is False
+    web.bekle("!!" + KAPANIS)
+    web.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+    web.bekle("!" + KAPANIS)
+    web.qtbot.wait(100)
+    assert win.isVisible() and win.downloads.durum(tid) == DURUM_BEKLIYOR
+
+
+def test_kapanis_sorusu_sayfada_evet_duraklatip_kapatiyor(
+        gercek_kapanis_sorusu, web, baslatma, tmp_path):
+    win = gercek_kapanis_sorusu
+    web.qtbot.waitUntil(lambda: win.sorular.bagli, timeout=5000)
+    tid = win.downloads.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    assert win.close() is False
+    web.bekle("!!" + KAPANIS)
+    web.js("[..." + KAPANIS + ".querySelectorAll('button')].find(b => b.textContent === 'Evet').click()")
+    web.qtbot.waitUntil(lambda: not win.isVisible(), timeout=5000)
+    assert win.downloads.durum(tid) == DURUM_DURAKLATILDI, "iptal değil duraklatma"
+
+
+def test_sayfa_bagli_degilse_kapanis_beklemeden_evet(gercek_kapanis_sorusu, baslatma,
+                                                   tmp_path):
+    """Bozuk/yüklenmemiş sayfa pencereyi kapatılamaz hâle getirmemeli."""
+    win = gercek_kapanis_sorusu
+    win.sorular.bagli = False
+    tid = win.downloads.enqueue(_entry(SahteBolum()), output=str(tmp_path))
+    assert win.close() is True
+    assert win.downloads.durum(tid) == DURUM_DURAKLATILDI
+
+
+def test_kapanista_acik_pencereler_varsayilanla_bitiyor(main_window):
+    """Fansub/bağış onayı gibi açık sorular kapanışta varsayılanla kapanır
+    (bağışta "onay yok")."""
+    from turkanime_api.gui.web import katki
+    sonuc: list = []
+    katki.onay_al(main_window.sorular, katki.KAYNAK_TRANIME, sonuc.append)
+    assert main_window.close() is True
+    assert sonuc == [False]

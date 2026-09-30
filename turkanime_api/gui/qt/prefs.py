@@ -320,8 +320,7 @@ def gecmis_kaydet(bolum, islem: str) -> bool:
 def seri_adi(bolum, yedek: str = "") -> str:
     """Okunabilir seri adı — ağa çıkabilecek alanlara dokunmadan.
 
-    `objects.Anime.title` gerekirse sayfayı indirir; önce `_title` bakılıyor
-    (bkz. `progress_dialog.anime_adi`, aynı sıra).
+    `objects.Anime.title` gerekirse sayfayı indirir; önce `_title` bakılıyor.
     """
     try:
         anime = getattr(bolum, "anime", None)
@@ -332,6 +331,14 @@ def seri_adi(bolum, yedek: str = "") -> str:
         if isinstance(deger, str) and deger:
             return deger
     return yedek
+
+
+def anime_adi(bolum, yedek: str = "") -> str:
+    """`seri_adi`, hiçbir şey bulunamazsa "Bilinmeyen anime".
+
+    İlerleme penceresi ve Discord durumu boş başlık göstermesin diye.
+    """
+    return seri_adi(bolum, yedek) or "Bilinmeyen anime"
 
 
 def kitaplik_kimligi(entry: Optional[Dict[str, Any]]) -> Dict[str, str]:
@@ -524,7 +531,7 @@ class Gecmis:
 __all__ = ["Tercihler", "Gecmis", "AniListAyar", "oku", "ayar_yaz",
            "kaynak_kimliklerini_uygula",
            "indirme_dizini", "oynat", "indir", "bolum_kimligi", "gecmis_kaydet",
-           "seri_adi", "kitaplik_kimligi", "kitapliga_yaz", "YerelVideo",
+           "seri_adi", "anime_adi", "kitaplik_kimligi", "kitapliga_yaz", "YerelVideo",
            "yerel_dosya", "konum_getir", "konum_yaz",
            "ilerleme_kaydet", "yerel_ilerleme", "anilist_oku", "anilist_yaz",
            "VARSAYILAN_PARALEL", "VARSAYILAN_ADAY"]

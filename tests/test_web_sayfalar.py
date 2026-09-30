@@ -198,7 +198,7 @@ def test_acilista_diskteki_cerez_kaynaga_ulasiyor(qtbot, izole_ev, temiz_kaynak_
                         "# Netscape\n.tranimeizle.io\tTRUE\t/\tTRUE\t0\t.AitrWeb.Session\tabc\n")
     win = MainWindow()
     qtbot.addWidget(win)
-    win._kapanis_onayi = lambda _a: True
+    win._kapanis_onayi = lambda _a, geri: geri(True)
     assert tranime.SESSION_COOKIE == "abc"
     assert win.ayarlar_uclari.ayarlar()["cerez"]["var"] is True
     win.ayarlar_uclari.cerez_temizle()
@@ -221,8 +221,8 @@ class SahteKatki:
         self.gonderilen = []
         self.silinen = []
 
-    def onay_al(self, kaynak, parent=None):
-        return self.onay
+    def onay_al(self, sorular, kaynak, geri):
+        geri(self.onay)
 
     def bagis_gonder(self, deger, kaynak, ayarlar):
         self.gonderilen.append(deger)
