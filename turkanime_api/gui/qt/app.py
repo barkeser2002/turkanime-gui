@@ -2,10 +2,10 @@
 
 Arayüzün tamamı web'de (`gui/web`): pencerenin merkezinde tek bir
 `WebGorunum`; üst çubuk, menü, sayfalar, alt durum çubuğu ve küçük pencereler
-(fansub, ilerleme, güncelleme, gereksinim, bağış onayı, kapanış sorusu)
+(fansub, ilerleme, güncelleme, gereksinim, bağış onayları, kapanış sorusu)
 HTML/CSS/JS. Bu modülde kalanlar pencere düzeyindeki işler: oynatma (mpv),
-indirme kuyruğu, AniList/Discord/güncelleme servisleri, kapanış ve sayfaların
-köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak. Qt'de kalan
+indirme kuyruğu, AniList/Discord/güncelleme/veri bağışı servisleri, kapanış ve
+sayfaların köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak. Qt'de kalan
 tek ayrı pencere çerez tarayıcısı (`cookie_browser`): dış sitenin girişi için
 gerçek bir tarayıcı penceresi olmak zorunda.
 
@@ -50,6 +50,7 @@ from ..web.uclar_kesif import KesifUclari
 from ..web.uclar_indirme import IndirmeUclari
 from ..web.uclar_izleme import IzlemeUclari
 from ..web.uclar_kitaplik import KitaplikUclari
+from ..web.veri_bagisi import VeriBagisi
 
 APP_TITLE = "TürkAnime İndirici"
 
@@ -150,6 +151,10 @@ class MainWindow(QMainWindow):
         # "Fansub'u kendim seçeyim": seri başına tek soru (bkz. `fansub`).
         self.fansub = FansubSecici(self, sorular=self.sorular)
         self.downloads.finished.connect(self._on_download_finished)
+        # Veri bağışı: oynayan/inen bölümün kaydı (varsayılan KAPALI; kapalıyken
+        # kancalar hiçbir şey yapmaz). Ayar sayfası aynı örneği kullanıyor.
+        self.veri_bagisi = VeriBagisi()
+        self.downloads.indirildi.connect(self._on_indirildi)
 
         # AniList tek bir servisten yürür: ayar sayfası girişi yapar, izleme
         # listesi ve ilerleme yazımı aynı jetonu/oturumu paylaşır.
@@ -240,7 +245,7 @@ class MainWindow(QMainWindow):
         self.ayarlar_uclari = self.kopru.bagla(AyarlarUclari(
             self.kopru, anilist=self.anilist, discord=self.discord,
             updates=self.updates, requirements=self.requirements, pencere=self,
-            sorular=self.sorular))
+            sorular=self.sorular, veri_bagisi=self.veri_bagisi))
         self.arama = self.kopru.bagla(AramaUclari(self.kopru))
         self.detay = self.kopru.bagla(DetayUclari(
             self.kopru, oynat=self._on_play, indir=self._on_download,
@@ -469,6 +474,10 @@ class MainWindow(QMainWindow):
             # Buraya gelindiyse mpv düzgün kapandı. Kitaplık: "izlemeye devam
             # et" + bölüm geçmişi (kaynaksız kayıt yazılmaz, bkz. prefs).
             prefs.kitapliga_yaz(kayit, title)
+            # Veri bağışı: oynayan akış + diğer adaylar, yalnızca konum raporu
+            # gerçek oynatma gösteriyorsa; yerel dosya ve kapalı ayar hiçbir şey
+            # göndermez. Fırlatmaz, beklemez (kuyruk/gönderim arka planda).
+            self.veri_bagisi.oynatildi(kayit, sonuc.video, rapor)
             if rapor is None:
                 # mpv rapor vermedi (Lua'sız derleme, eski `oynat`): bölümün
                 # bitip bitmediği bilinmiyor — eski davranış, izlendi + soru.
@@ -662,6 +671,14 @@ class MainWindow(QMainWindow):
             # Bölüm satırındaki ⬇ rozeti geçmişten okunuyor; liste açıksa tazele.
             self._refresh_episode_history()
 
+    def _on_indirildi(self, entry, video) -> None:
+        """Dosyası doğrulanmış indirme (GUI thread'i): veri bağışına bildir.
+
+        Kanca yalnızca anlık görüntü alıyor; kuyruğa yazma ve gönderim
+        servisin kendi thread'inde (bkz. `gui.web.veri_bagisi`).
+        """
+        self.veri_bagisi.indirildi(entry, video)
+
     def _toplu_indirme_bitti(self) -> None:
         """Kuyruk boşaldı: pencere arka plandaysa masaüstü bildirimi.
 
@@ -704,6 +721,9 @@ class MainWindow(QMainWindow):
         self.discord.baslat()
         self.updates.kontrol_et(sessiz=True)
         self.requirements.denetle()
+        # Önceki oturumdan gönderilemeyen veri bağışı kaydı varsa (ve özellik
+        # hâlâ açıksa) gönderici yeniden dener; yoksa hiçbir şey başlamaz.
+        self.veri_bagisi.ayar_degisti()
 
     def _on_update_available(self, version_data) -> None:
         """Yeni sürüm bulundu: pencereyi aç (GUI thread'i).
@@ -825,6 +845,12 @@ class MainWindow(QMainWindow):
             # Aynı sebeple süren tam arşiv indirmesi (~230 MB) de iptal edilir;
             # yarım paket geçici klasörle birlikte silinir, eski arşiv yerinde.
             self.ayarlar_uclari.arsiv_indirmeyi_durdur()
+        except Exception:
+            pass
+        try:
+            # Veri bağışı göndericisi durur; kuyruk diskte, yarım kalan kayıt
+            # bir sonraki açılışta yeniden denenir.
+            self.veri_bagisi.durdur()
         except Exception:
             pass
         try:

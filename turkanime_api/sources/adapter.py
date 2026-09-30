@@ -359,12 +359,18 @@ class AdapterBolum:
         stream_provider: Optional[Callable[[str], List[Dict[str, str]]]] = None,
         player_name: str = "ANIMECIX",
         slug: Optional[str] = None,
+        kimlik: Optional[str] = None,
     ):
         self.url = url
         self._title = title
         self.anime = anime
         self._stream_provider = stream_provider
         self._player_name = player_name or "ANIMECIX"
+        # Kaynağın KENDİ bölüm kimliği (`bolumler` ucunun verdiği, `akislar`'ın
+        # beklediği). `url` ondan türetiliyor ama her kaynakta geri
+        # çevrilemiyor (AnimPow "core:1:2" → ".../watch/core/s1e2"); veri
+        # bağışı sunucuya bu kimliği yolluyor (bkz. `gui.web.veri_bagisi`).
+        self.kimlik: Optional[str] = kimlik or None
         # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı).
         # Kaynak kendi bölüm slug'ını veriyorsa (TürkAnime arşivi: sitenin
         # "naruto-1-bolum"u) o kullanılır: izleme geçmişi ve eski indirmelerin
@@ -383,6 +389,11 @@ class AdapterBolum:
         # bölüm nesnesiyle saatler sonra yapılan oynatma taze liste almalı.
         self._bekleyen_akislar: Optional[List[Dict[str, Any]]] = None
         self._fansub_listesi: Optional[List[str]] = None
+        # Son `best_video` çağrısının gördüğü akışların kopyası (elenmeden
+        # önceki TAM aday listesi). Oynayan akış ile diğer adaylar ancak
+        # buradan ayrılabiliyor; `best_video` yalnızca seçileni döndürüyor.
+        # Sağlayıcıyı ikinci kez çağırmak ağ isteği olurdu.
+        self.son_akislar: List[Dict[str, Any]] = []
 
     @property
     def title(self):
@@ -464,6 +475,7 @@ class AdapterBolum:
                           "status": "kaynak okunamadı"})
                 raise
             self._fansublari_not_et(streams or [])
+        self.son_akislar = [dict(s) for s in (streams or []) if isinstance(s, dict)]
         if not streams:
             # "sebep": denenecek aday HİÇ yoktu; `common.oynatma` bunu
             # "N aday denendi" özetinden ayırıp kullanıcıya söylüyor.
@@ -590,5 +602,6 @@ def kayittan_bolumler(kaynak: Any, slug: str, title: str) -> List[AdapterBolum]:
                                            bos_mesaji=kaynak.bos_akis_mesaji),
             player_name=kaynak.oynatici,
             slug=kaynak.bolum_slugu(bolum_id) if kaynak.bolum_slugu else None,
+            kimlik=bolum_id,
         ))
     return bolumler

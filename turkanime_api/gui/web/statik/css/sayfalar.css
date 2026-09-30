@@ -1706,6 +1706,31 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   gap: 14px;
 }
 
+/* Veri bağışı kartı: anahtar, açıklama (düz yazı), durum ve sayaçlar. */
+.veri-paneli {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.veri-paneli > .anahtar-satiri {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.bilgi-tablosu.metinli {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+
+/* Açıklama düz yazı: `bilgi-tablosu`nun adresler için verdiği `break-all`
+   kelimeleri ortasından bölerdi. */
+.bilgi-tablosu.metinli dd {
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  color: var(--metin-2);
+}
+
 .arsiv-uyarilari:empty {
   display: none;
 }

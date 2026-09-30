@@ -176,30 +176,45 @@ def _uc(ayarlar: Optional[Dict[str, Any]], yol: str) -> Tuple[str, Dict[str, str
     return f"{adres}{yol}", {"X-API-Key": anahtar}
 
 
+def tasima_guvenli_mi(adres: str) -> bool:
+    """Sunucuya giden trafik şifreli mi (ya da makineden hiç çıkmıyor mu)?
+
+    Kural TEK yerde: kimlik bağışı (`_tasimayi_dogrula`) ve veri bağışı
+    (`gui.web.veri_bagisi`) aynı kapıdan geçiyor. İkisi ayrı yazılsaydı biri
+    sıkılaştırılıp öbürü unutulabilirdi.
+
+    Tek istisna yerel adresler: geliştirme sırasında sunucu aynı makinede
+    koşuyor, trafik makineden hiç çıkmıyor. Bunu da ad üzerinden değil
+    ayrıştırılmış host üzerinden karara bağlıyoruz — `http://localhost.saldiri`
+    gibi bir ad "localhost ile başlıyor" diye muaf sayılmamalı. DNS'e de
+    sorulmuyor: saldırganın adı yerele çözdürmesi muafiyet kazandırmamalı.
+    """
+    from urllib.parse import urlsplit
+
+    parca = urlsplit(str(adres or ""))
+    if parca.scheme == "https":
+        return True
+    if parca.scheme != "http":
+        return False
+    return (parca.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+
+
 def _tasimayi_dogrula(adres: str) -> None:
     """Şifresiz taşımaya kimlik verme.
 
     Gönderilen şey bir oturum çerezi: `http://` üzerinden giderse aradaki
     herkes onu okur ve okuyan kişi kullanıcının hesabına girebilir. Bu, bağışın
     sunucuya yaptığından daha ağır bir sonuç — sunucuya bilerek güveniliyor,
-    aradaki ağa güvenilmiyor.
-
-    Tek istisna yerel adresler: geliştirme sırasında sunucu aynı makinede
-    koşuyor, trafik makineden hiç çıkmıyor. Bunu da ad üzerinden değil
-    ayrıştırılmış host üzerinden karara bağlıyoruz — `http://localhost.saldiri`
-    gibi bir ad "localhost ile başlıyor" diye muaf sayılmamalı.
+    aradaki ağa güvenilmiyor. Kural `tasima_guvenli_mi`'de; burada yalnızca
+    reddin kullanıcıya söylenişi var.
     """
     from urllib.parse import urlsplit
 
-    parca = urlsplit(adres)
-    if parca.scheme == "https":
+    if tasima_guvenli_mi(adres):
         return
-    if parca.scheme != "http":
+    if urlsplit(adres).scheme != "http":
         raise KatkiHatasi(
             f"Sunucu adresi anlaşılmadı ({adres!r}); https:// ile başlamalı.")
-    host = (parca.hostname or "").lower()
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return
     raise KatkiHatasi(
         "Sunucu adresi şifresiz (http://). Oturum çerezi şifresiz "
         "gönderilmez; adresi https:// olarak ayarlayın.")
@@ -310,4 +325,4 @@ __all__ = ["KAYNAK_TRANIME", "KAYNAK_OPENANI", "KAYNAK_ADLARI",
            "ONAY_BASLIK", "ONAY_METNI",
            "ONAY_KUTUSU", "ONAY_DUGMESI", "VAZGEC_DUGMESI", "KatkiHatasi",
            "onay_metni", "onay_cevabi_mi", "onay_al", "sunucu_yapilandirmasi",
-           "bagis_gonder", "bagis_geri_cek"]
+           "tasima_guvenli_mi", "bagis_gonder", "bagis_geri_cek"]

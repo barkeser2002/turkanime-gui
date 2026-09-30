@@ -1,16 +1,18 @@
 /* Qt diyaloglarından taşınan pencereler — `TA.soruTurleri` çizicileri.
  *
  * Her tür bir Python sorusu (gui/web/sorular.py); verisi ve kuralları
- * gui/web/pencereler.py, gui/web/katki.py ve gui/qt/fansub.py'de. Ortak
- * düzen: Esc, × ve (izin verilen yerde) dış tık "vazgeç" demek; cevabı
- * Python doğruluyor, reddederse mesaj pencerenin içinde gösteriliyor.
+ * gui/web/pencereler.py, gui/web/katki.py, gui/web/veri_bagisi.py ve
+ * gui/qt/fansub.py'de. Ortak düzen: Esc, × ve (izin verilen yerde) dış tık
+ * "vazgeç" demek; cevabı Python doğruluyor, reddederse mesaj pencerenin
+ * içinde gösteriliyor.
  *
- *   fansub       — fansub seçimi + "Bu seri için hatırla"
- *   ilerleme     — "Kaçıncı bölümü tamamladınız?"
- *   guncelleme   — yeni sürüm, değişiklikler, indirme ilerlemesi
- *   gereksinim   — eksik araçlar, kurulum, "Atla"
- *   bagis_onayi  — oturum kimliği bağışı onayı (gizlilik: varsayılan HAYIR)
- *   kapanis      — süren indirme varken kapanış sorusu
+ *   fansub            — fansub seçimi + "Bu seri için hatırla"
+ *   ilerleme          — "Kaçıncı bölümü tamamladınız?"
+ *   guncelleme        — yeni sürüm, değişiklikler, indirme ilerlemesi
+ *   gereksinim        — eksik araçlar, kurulum, "Atla"
+ *   bagis_onayi       — oturum kimliği bağışı onayı (gizlilik: varsayılan HAYIR)
+ *   veri_bagisi_onayi — veri bağışını açma onayı (aynı kurallar, varsayılan HAYIR)
+ *   kapanis           — süren indirme varken kapanış sorusu
  */
 (function () {
   "use strict";
@@ -251,21 +253,22 @@
     };
   };
 
-  // ── Oturum kimliği bağışı ────────────────────────────────────────────────
-  // Kaza sonucu onay OLMAZ (gui/web/katki.py, kural 3):
-  //  * "Kimliğimi bağışla" kutu işaretlenmeden PASİF; tıklama yine gelse de
-  //    kutu işaretli değilse hiçbir şey gönderilmez.
+  // ── Rıza pencereleri: oturum kimliği bağışı, veri bağışı ─────────────────
+  // Kaza sonucu onay OLMAZ (gui/web/katki.py, kural 3; veri_bagisi.py, kural 1):
+  //  * Onay düğmesi kutu işaretlenmeden PASİF; tıklama yine gelse de kutu
+  //    işaretli değilse hiçbir şey gönderilmez.
   //  * Odak "Vazgeç"te ve pencere açıkken Enter HER ZAMAN vazgeçer — odak onay
   //    düğmesinde olsa bile (Qt'de Enter varsayılan düğmeye, Vazgeç'e gidiyordu).
   //    Onay yalnızca tıklama ya da onay düğmesindeyken Boşluk ile.
   //  * Esc, ×, dış tık = vazgeç. Metin DÜZ METİN (textContent), HTML değil.
   //  * Python da yalnızca {onay: true, okudum: true}'yu onay sayıyor.
-  turler.bagis_onayi = function (v, api) {
+  // İki tür aynı kurallarla çiziliyor: biri gevşerse öbürü de gevşemesin.
+  function rizaPenceresi(v, api, s) {
     var kutu = h("input", { type: "checkbox" });
     var not = notSatiri();
     var onay;
     function vazgec() { api.vazgec({ onay: false, okudum: kutu.checked === true }); }
-    onay = dugme("tehlike", v.onay_dugmesi || "Kimliğimi bağışla", function () {
+    onay = dugme(s.sinif, v.onay_dugmesi || s.onay, function () {
       if (onay.disabled || kutu.checked !== true) return;
       onay.disabled = true;
       api.cevapla({ onay: true, okudum: kutu.checked === true }).catch(function (e) {
@@ -280,7 +283,7 @@
     metin.textContent = v.metin || "";
 
     var pk = TA.pencere({
-      sinif: "soru-penceresi.bagis-penceresi", rol: "alertdialog", dataset: { soru: "bagis_onayi" },
+      sinif: "soru-penceresi.bagis-penceresi", rol: "alertdialog", dataset: { soru: s.tur },
       etiket: v.baslik,
       vazgec: vazgec,
       enter: function (e) {
@@ -297,6 +300,17 @@
     });
     vazgecEl.focus();
     return { kapat: pk.kapat };
+  }
+
+  // Oturum kimliği: onay düğmesi kırmızı (hesabın kapanma riski).
+  turler.bagis_onayi = function (v, api) {
+    return rizaPenceresi(v, api, { tur: "bagis_onayi", sinif: "tehlike", onay: "Kimliğimi bağışla" });
+  };
+
+  // Veri bağışı: çerez gitmiyor, hesap riski yok — ama IP ve izlenen bölümler
+  // sunucuya görünüyor; kurallar aynı, düğme birincil.
+  turler.veri_bagisi_onayi = function (v, api) {
+    return rizaPenceresi(v, api, { tur: "veri_bagisi_onayi", sinif: "birincil", onay: "Veri bağışını aç" });
   };
 
   // ── Kapanış ──────────────────────────────────────────────────────────────

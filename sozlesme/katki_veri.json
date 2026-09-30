@@ -1,0 +1,244 @@
+{
+  "govde_semasi": {
+    "$defs": {
+      "KatkiAnime": {
+        "additionalProperties": false,
+        "properties": {
+          "baslik": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Baslik",
+            "type": "string"
+          },
+          "kapak": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kapak"
+          },
+          "kimlik": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Kimlik",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kimlik",
+          "baslik"
+        ],
+        "title": "KatkiAnime",
+        "type": "object"
+      },
+      "KatkiBolum": {
+        "additionalProperties": false,
+        "properties": {
+          "ara": {
+            "anyOf": [
+              {
+                "maximum": 99,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ara"
+          },
+          "baslik": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Baslik",
+            "type": "string"
+          },
+          "kimlik": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Kimlik",
+            "type": "string"
+          },
+          "no": {
+            "anyOf": [
+              {
+                "maximum": 99999,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "No"
+          },
+          "sezon": {
+            "anyOf": [
+              {
+                "maximum": 999,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sezon"
+          }
+        },
+        "required": [
+          "kimlik"
+        ],
+        "title": "KatkiBolum",
+        "type": "object"
+      },
+      "KatkiVideo": {
+        "additionalProperties": false,
+        "properties": {
+          "calisti": {
+            "title": "Calisti",
+            "type": "boolean"
+          },
+          "etiket": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Etiket"
+          },
+          "fansub": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fansub"
+          },
+          "oynatici": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oynatici"
+          },
+          "url": {
+            "maxLength": 2048,
+            "minLength": 8,
+            "pattern": "^https?://",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "calisti"
+        ],
+        "title": "KatkiVideo",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "anime": {
+        "$ref": "#/$defs/KatkiAnime"
+      },
+      "bolum": {
+        "$ref": "#/$defs/KatkiBolum"
+      },
+      "bolum_listesi": {
+        "anyOf": [
+          {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 5000,
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Bolum Listesi"
+      },
+      "istemci": {
+        "anyOf": [
+          {
+            "maxLength": 30,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Istemci"
+      },
+      "kaynak": {
+        "maxLength": 50,
+        "minLength": 1,
+        "pattern": "^[a-z0-9_]+$",
+        "title": "Kaynak",
+        "type": "string"
+      },
+      "videolar": {
+        "items": {
+          "$ref": "#/$defs/KatkiVideo"
+        },
+        "maxItems": 40,
+        "minItems": 1,
+        "title": "Videolar",
+        "type": "array"
+      }
+    },
+    "required": [
+      "kaynak",
+      "anime",
+      "bolum",
+      "videolar"
+    ],
+    "title": "VeriBagisiGiris",
+    "type": "object"
+  },
+  "not": "Veri bagisi ucunun tel uzerindeki sozlesmesi. BU KOPYA YER TUTUCU: istemci deposunda, sunucuyla uzlasilan sozlesmeden elle yazildi ve birlestirmede sunucunun urettigi dosyayla (turkanime_server 'VeriBagisiGiris.model_json_schema()') birebir degistirilecek. Istemci gonderdigi govdeyi tests/test_veri_bagisi_sozlesmesi.py ile buna dogruluyor. Yanit: 200 {katki_id: 32 hex, durum: 'alindi'}; 400 bilinmeyen kaynak; 401/403 yetki; 413/422 gecersiz govde; 429 hiz siniri (Retry-After). Kaynak adi kayittaki modul adi (kucuk harf, ornek: 'animetr'; TurkAnime arsivi 'animedepo').",
+  "surum": 1,
+  "uc": "POST /katki/veri"
+}
