@@ -44,6 +44,19 @@ class KaynakEngellendi(KaynakHatasi):
     """Cloudflare / bot koruması / HTTP 401-403: istek reddedildi."""
 
 
+class BotDogrulamasi(KaynakEngellendi):
+    """Site insan doğrulaması istiyor (Cloudflare "Just a moment…"/Turnstile,
+    LiteSpeed bot doğrulaması, sitenin kendi JS kapısı).
+
+    `KaynakEngellendi`'den farkı: KULLANICI çözebilir. Arayüz bu hatada
+    "Erişimi aç" düğmesi gösteriyor; düğme kaynağın sitesini gömülü
+    tarayıcıda açıyor, doğrulamayı kullanıcı geçiyor, oturum (çerez +
+    tarayıcı kimliği) `common.oturumlar`'a yazılıp kaynağın isteklerine
+    ekleniyor. Uygulama doğrulamayı kendisi çözmez. Düz 403 (IP yasağı, hız
+    sınırı) bu sınıf DEĞİL: onu tarayıcıda açmak da bir şey değiştirmez.
+    """
+
+
 class KaynakYanitVermedi(KaynakHatasi):
     """Zaman aşımı, bağlantı/DNS/vekil hatası ya da sunucu tarafı 5xx."""
 
@@ -59,9 +72,16 @@ class VideoYok(KaynakHatasi):
 
 # Cloudflare/WAF sayfalarının imzaları (küçük harf). `common.cf_bypass`'taki
 # listeyle aynı aile; oradan import edilmiyor çünkü o modül requests çekiyor.
+# İlk iki grup DOĞRULAMA sayfası (kullanıcı çözebilir → `BotDogrulamasi`):
+# Cloudflare'ınki ve LiteSpeed'in reCAPTCHA'sı. Üçüncü grup genel engel
+# ("Sorry, you have been blocked", adında Cloudflare geçen düz 403):
+# tarayıcıda açmak onu değiştirmez.
+_CF_DOGRULAMA_IMZALARI = (
+    "just a moment", "cf-chl", "cf_chl", "enable javascript and cookies",
+)
+_DOGRULAMA_IMZALARI = ("bot verification", "lsrecaptcha")
 _ENGEL_IMZALARI = (
-    "just a moment", "attention required", "cf-chl", "cf_chl",
-    "challenge-platform", "cloudflare", "enable javascript and cookies",
+    "attention required", "challenge-platform", "cloudflare",
 )
 
 # Zincirde en çok bu kadar istisna yürünür (`__cause__`/`__context__`
@@ -120,9 +140,19 @@ def _siniflandir(exc: BaseException) -> Tuple[Type[KaynakHatasi], str]:
         metin = str(e) or ""
         kucuk = (metin + " " + _yanit_metni(e)).casefold()
         kod = _durum_kodu(e, metin)
-        if "CFBypassError" in adlar or any(i in kucuk for i in _ENGEL_IMZALARI):
-            return KaynakEngellendi, ("Cloudflare engeli: site bot doğrulaması "
-                                      "istiyor; biraz sonra yeniden deneyin ya "
+        if "CFBypassError" in adlar or any(i in kucuk for i in _CF_DOGRULAMA_IMZALARI):
+            return BotDogrulamasi, ("Cloudflare engeli: site bot doğrulaması "
+                                    "istiyor; “Erişimi aç” ile doğrulamayı "
+                                    "kendiniz geçebilir ya da başka kaynak "
+                                    "seçebilirsiniz")
+        if any(i in kucuk for i in _DOGRULAMA_IMZALARI):
+            return BotDogrulamasi, ("site bot doğrulaması (insan doğrulaması) "
+                                    "istiyor; “Erişimi aç” ile doğrulamayı "
+                                    "kendiniz geçebilir ya da başka kaynak "
+                                    "seçebilirsiniz")
+        if any(i in kucuk for i in _ENGEL_IMZALARI):
+            return KaynakEngellendi, ("Cloudflare engeli: site isteği geri "
+                                      "çevirdi; biraz sonra yeniden deneyin ya "
                                       "da başka kaynak seçin")
         if adlar & {"Timeout", "ReadTimeout", "ConnectTimeout", "TimeoutError",
                     "timeout", "ReadTimeoutError", "ConnectTimeoutError"} \
@@ -228,6 +258,6 @@ def kaynak_hatasi(exc: BaseException, etiket: str = "",
     return sinif(f"{onek}{is_adi} — {kisa}")
 
 
-__all__ = ["KaynakHatasi", "OturumGerekli", "KaynakEngellendi",
+__all__ = ["KaynakHatasi", "OturumGerekli", "KaynakEngellendi", "BotDogrulamasi",
            "KaynakYanitVermedi", "VideoYok", "insanlastir", "kaynak_hatasi",
            "ham_metin", "sebep_metni"]

@@ -10,6 +10,10 @@ __pycache__/
 ayarlar.json
 gecmis.json
 kutuphane.json
+# "Erişimi aç" oturumları: çerezler (cf_clearance) ve gömülü tarayıcının
+# kalıcı profilleri — oturum anahtarı sayılır (common/oturumlar.py).
+oturumlar.json
+/erisim_profilleri/
 geckodriver.log
 log
 debug.log

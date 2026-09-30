@@ -4,6 +4,7 @@ Cloudflare Bypass Modülü
 Bu modül, Cloudflare koruması olan sitelere erişim sağlamak için
 farklı yöntemleri bir arada sunar:
 
+0. Erişim oturumu - kullanıcının gömülü tarayıcıda kendisi geçtiği doğrulama
 1. curl_cffi - Firefox/Chrome TLS fingerprint taklidi
 2. cloudscraper - JS Challenge çözümü
 3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu, opsiyonel)
@@ -42,6 +43,9 @@ except ImportError:
 
 # requests - Fallback için
 import requests
+
+# Kullanıcının "Erişimi aç"la kaydettiği oturumlar (Qt'siz, standart kütüphane).
+from . import oturumlar
 
 # QtWebEngine çözücü - Selenium/undetected-chromedriver'ın yerini aldı.
 # Gerçek bir Chromium'u ayrı süreçte çalıştırır (yerel, gömülü FlareSolverr gibi).
@@ -111,6 +115,8 @@ class CFSession:
     Cloudflare korumalı sitelere erişim için akıllı session yöneticisi.
     
     Sırasıyla şu yöntemleri dener:
+    0. Erişim oturumu (kullanıcı "Erişimi aç"la doğrulamayı geçtiyse; bkz.
+       `common.oturumlar`) — yalnızca o site için kayıt varsa, tek istek
     1. curl_cffi (Firefox TLS fingerprint)
     2. cloudscraper (JS Challenge)
     3. FlareSolverr (uzak headless browser — opsiyonel)
@@ -335,6 +341,37 @@ class CFSession:
             self._qt_solver = None
         return None
 
+    def _try_erisim_oturumu(self, url: str, headers: Dict[str, str], method: str = "GET",
+                            **kwargs) -> Optional[requests.Response]:
+        """Kullanıcının "Erişimi aç"la kaydettiği oturumla dene (0. basamak).
+
+        Oturum yoksa hiçbir şey yapmaz (None). Varsa çerezler, gömülü
+        tarayıcının UA'sı/istemci ipuçları ve UA'ya uyan curl_cffi profiliyle
+        TEK istek: doğrulamayı kullanıcı çözdü, zinciri baştan yürümeden önce
+        onun oturumu denenmeli. Yine doğrulama gelirse (çerez süresi dolmuş)
+        zincir eskisi gibi devam eder; yanıt `oturumlar.yanit_denetle` ile
+        not ediliyor ki arayüz "Erişimi aç"ı göstersin.
+        """
+        ek: Dict[str, Any] = dict(kwargs, headers=dict(headers))
+        if not oturumlar.istege_ekle(url, ek, curl=HAS_CURL_CFFI):
+            return None
+        ek.setdefault("timeout", self.timeout)
+        try:
+            if HAS_CURL_CFFI:
+                oturum = curl_requests.Session(allow_redirects=True)
+                ek.setdefault("impersonate", self.impersonate)
+            else:
+                oturum = requests.Session()
+            resp = oturum.request(method.upper(), url, **ek)
+        except Exception as e:
+            print(f"[CF Bypass] erişim oturumu hatası: {e}")
+            return None
+        oturumlar.yanit_denetle(url, resp)
+        if not self._mesru_yanit(resp):
+            return None
+        self._last_method = "erisim_oturumu"
+        return resp
+
     def _try_curl_cffi(self, url: str, headers: Dict[str, str], method: str = "GET", **kwargs) -> Optional[requests.Response]:
         """curl_cffi ile istek at."""
         if not HAS_CURL_CFFI:
@@ -540,7 +577,12 @@ class CFSession:
         headers.setdefault("Accept-Language", "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7")
         
         last_error = None
-        
+
+        # 0. Kullanıcının "Erişimi aç"la kaydettiği oturum (varsa, tek istek)
+        resp = self._try_erisim_oturumu(url, headers, "GET", **kwargs)
+        if resp is not None:
+            return resp
+
         for attempt in range(self.max_retries):
             # 1. curl_cffi dene
             resp = self._try_curl_cffi(url, headers, "GET", **kwargs)
@@ -565,6 +607,8 @@ class CFSession:
             # 5. Normal requests dene (son çare: challenge olsa bile döndür)
             resp = self._try_requests_fallback(url, headers, "GET", **kwargs)
             if resp is not None:
+                # Doğrulama sayfasıysa arayüz "Erişimi aç"ı göstersin.
+                oturumlar.yanit_denetle(url, resp)
                 return resp
             
             # Retry delay
@@ -578,7 +622,12 @@ class CFSession:
     def post(self, url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> requests.Response:
         """POST isteği at."""
         headers = headers or {}
-        
+
+        # 0. Kullanıcının "Erişimi aç"la kaydettiği oturum (bkz. `get`)
+        resp = self._try_erisim_oturumu(url, headers, "POST", **kwargs)
+        if resp is not None:
+            return resp
+
         for attempt in range(self.max_retries):
             resp = self._try_curl_cffi(url, headers, "POST", **kwargs)
             if resp is not None:

@@ -57,6 +57,10 @@ except ImportError:  # pragma: no cover - curl_cffi requirements.txt'te
     import requests as _http  # type: ignore[no-redef]
     _HAS_CURL = False
 
+# Kullanıcının "Erişimi aç"la geçtiği bot doğrulaması (çerez + tarayıcı
+# kimliği); kayıt yoksa sarmalayıcı istekleri olduğu gibi geçirir.
+from ..common import oturumlar
+
 try:
     # Engel izlerinin tek listesi istemcide (bkz. ANIME_PROVIDER_GUIDE.md,
     # "Engeli sessizce yutma"); oynatıcı önceliği de tek yerde.
@@ -170,11 +174,11 @@ class BuguiTRHatasi(RuntimeError):
 # ─────────────────────────────────────────────────────────────────────────────
 def _yeni_oturum():
     if _HAS_CURL:
-        return _http.Session(impersonate=IMPERSONATE)
+        return oturumlar.oturumlu(_http.Session(impersonate=IMPERSONATE))
     oturum = _http.Session()
     # Düz requests'in kendi User-Agent'ı 403 alıyor; tarayıcı UA'sı şart.
     oturum.headers["User-Agent"] = _YEDEK_UA
-    return oturum
+    return oturumlar.oturumlu(oturum, curl=False)
 
 
 def _oturum_al():

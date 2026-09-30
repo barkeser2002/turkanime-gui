@@ -22,6 +22,9 @@
 sirlar/
 gecmis.json
 ayarlar.json
+# "Erişimi aç" oturumları (çerezler) ve gömülü tarayıcının profilleri.
+oturumlar.json
+erisim_profilleri
 
 # ── Git ──────────────────────────────────────────────────────────────────────
 # Depo geçmişi imajda işe yaramıyor; yayıncı arşiv için kendi ağacını kuruyor.
