@@ -135,8 +135,11 @@ def test_uzun_is_surerken_surec_asili_kalmiyor(tmp_path):
     betik = tmp_path / "kapanis_cocugu.py"
     betik.write_text(COCUK_KAPANIS.format(repo=kok), encoding="utf-8")
 
+    # Çocuk süreç conftest yalıtımını görmüyor ve depo kökünde açılıyor:
+    # veri kökü verilmezse `app.run()` depoya `ayarlar.json` yazıyor.
+    ortam = {**os.environ, "TURKANIME_VERI_DIZINI": str(tmp_path / "veri")}
     t0 = time.time()
-    proc = subprocess.Popen([sys.executable, str(betik)],
+    proc = subprocess.Popen([sys.executable, str(betik)], env=ortam,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         proc.communicate(timeout=20)

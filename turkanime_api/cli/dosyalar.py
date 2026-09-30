@@ -20,7 +20,8 @@ Kilit süreç-içidir: aynı anda açık bir CLI ile bir GUI birbirini hâlâ ez
 Bu bilinçli — taşınabilir dosya kilidi (msvcrt/fcntl) ayrı bir iş; atomik yazım
 sayesinde en kötü senaryo "son yazan kazanır", "dosya bozuldu" değil.
 """
-from os import path,mkdir,getcwd
+from os import path
+from pathlib import Path
 import json
 import os
 import threading
@@ -44,6 +45,54 @@ _DEFTER_KILIDI = threading.Lock()
 # kazandığı okuyucunun sırasına kalır. Bu yüzden eski ad açılışta ASCII adına
 # taşınıp SİLİNİR: dosyada her zaman tek doğru anahtar kalır.
 ESKI_AYAR_ADLARI = {"1080p aday sayısı": "1080p aday sayisi"}
+
+
+# Veri kökünü elle seçtiren ortam değişkeni: taşınabilir kurulum (USB'deki
+# klasör) ve testler. Testler bunu her test için geçici bir klasöre bağlıyor;
+# bağlanmasa ayar okuyan her test geliştiricinin gerçek `ayarlar.json`'una
+# (ya da depo kökündekine) bakar ve sonucu o makinedeki ayara kalırdı.
+VERI_DIZINI_ORTAM = "TURKANIME_VERI_DIZINI"
+
+
+def veri_koku() -> Path:
+    """Kullanıcı verisinin kökü: ayarlar, geçmiş, kitaplık, önbellekler.
+
+    1. `TURKANIME_VERI_DIZINI` doluysa orası.
+    2. Depodan çalışırken çalışma dizini. `.git` KLASÖR ya da DOSYA olabilir:
+       `git worktree`'de `.git` bir dosya. Yalnızca klasör aranınca worktree'den
+       açılan uygulama (ve testler) sessizce `~/Turkanime`'ye, yani kullanıcının
+       gerçek verisine düşüyordu.
+    3. `~/Turkanime`.
+
+    Kural yalnızca burada: `animedepo.veri_koku` ve `Dosyalar` bunu çağırıyor.
+    İki kopya zamanla ayrışır; ayrışınca ayarlar bir yerde, önbellek başka
+    yerde birikir.
+    """
+    ortam = os.environ.get(VERI_DIZINI_ORTAM, "").strip()
+    if ortam:
+        return Path(ortam).expanduser()
+    cwd = Path.cwd()
+    if (cwd / ".git").exists():
+        return cwd
+    return Path.home() / "Turkanime"
+
+
+def salt_okunur_ayarlar() -> dict:
+    """`ayarlar.json`'u YAZMADAN oku; dosya yok/bozuksa boş sözlük.
+
+    `Dosyalar()` yapıcısı veri klasörünü ve eksik ayarları yaratıyor. Tek bir
+    değeri okumak için onu çağırmak, paketi import etmeyi bile yazma işine
+    çeviriyordu: `openani` import anında oturum kuruyor, oturum FlareSolverr
+    ayarını okuyor, yani ilk `import turkanime_api.sources` kullanıcının
+    `ayarlar.json`'unu (testlerde depo kökündekini) yaratıyordu.
+    Bozuk dosya burada yedeğe alınmıyor: o iş yazan tarafın (`Dosyalar`).
+    """
+    try:
+        with open(veri_koku() / "ayarlar.json", encoding="utf-8") as fp:
+            veri = json.load(fp)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return veri if isinstance(veri, dict) else {}
 
 
 def _kilit(yol):
@@ -126,19 +175,15 @@ def _json_oku(yol, varsayilan):
 
 class Dosyalar:
     """ Yazılımın konfigürasyon ve indirilenler klasörünü yönet
-    - Windows'ta varsayılan dizin: $USER/Turkanime
-    - Linux'ta varsayılan dizin: /home/$USER/Turkanime
+    - Kök: `veri_koku()` (varsayılan ~/Turkanime; depodan çalışırken depo,
+      `TURKANIME_VERI_DIZINI` doluysa orası)
 
     Öznitelikler:
         ayar_path: Turkanime config dosyasının dizini
         Dosyalar.gecmis_path: İzlenme ve indirme log'unun dizini
     """
-    # Defaults to C:/User/xxx/Turkanime veya ~/Turkanime dizini.
-
     def __init__(self):
-        self.ta_path = path.join(path.expanduser("~"), "Turkanime" )
-        if path.isdir(".git"): # Git reposundan çalıştırılıyorsa.
-            self.ta_path = getcwd()
+        self.ta_path = str(veri_koku())
         self.ayar_path = path.join(self.ta_path, "ayarlar.json")
         self.gecmis_path = path.join(self.ta_path, "gecmis.json")
         # Platforma göre indirilenler klasörü
@@ -195,8 +240,7 @@ class Dosyalar:
             "sunucu api anahtari": ""
         }
         # Gerekli dosyalar eğer daha önce yaratılmadıysa yarat.
-        if not path.isdir(".git") and not path.isdir(self.ta_path):
-            mkdir(self.ta_path)
+        os.makedirs(self.ta_path, exist_ok=True)
         # Yeni ayarlar varsa sistemdekine ekle.
         if path.isfile(self.ayar_path):
             # `.ayarlar` bozuk dosyayı yedeğe alıp {} döndürür; eksik anahtarlar

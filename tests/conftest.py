@@ -214,6 +214,41 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku, tmp_path_factory)
 
 
 @pytest.fixture(autouse=True)
+def _veri_koku_yalitimi(monkeypatch, tmp_path_factory):
+    """Veri kökü (ayarlar, geçmiş, kitaplık, önbellekler) yalnızca geçici kökte.
+
+    `veri_koku()` depodan çalışınca DEPO KÖKÜ, worktree'den ve paketten
+    çalışınca `~/Turkanime`. Yalıtılmasa ayar okuyan her test geliştiricinin
+    gerçek `ayarlar.json`'una bakar: sonuç o makinedeki ayara kalır, ayar yazan
+    test de gerçek dosyaya yazar (`preserved_*` yalnızca YAZIMI geri alıyor).
+    Ekran görüntüleri bu yüzden gerçek ayarlarla çekilmişti.
+
+    Kural öbür yalıtımlarla aynı: kök pytest'in geçici klasörü altındaysa
+    (`izole_ev`, `.git`'li `tmp_path`'e `chdir`, `TURKANIME_VERI_DIZINI`)
+    dokunulmaz; değilse test başına boş bir klasör verilir.
+    """
+    from turkanime_api.cli import dosyalar
+
+    asil = dosyalar.veri_koku
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    yedek = {}
+    kilit = threading.Lock()          # arka plan işleri de çağırıyor
+
+    def _yalniz_gecici():
+        yol = asil()
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+            return yol
+        except ValueError:
+            with kilit:
+                if "yol" not in yedek:
+                    yedek["yol"] = tmp_path_factory.mktemp("veri_koku")
+                return yedek["yol"]
+
+    monkeypatch.setattr(dosyalar, "veri_koku", _yalniz_gecici)
+
+
+@pytest.fixture(autouse=True)
 def _gorsel_onbellek_yalitimi(monkeypatch, tmp_path_factory):
     """Kapak önbelleği test başına boş ve geçici klasörde.
 

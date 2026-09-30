@@ -95,8 +95,10 @@ def flaresolverr_ayari() -> Optional[str]:
     yalan söylemesine yol açıyordu (kutu boş, istekler yine uzak sunucuya).
     """
     try:
-        from turkanime_api.cli.dosyalar import Dosyalar
-        ayarlar = Dosyalar().ayarlar or {}
+        # Salt okunur: `Dosyalar()` dosya yaratıyor ve bu fonksiyon import
+        # anında çağrılıyor (bkz. `salt_okunur_ayarlar`).
+        from turkanime_api.cli.dosyalar import salt_okunur_ayarlar
+        ayarlar = salt_okunur_ayarlar()
     except Exception:
         return None
     if "flaresolverr_url" not in ayarlar:
