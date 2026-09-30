@@ -213,26 +213,44 @@ class GereksinimPenceresi(_ServisPenceresi):
     kurmuş kullanıcıya habersizce "bir daha sorma" yazıyordu; bir araç sonradan
     silinirse açılış denetimi onu hiç söylemezdi.
 
+    FlareSolverr (isteğe bağlı) ``eksikler``de "flaresolverr" adıyla gelir;
+    zorunlu araç listesinden ayrılıp kendi satırında, seçilebilir gösterilir
+    (``veri["flaresolverr"]``, bkz. `common.flaresolverr.sihirbaz_bilgisi`).
+    Hazır paketi olmayan platformda (macOS, ARM) satır, neden olmadığını ve
+    yerine neyin kullanıldığını anlatır. "İndir ve Kur" kutunun son hâlini
+    ``{"flaresolverr": bool}`` olarak gönderir.
+
     Sayfadaki ``durum``: ``hazir`` → ``kuruluyor`` → ``tamam`` | ``hata``.
     """
 
     def __init__(self, sorular: SoruMerkezi, servis: Any, eksikler: Sequence[str],
                  kapandi: Optional[Callable[[], Any]] = None,
                  parent: Optional[QObject] = None):
+        from ...common import flaresolverr
         super().__init__(kapandi, parent)
         self.servis = servis
-        self.eksikler = list(eksikler)
+        self.eksikler = [ad for ad in eksikler if ad != flaresolverr.AD]
+        self.flaresolverr = flaresolverr.sihirbaz_bilgisi(
+            onerildi=flaresolverr.AD in eksikler)
         self.atlandi = False
         self._bagla(servis.progress, self._on_progress)
         self._bagla(servis.install_done, self._on_done)
         self.soru = sorular.sor("gereksinim", {
-            "eksikler": self.eksikler, "durum": "hazir", "yuzde": 0, "metin": "",
+            "eksikler": self.eksikler, "flaresolverr": self.flaresolverr,
+            "durum": "hazir", "yuzde": 0, "metin": "",
         }, self._bitti, eylem=self._eylem)
 
-    def _eylem(self, ad: str, _veri: Dict[str, Any]) -> bool:
+    def _eylem(self, ad: str, veri: Dict[str, Any]) -> bool:
+        from ...common import flaresolverr
         if ad != "kur":
             raise UcHatasi(f"bilinmeyen eylem: {ad}")
-        if not self.servis.kur(self.eksikler):
+        hedefler = list(self.eksikler)
+        istendi = (veri or {}).get("flaresolverr", self.flaresolverr["sec"])
+        if self.flaresolverr["kurulabilir"] and istendi is True:
+            hedefler.append(flaresolverr.AD)
+        if not hedefler:
+            raise UcHatasi("Kurulacak bir şey seçilmedi.")
+        if not self.servis.kur(hedefler):
             return False
         self._guncelle(durum="kuruluyor", yuzde=0, metin="Gereksinimler indiriliyor…")
         return True

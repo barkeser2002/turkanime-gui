@@ -6,7 +6,8 @@ farklı yöntemleri bir arada sunar:
 
 1. curl_cffi - Firefox/Chrome TLS fingerprint taklidi
 2. cloudscraper - JS Challenge çözümü
-3. FlareSolverr - Uzak CF çözücü (headless browser sunucusu, opsiyonel)
+3. FlareSolverr - Headless browser sunucusu: yerel örnek (common/flaresolverr.py,
+   ilk ihtiyaçta başlatılır) ya da ayardaki adres
 4. QtWebEngine - Yerel gömülü Chromium (ayrı süreçte; Selenium'un yerini aldı)
 5. Normal requests - Fallback
 
@@ -106,6 +107,19 @@ def flaresolverr_ayari() -> Optional[str]:
     return str(ayarlar.get("flaresolverr_url") or "").strip()
 
 
+def yerel_flaresolverr_ayari() -> bool:
+    """Ayarlar'daki "Yerel FlareSolverr'ı kullan" (anahtar yoksa AÇIK).
+
+    Varsayılanlara (`Dosyalar`) eklenmedi: anahtar hiç yazılmamışsa açık
+    sayılıyor, kullanıcı kapatırsa ayar sayfası `False` yazıyor.
+    """
+    try:
+        from turkanime_api.cli.dosyalar import salt_okunur_ayarlar
+        return bool(salt_okunur_ayarlar().get("flaresolverr_yerel", True))
+    except Exception:
+        return True
+
+
 class CFSession:
     """
     Cloudflare korumalı sitelere erişim için akıllı session yöneticisi.
@@ -113,7 +127,7 @@ class CFSession:
     Sırasıyla şu yöntemleri dener:
     1. curl_cffi (Firefox TLS fingerprint)
     2. cloudscraper (JS Challenge)
-    3. FlareSolverr (uzak headless browser — opsiyonel)
+    3. FlareSolverr (yerel örnek ya da ayardaki sunucu)
     4. QtWebEngine (yerel gömülü Chromium, ayrı süreçte)
     5. Normal requests (fallback)
     """
@@ -135,6 +149,12 @@ class CFSession:
         self.retry_delay = retry_delay
         # `None` = "ayara bak", boş dize = "kullanma". İkisini `or` ile aynı
         # kefeye koymak, ayarı sessizce ezip varsayılan sunucuya gitmek demekti.
+        # Yalnızca "ayara bak" kipinde yerel FlareSolverr devreye girebilir
+        # (bkz. `_flaresolverr_adresi`); açıkça adres verilen oturum o adresi
+        # kullanır — testler ve sunucu tarafı buna güveniyor.
+        self._flaresolverr_otomatik = flaresolverr_url is None
+        self._yerel_flaresolverr = (self._flaresolverr_otomatik
+                                    and yerel_flaresolverr_ayari())
         if flaresolverr_url is None:
             flaresolverr_url = flaresolverr_ayari()
         self.flaresolverr_url = (self.DEFAULT_FLARESOLVERR_URL
@@ -159,7 +179,7 @@ class CFSession:
             self._available_methods.append("curl_cffi")
         if HAS_CLOUDSCRAPER:
             self._available_methods.append("cloudscraper")
-        if self.flaresolverr_url:
+        if self.flaresolverr_url or self._yerel_kullanilabilir():
             self._available_methods.append("flaresolverr")
         if HAS_QTWEBENGINE:
             self._available_methods.append("qtwebengine")
@@ -416,22 +436,70 @@ class CFSession:
             print(f"[CF Bypass] cloudscraper hatası: {e}")
         return None
 
+    def _yerel_kullanilabilir(self) -> bool:
+        """Yerel FlareSolverr bu oturumda seçilebilir mi (ayar + kurulum)?"""
+        if not self._yerel_flaresolverr:
+            return False
+        try:
+            from .flaresolverr import yonetici
+            return yonetici().kullanilabilir()
+        except Exception:
+            return False
+
+    def _flaresolverr_adresi(self) -> tuple:
+        """Bu istekte kullanılacak FlareSolverr: ``(adres, yönetilen_yerel_mi)``.
+
+        Boş adres = basamağı atla. Sıra:
+        açık argüman > ayardaki ÖZEL adres (kullanıcının kendi sunucusu) >
+        yerel örnek (ilk ihtiyaçta başlatılır) > ayardaki varsayılan uzak
+        sunucu. Boş ayar uzak sunucuyu kapatır ama yerel örneği değil: yerel
+        örnek trafiği bu bilgisayardan çıkarmıyor; kutuyu gizlilik için
+        boşaltan kullanıcının istediği de buydu. Yerel örnek kurulu değilse,
+        açılamıyorsa ya da elle durdurulduysa eski davranış (ayardaki adres).
+        """
+        url = self.flaresolverr_url
+        if not self._flaresolverr_otomatik:
+            return url, False
+        if url and url.rstrip("/") != self.DEFAULT_FLARESOLVERR_URL.rstrip("/"):
+            return url, False
+        if self._yerel_kullanilabilir():
+            from .flaresolverr import yonetici
+            y = yonetici()
+            adres = y.hazir_adres()
+            if adres:
+                return adres, True
+            if y.basliyor():
+                # Hâlâ açılıyor (ya da arayüz thread'indeyiz): bu istekte
+                # basamak atlanır, uzak sunucuya da GİDİLMEZ — yerel örnek
+                # birazdan hazır, isteği üçüncü makineye taşımanın anlamı yok.
+                return "", True
+        return url, False
+
     def _try_flaresolverr(self, url: str, method: str = "GET", post_data: Optional[str] = None) -> Optional[requests.Response]:
         """FlareSolverr ile CF bypass dene.
-        
-        FlareSolverr uzak bir headless browser sunucusudur.
-        API: POST http://host:8191/v1
+
+        Yerel örnek (`common.flaresolverr`, 127.0.0.1) ya da ayardaki sunucu;
+        hangisi olduğunu `_flaresolverr_adresi` seçiyor. API: POST <adres>/v1
         """
-        # Adres boşsa kullanıcı bu basamağı kapatmış demektir (bkz. __init__).
-        if not self.flaresolverr_url:
+        adres, yerel = self._flaresolverr_adresi()
+        # Adres boşsa bu basamak kapalı (bkz. __init__) ya da yerel örnek
+        # henüz hazır değil.
+        if not adres:
             return None
         # Devre kesici: sunucuya bir kez bağlanılamadıysa oturum boyunca tekrar
         # deneme. Aksi hâlde erişilemez bir FlareSolverr her istekte timeout
-        # süresi kadar gecikme ve log gürültüsü üretiyor.
-        if getattr(self, "_flaresolverr_down", False):
+        # süresi kadar gecikme ve log gürültüsü üretiyor. Yerel örnek kesiciye
+        # girmiyor: sağlığını yönetici izliyor, zor bir challenge'ın zaman
+        # aşımı onu oturum boyu kapatmamalı.
+        if not yerel and getattr(self, "_flaresolverr_down", False):
             return None
+        ek: Dict[str, Any] = {}
+        if (urlparse(adres).hostname or "").lower() in ("127.0.0.1", "localhost", "::1"):
+            # Yerel adres sistem vekilinden geçmemeli (no_proxy yoksa
+            # `requests` 127.0.0.1'i de HTTPS_PROXY'ye yolluyor).
+            ek["proxies"] = {"http": None, "https": None}
         try:
-            api_url = f"{self.flaresolverr_url.rstrip('/')}/v1"
+            api_url = f"{adres.rstrip('/')}/v1"
             payload: Dict[str, Any] = {
                 "cmd": f"request.{method.lower()}",
                 "url": url,
@@ -440,7 +508,13 @@ class CFSession:
             if method.upper() == "POST" and post_data:
                 payload["postData"] = post_data
 
-            resp = requests.post(api_url, json=payload, timeout=65)
+            if yerel:
+                # Her istek ayrı bir Chrome açıyor; paralel aramada sınır şart.
+                from .flaresolverr import yonetici
+                with yonetici().istek_siniri():
+                    resp = requests.post(api_url, json=payload, timeout=65, **ek)
+            else:
+                resp = requests.post(api_url, json=payload, timeout=65, **ek)
             # Eğer sunucu HTTP 500 dönse bile JSON çıktısı verebiliyor (örn: Cloudflare engeli)
             try:
                 data = resp.json()
@@ -483,13 +557,19 @@ class CFSession:
             return fake_resp
 
         except requests.exceptions.ConnectionError:
-            self._flaresolverr_down = True
-            print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı "
-                  "— bu oturumda tekrar denenmeyecek")
+            if yerel:
+                print("[CF Bypass] Yerel FlareSolverr'a bağlanılamadı")
+            else:
+                self._flaresolverr_down = True
+                print("[CF Bypass] FlareSolverr sunucusuna bağlanılamadı "
+                      "— bu oturumda tekrar denenmeyecek")
         except requests.exceptions.Timeout:
-            self._flaresolverr_down = True
-            print("[CF Bypass] FlareSolverr zaman aşımı "
-                  "— bu oturumda tekrar denenmeyecek")
+            if yerel:
+                print("[CF Bypass] Yerel FlareSolverr zaman aşımı")
+            else:
+                self._flaresolverr_down = True
+                print("[CF Bypass] FlareSolverr zaman aşımı "
+                      "— bu oturumda tekrar denenmeyecek")
         except Exception as e:
             print(f"[CF Bypass] FlareSolverr hatası: {e}")
         return None
@@ -709,6 +789,7 @@ __all__ = [
     "ENGEL_DURUMLARI",
     "CHALLENGE_MARKERS",
     "flaresolverr_ayari",
+    "yerel_flaresolverr_ayari",
     "get_cf_session",
     "reset_cf_session",
     "cf_get",

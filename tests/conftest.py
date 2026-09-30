@@ -365,12 +365,17 @@ def _cevresel_taban(pytestconfig):
     if pytestconfig.getoption("--network"):
         yield
         return
+    from turkanime_api.common import flaresolverr as fs_mod
     from turkanime_api.common import requirements as req_mod
     from turkanime_api.common import updater as upd_mod
 
     mp = pytest.MonkeyPatch()
     mp.setattr(upd_mod, "surum_bilgisi_getir", lambda *a, **k: {})
     mp.setattr(req_mod, "eksik_araclar", lambda *a, **k: [])
+    mp.setattr(req_mod, "onerilen_eksikler", lambda *a, **k: [])
+    # Geliştiricinin `bin/flaresolverr`'ı ya da veri kökündeki kurulumu
+    # "ayara bak" kipindeki her CFSession'a gerçek FlareSolverr açtırmasın.
+    mp.setattr(fs_mod, "kurulumu_bul", lambda *a, **k: None)
     try:
         yield
     finally:
@@ -388,11 +393,14 @@ def _stub_cevresel_servisler(request, monkeypatch):
     if "network" in request.keywords:
         return
     import turkanime_api.gui.qt.discord as discord_mod
+    from turkanime_api.common import flaresolverr as fs_mod
     from turkanime_api.common import requirements as req_mod
     from turkanime_api.common import updater as upd_mod
 
     monkeypatch.setattr(upd_mod, "surum_bilgisi_getir", lambda *a, **k: {})
     monkeypatch.setattr(req_mod, "eksik_araclar", lambda *a, **k: [])
+    monkeypatch.setattr(req_mod, "onerilen_eksikler", lambda *a, **k: [])
+    monkeypatch.setattr(fs_mod, "kurulumu_bul", lambda *a, **k: None)
     monkeypatch.setattr(discord_mod, "KULLANILABILIR", False)
 
 

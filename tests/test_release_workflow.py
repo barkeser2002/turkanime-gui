@@ -437,3 +437,84 @@ def test_pypi_sirri_yoksa_sessizce_gecilmiyor():
         "yayınlanmış gibi görünür"
     )
     assert "::error::" in betik, "eksik sır uyarı değil hata olarak raporlanmalı"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FlareSolverr GUI paketlerinin içinde
+# ─────────────────────────────────────────────────────────────────────────────
+FS_ADIMI = "Bundle FlareSolverr (Windows/Linux)"
+
+
+def _build_adlari() -> list:
+    return [a.get("name") for a in _workflow()["jobs"]["build"]["steps"]]
+
+
+def test_flaresolverr_derlemeden_sonra_ziplemeden_once_gomuluyor():
+    """Paketleme adımı klasörü zip'lemeden ÖNCE yerinde olmalı."""
+    adlar = _build_adlari()
+    assert FS_ADIMI in adlar, "FlareSolverr paketlere gömülmüyor"
+    assert (adlar.index("Build GUI (PySide6 + QtWebEngine)") < adlar.index(FS_ADIMI)
+            < adlar.index("Package GUI (zip)"))
+
+
+def test_flaresolverr_yalnizca_hazir_paketi_olan_platformlarda():
+    """macOS için resmî FlareSolverr paketi yok; oradaki derleme düşmemeli."""
+    kosul = _adim("build", FS_ADIMI).get("if", "")
+    assert "macos-latest" in kosul and "!=" in kosul, kosul
+
+
+def test_flaresolverr_adimi_uygulamanin_dogrulayan_kodunu_kullaniyor():
+    """Sürüm/adres/özet tek yerde (`common/flaresolverr.py`); iş akışında
+    ikinci bir kopya zamanla ayrışır ve doğrulanmamış indirme yolu açar."""
+    betik = _adim("build", FS_ADIMI)["run"]
+    assert "python -m turkanime_api.common.flaresolverr kur" in betik
+    assert not re.search(r"\b[0-9a-f]{64}\b", betik), "özetin ikinci kopyası"
+    for yasak in ("curl", "Invoke-WebRequest", "wget", "|| true"):
+        assert yasak not in betik, f"doğrulamasız/susturulmuş yol: {yasak}"
+
+
+def test_cli_derlemeleri_flaresolverr_tasimiyor():
+    for adim in _workflow()["jobs"]["build"]["steps"]:
+        if "CLI" in str(adim.get("name")):
+            assert "flaresolverr" not in str(adim.get("run", "")).lower(), adim["name"]
+
+
+@pytest.mark.parametrize("os_adi,platform", [("windows-latest", "windows_x64"),
+                                             ("ubuntu-latest", "linux_x64")])
+@pytest.mark.parametrize("onedir", [False, True])
+def test_flaresolverr_paketin_zipledigi_klasore_konuyor(tmp_path, os_adi, platform, onedir):
+    """Adımın kabuğu GERÇEKTEN koşuyor (sahte `python` ile): doğru platform
+    ve paketleme adımının zip'lediği klasör. onefile'da `dist/paket/`,
+    onedir'de `dist/turkanime-gui/` — çalışma anı onu exe'nin yanında arıyor."""
+    import shutil as _shutil
+    from turkanime_api.common import flaresolverr as fs
+
+    if _shutil.which("bash") is None:
+        pytest.skip("bash yok")
+    assert platform in fs.VARLIKLAR
+    kok = tmp_path / "is"
+    (kok / "dist").mkdir(parents=True)
+    if onedir:
+        (kok / "dist" / "turkanime-gui").mkdir()
+    sahte_bin = tmp_path / "bin"
+    sahte_bin.mkdir()
+    kayit = tmp_path / "argumanlar.txt"
+    python = sahte_bin / "python"
+    python.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$@\" > '{kayit}'\n"
+        'while [ $# -gt 0 ]; do [ "$1" = "--hedef" ] && mkdir -p "$2"; shift; done\n',
+        encoding="utf-8")
+    python.chmod(0o755)
+    betik = _adim("build", FS_ADIMI)["run"].replace("${{ matrix.os }}", os_adi)
+    sonuc = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", betik],
+                           cwd=kok, capture_output=True, text=True,
+                           env={**os.environ, "PATH": f"{sahte_bin}{os.pathsep}{os.environ['PATH']}"})
+    assert sonuc.returncode == 0, sonuc.stderr
+    hedef = "dist/turkanime-gui/flaresolverr" if onedir else "dist/paket/flaresolverr"
+    assert kayit.read_text(encoding="utf-8").split() == [
+        "-m", "turkanime_api.common.flaresolverr", "kur", "--platform", platform,
+        "--hedef", hedef]
+    paketleme = _adim("build", "Package GUI (zip)")["run"]
+    assert "'dist/paket'" in paketleme and "'dist/turkanime-gui'" in paketleme, \
+        "paketleme adımı FlareSolverr'ın konduğu klasörü zip'lemiyor"

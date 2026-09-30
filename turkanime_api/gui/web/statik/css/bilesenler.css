@@ -927,6 +927,17 @@
   color: var(--vurgu-2);
 }
 
+/* Gereksinim sihirbazındaki isteğe bağlı FlareSolverr satırı */
+.fs-satiri {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.fs-satiri .soluk {
+  margin: 0;
+}
+
 .soru-cubuk {
   height: 6px;
   border-radius: 999px;

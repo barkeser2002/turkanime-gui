@@ -1700,7 +1700,10 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   user-select: text;
 }
 
-.arsiv-paneli {
+/* Yerel FlareSolverr paneli arşivin görünümünü paylaşıyor ama sınıfı
+   ayrı: arşiv testleri/seçicileri `.arsiv-paneli` altındaki düğmeleri sayıyor. */
+.arsiv-paneli,
+.fs-paneli {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1757,7 +1760,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   margin-top: 1px;
 }
 
-.arsiv-cubuk {
+.arsiv-cubuk,
+.fs-cubuk {
   position: relative;
   height: 6px;
   border-radius: 999px;
@@ -1765,7 +1769,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   overflow: hidden;
 }
 
-.arsiv-cubuk i {
+.arsiv-cubuk i,
+.fs-cubuk i {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -1773,7 +1778,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   transition: width 200ms ease;
 }
 
-.arsiv-cubuk.belirsiz i {
+.arsiv-cubuk.belirsiz i,
+.fs-cubuk.belirsiz i {
   width: 30% !important;
   animation: belirsiz 1.2s ease-in-out infinite;
 }
@@ -1783,7 +1789,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   to { transform: translateX(360%); }
 }
 
-.arsiv-ilerleme-satir {
+.arsiv-ilerleme-satir,
+.fs-ilerleme-satir {
   display: flex;
   align-items: center;
   justify-content: space-between;

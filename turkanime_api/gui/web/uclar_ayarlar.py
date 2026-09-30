@@ -21,8 +21,14 @@ Ayarlar `cli.dosyalar.Dosyalar` üzerinden okunup yazılıyor (CLI ile ortak
   değil: megabaytlık dizin.json). İndirme/silme/klasör denetimi arka planda;
   aynı anda tek arşiv işi. Silme yalnızca `<veri kökü>/cevrimdisi_arsiv`.
 
+* **Yerel FlareSolverr** (`common.flaresolverr`): durum yönetici
+  dinleyicisinden olayla gelir (CF zinciri onu kendiliğinden başlatabiliyor);
+  kurulum/başlatma/durdurma arka planda. "Durdur" bu oturumda kendiliğinden
+  başlatmayı da kapatır.
+
 Olaylar: ``ayar_durum`` (sayfanın üst satırı), ``ayar_cerez``,
-``ayar_anilist``, ``ayar_veri_bagisi``, ``arsiv_ilerleme``, ``arsiv_sonuc``.
+``ayar_anilist``, ``ayar_veri_bagisi``, ``arsiv_ilerleme``, ``arsiv_sonuc``,
+``flaresolverr_durum``, ``flaresolverr_ilerleme``.
 """
 from __future__ import annotations
 
@@ -69,6 +75,7 @@ ALANLAR = {
     "izlendi_ikonu": "izlendi ikonu",
     "manuel_fansub": "manuel fansub",
     "flaresolverr": "flaresolverr_url",
+    "flaresolverr_yerel": "flaresolverr_yerel",
     "openani_token": "openani_token",
     "openani_refresh": "openani_refresh_token",
     "kimlik_paylas": "kimlik paylas",
@@ -78,7 +85,8 @@ ALANLAR = {
 _METIN = ("indirilenler", "flaresolverr", "openani_token", "openani_refresh",
           "sunucu_adresi", "sunucu_anahtari")
 _MANTIKSAL = ("max_res", "dakika_hatirla", "izlerken_kaydet", "ilerlemeyi_sor",
-              "aria2c", "izlendi_ikonu", "manuel_fansub", "kimlik_paylas")
+              "aria2c", "izlendi_ikonu", "manuel_fansub", "kimlik_paylas",
+              "flaresolverr_yerel")
 _SAYI = {"paralel": (1, 10), "aday": (1, 30)}
 
 
@@ -215,6 +223,10 @@ class AyarlarUclari(QObject):
         self._arsiv_iptal: Optional[threading.Event] = None
         self._arsiv_kaynak_adi = ""
         self._arsiv_indirilen_var = False
+        self._fs_iptal: Optional[threading.Event] = None
+        # Yerel FlareSolverr CF zincirinde kendiliğinden başlıyor/kapanıyor;
+        # sayfa bunu olaydan öğreniyor (yönetici bu metodu zayıf tutuyor).
+        self._fs().yonetici().dinle(self._flaresolverr_degisti)
 
         anilist.auth_changed.connect(
             lambda user: kopru.yay("ayar_anilist", self._anilist_durumu(user)))
@@ -276,7 +288,10 @@ class AyarlarUclari(QObject):
         deger = {alan: ayarlar.get(anahtar) for alan, anahtar in ALANLAR.items()}
         for alan in _METIN:
             deger[alan] = str(deger[alan] or "")
-        varsayilan = {"max_res": True, "dakika_hatirla": True, "izlendi_ikonu": True}
+        # "flaresolverr_yerel" varsayılanlara yazılmıyor; yoksa AÇIK sayılır
+        # (bkz. `cf_bypass.yerel_flaresolverr_ayari`).
+        varsayilan = {"max_res": True, "dakika_hatirla": True, "izlendi_ikonu": True,
+                      "flaresolverr_yerel": True}
         for alan in _MANTIKSAL:
             ham = ayarlar.get(ALANLAR[alan], varsayilan.get(alan, False))
             deger[alan] = bool(ham)
@@ -298,6 +313,7 @@ class AyarlarUclari(QObject):
                             sizan_uyari=SIZAN_SECRET_UYARISI if anilist.sizan_secret_temizlendi else ""),
             "servisler": {"guncelleme": self.updates is not None,
                           "gereksinim": self.requirements is not None},
+            "flaresolverr": self._fs().yonetici().durum_ozeti(),
         }
 
     @staticmethod
@@ -331,6 +347,10 @@ class AyarlarUclari(QObject):
             reset_cf_session()
         except Exception:
             pass
+        if yazilacak.get(ALANLAR["flaresolverr_yerel"]) is False:
+            # Kullanılmayacak örnek bellekte durmasın (Chrome + ~100 MB).
+            from ..qt.workers import run_bg
+            run_bg(self._fs().yonetici().durdur)
         if anilist is not None:
             from ..qt import prefs
             if not prefs.anilist_yaz(anilist.get("client_id", ""),
@@ -581,6 +601,98 @@ class AyarlarUclari(QObject):
         self.requirements.denetle(kullanici_istegi=True)
         return True
 
+    # ── Yerel FlareSolverr ──────────────────────────────────────────────────
+    # Kurulum, başlatma ve durdurma arka planda (indirme ~260-380 MB, açılış
+    # Chrome'u deniyor); sonuç ``flaresolverr_durum`` olayıyla gelir,
+    # indirme ilerlemesi ``flaresolverr_ilerleme`` ile.
+    @staticmethod
+    def _fs():
+        from ...common import flaresolverr
+        return flaresolverr
+
+    def _flaresolverr_degisti(self, ozet: Dict[str, Any]) -> None:
+        """Yönetici her thread'den çağırıyor; köprü yayımı thread güvenli."""
+        self._kopru.yay("flaresolverr_durum", ozet)
+
+    @uc()
+    def flaresolverr_durumu(self) -> Dict[str, Any]:
+        """Ağa çıkmaz (dosya ve süreç denetimi): arayüz thread'inde güvenli."""
+        return self._fs().yonetici().durum_ozeti()
+
+    @uc()
+    def flaresolverr_kur(self) -> bool:
+        ozet = self._fs().yonetici().durum_ozeti()
+        if not ozet["kurulabilir"]:
+            raise UcHatasi(ozet["metin"] or "FlareSolverr bu kurulumda indirilemez.")
+        if ozet["durum"] == "kuruluyor" or self._fs_iptal is not None:
+            raise UcHatasi("FlareSolverr kurulumu zaten sürüyor.")
+        iptal = threading.Event()
+        self._fs_iptal = iptal
+        self._kopru.yay("flaresolverr_ilerleme", {"oran": None, "metin": "Bağlanılıyor…"})
+        from ..qt.workers import run_bg
+        # Genel havuz (arşiv indirmesiyle aynı gerekçe): uzun iş havuzu bölüm
+        # indirmeleriyle dolu olabilir.
+        run_bg(self._flaresolverr_kur_is, iptal)
+        return True
+
+    def _flaresolverr_kur_is(self, iptal: threading.Event) -> None:
+        fs = self._fs()
+        son = [0.0]
+
+        def ilerleme(inen: int, toplam: int) -> None:
+            simdi = time.monotonic()
+            if inen < toplam and simdi - son[0] < ILERLEME_ARALIGI:
+                return
+            son[0] = simdi
+            self._kopru.yay("flaresolverr_ilerleme", {
+                "oran": min(1.0, inen / toplam) if toplam else None,
+                "metin": f"{mb(inen)} / {mb(toplam)} MB indirildi"
+                         + (" — doğrulanıp açılıyor…" if toplam and inen >= toplam else "")})
+
+        try:
+            kurulum = fs.yonetici().kur(ilerleme=ilerleme, iptal=iptal)
+        except fs.IptalEdildi:
+            self._durum("FlareSolverr indirmesi iptal edildi.")
+        except Exception as exc:
+            self._durum(f"FlareSolverr kurulamadı: {exc}", "hata")
+        else:
+            self._durum(f"FlareSolverr {kurulum.surum or fs.SURUM} kuruldu "
+                        "(SHA-256 doğrulandı).", "tamam")
+        finally:
+            self._fs_iptal = None
+            self._kopru.yay("flaresolverr_ilerleme", {"bitti": True})
+
+    @uc()
+    def flaresolverr_iptal(self) -> bool:
+        if self._fs_iptal is None:
+            return False
+        self._fs_iptal.set()
+        self._kopru.yay("flaresolverr_ilerleme", {"oran": None, "metin": "İptal ediliyor…"})
+        return True
+
+    @uc()
+    def flaresolverr_baslat(self) -> bool:
+        """Elle başlat: "Durdur" tercihini ve hata bekleme süresini sıfırlar."""
+        from ..qt.workers import run_bg
+        run_bg(self._flaresolverr_baslat_is)
+        return True
+
+    def _flaresolverr_baslat_is(self) -> None:
+        yonetici = self._fs().yonetici()
+        adres = yonetici.baslat(bekle=True, elle=True)
+        if adres:
+            self._durum(f"Yerel FlareSolverr çalışıyor: {adres}", "tamam")
+        else:
+            ozet = yonetici.durum_ozeti()
+            self._durum("FlareSolverr başlatılamadı: " + (ozet["hata"] or ozet["metin"]), "hata")
+
+    @uc()
+    def flaresolverr_durdur(self) -> bool:
+        """Elle durdur: bu oturumda CF zinciri onu kendiliğinden açmaz."""
+        from ..qt.workers import run_bg
+        run_bg(lambda: self._fs().yonetici().durdur(elle=True))
+        return True
+
     # ── AniList ─────────────────────────────────────────────────────────────
     @uc()
     def anilist_giris(self, client_id: str = "", client_secret: str = "",
@@ -705,9 +817,15 @@ class AyarlarUclari(QObject):
         return True
 
     def arsiv_indirmeyi_durdur(self) -> None:
-        """Pencere kapanırken: süren arşiv indirmesini iptal et."""
+        """Pencere kapanırken: süren arşiv (ve FlareSolverr) indirmesini iptal et.
+
+        FlareSolverr de burada: kapanış bu tek kancayı çağırıyor; yarım
+        indirme geçici klasörüyle silinir, önceki kurulum yerinde kalır.
+        """
         if self._arsiv_iptal is not None:
             self._arsiv_iptal.set()
+        if self._fs_iptal is not None:
+            self._fs_iptal.set()
 
     @uc()
     def arsiv_klasor_sec(self) -> bool:

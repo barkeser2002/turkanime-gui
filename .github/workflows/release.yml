@@ -12,7 +12,8 @@ name: Release (tag → build, publish, PyPI)
 #   5) PyPI'a poetry ile yayınla
 #
 # Artefakt adları (tek isimlendirme — version.json ve README bağlantıları buna bağlı):
-#   turkanime-gui-{windows,linux,macos}.zip    ← PySide6 + QtWebEngine arayüzü (onefile)
+#   turkanime-gui-{windows,linux,macos}.zip    ← PySide6 + QtWebEngine arayüzü (onefile;
+#                                                Windows/Linux zip'inde yanında flaresolverr/)
 #   turkanime-cli-windows.exe / -linux / -macos
 on:
   push:
@@ -239,6 +240,36 @@ jobs:
       - name: Build GUI (PySide6 + QtWebEngine)
         shell: bash
         run: python -m PyInstaller turkanime-gui.spec --noconfirm
+
+      # FlareSolverr GUI paketinin İÇİNDE gelir (Windows/Linux x64; macOS için
+      # resmî paket yok). İndirme, boyut + SHA-256 doğrulaması ve budama
+      # uygulamanın kendi kurulum koduyla (`common/flaresolverr.py`): sabit
+      # sürüm, adres ve özet tek yerde, burada kopyası yok. Doğrulama tutmazsa
+      # adım düşer — FlareSolverr'sız paket sessizce yayımlanmaz.
+      #
+      # Yer: exe'nin YANI (`<zip>/flaresolverr/`), onefile arşivinin içi DEĞİL.
+      # İçinde olsaydı her açılışta ~500-800 MB daha geçici dizine açılırdı;
+      # çalışma anı onu `dirname(sys.executable)/flaresolverr` altında arıyor
+      # (`flaresolverr.gomulu_dizinler`). Paketleme adımı onefile'da
+      # `dist/paket/`, onedir'de `dist/turkanime-gui/` klasörünü zip'liyor.
+      #
+      # Boyut (ölçüldü, v3.5.2, zip'lenmiş): Windows +229 MB (Chromium'un test
+      # ikilisi budanınca; açık 524 MB), Linux +265 MB (açık 785 MB).
+      - name: Bundle FlareSolverr (Windows/Linux)
+        if: matrix.os != 'macos-latest'
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            windows-latest) FS_PLATFORM=windows_x64 ;;
+            ubuntu-latest)  FS_PLATFORM=linux_x64 ;;
+          esac
+          if [[ -d dist/turkanime-gui ]]; then
+            FS_HEDEF=dist/turkanime-gui/flaresolverr
+          else
+            FS_HEDEF=dist/paket/flaresolverr
+          fi
+          python -m turkanime_api.common.flaresolverr kur --platform "$FS_PLATFORM" --hedef "$FS_HEDEF"
+          du -sh "$FS_HEDEF"
 
       - name: Package GUI (zip)
         shell: bash
