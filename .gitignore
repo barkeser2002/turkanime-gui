@@ -12,6 +12,10 @@ gecmis.json
 kutuphane.json
 # Veri bağışının gönderilmemiş kuyruğu (izlenen bölümler; gui/web/veri_bagisi.py)
 katki_kuyrugu.json
+# "Erişimi aç" oturumları: çerezler (cf_clearance) ve gömülü tarayıcının
+# kalıcı profilleri — oturum anahtarı sayılır (common/oturumlar.py).
+oturumlar.json
+/erisim_profilleri/
 geckodriver.log
 log
 debug.log

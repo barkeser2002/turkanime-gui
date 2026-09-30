@@ -20,6 +20,7 @@ Katmanlar:
                güncelleme, gereksinim, kapanış; kimlik bağışı onayı).
 
 Bütün sayfalar ve küçük pencereler tek bir `WebGorunum`'da. Qt'de kalan tek
-ayrı pencere çerez tarayıcısı (`gui.qt.cookie_browser`): dış sitenin girişi
-için gerçek bir tarayıcı penceresi.
+ayrı pencere "Erişimi aç" tarayıcısı (`gui.qt.erisim_penceresi`; TRAnimeİzle'nin
+çerez penceresi `gui.qt.cookie_browser` onun bir yapılandırması): dış sitenin
+bot doğrulaması için gerçek bir tarayıcı penceresi.
 """

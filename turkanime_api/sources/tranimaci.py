@@ -41,11 +41,14 @@ _SESSION_TTL = 30 * 60  # 30 dakika
 
 
 def _new_session():
+    # Kullanıcının "Erişimi aç"la geçtiği doğrulama (çerez + tarayıcı kimliği)
+    # her isteğe eklensin; kayıt yoksa sarmalayıcı hiçbir şey değiştirmez.
+    from ..common import oturumlar
     if _HAS_CURL:
-        return _curl_requests.Session(impersonate="chrome131")
+        return oturumlar.oturumlu(_curl_requests.Session(impersonate="chrome131"))
     sess = _curl_requests.Session()
     sess.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0"})
-    return sess
+    return oturumlar.oturumlu(sess, curl=False)
 
 
 def _extract_challenge(html: str) -> Optional[Dict[str, Any]]:

@@ -174,7 +174,9 @@ def _curl_get(url: str, timeout: int, headers: Dict[str, str],
     """Yalnızca curl_cffi (TLS parmak izi taklidi); ağ hatasında None."""
     try:
         from curl_cffi import requests as curl_requests
-        session = curl_requests.Session(impersonate="chrome110")
+        from ..common import oturumlar
+        # Erişim oturumu ("Erişimi aç") varsa çerez + tarayıcı kimliğiyle.
+        session = oturumlar.oturumlu(curl_requests.Session(impersonate="chrome110"))
         return session.get(url, headers=headers, timeout=timeout,
                            allow_redirects=yonlendir)
     except Exception:
@@ -234,7 +236,8 @@ def _http_post(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = 
     # Kademeler `_http_get` ile aynı; gerekçesi için oradaki nota bak.
     try:
         from curl_cffi import requests as curl_requests
-        session = curl_requests.Session(impersonate="chrome110")
+        from ..common import oturumlar
+        session = oturumlar.oturumlu(curl_requests.Session(impersonate="chrome110"))
         yanit = session.post(url, headers=default_headers, timeout=timeout, data=data)
         if not _engellenmis(yanit):
             return yanit

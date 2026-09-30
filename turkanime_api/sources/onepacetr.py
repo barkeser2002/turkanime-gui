@@ -57,6 +57,10 @@ except ImportError:  # pragma: no cover - curl_cffi requirements.txt'te
     import requests as _http  # type: ignore[no-redef]
     _HAS_CURL = False
 
+# Kullanıcının "Erişimi aç"la geçtiği bot doğrulaması (çerez + tarayıcı
+# kimliği); kayıt yoksa sarmalayıcı istekleri olduğu gibi geçirir.
+from ..common import oturumlar
+
 from ..common.oynatici_onceligi import oncelik_anahtari
 
 log = logging.getLogger(__name__)
@@ -137,10 +141,10 @@ _yerel = threading.local()
 
 def _yeni_oturum() -> Any:
     if _HAS_CURL:
-        return _http.Session(impersonate="chrome131")
+        return oturumlar.oturumlu(_http.Session(impersonate="chrome131"))
     oturum = _http.Session()
     oturum.headers.update({"User-Agent": _UA})
-    return oturum
+    return oturumlar.oturumlu(oturum, curl=False)
 
 
 def _oturum() -> Any:

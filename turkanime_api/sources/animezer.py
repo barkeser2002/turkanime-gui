@@ -80,6 +80,10 @@ except ImportError:  # pragma: no cover - curl_cffi requirements.txt'te
     import requests as _http  # type: ignore[no-redef]
     _HAS_CURL = False
 
+# Kullanıcının "Erişimi aç"la geçtiği bot doğrulaması (çerez + tarayıcı
+# kimliği); kayıt yoksa sarmalayıcı istekleri olduğu gibi geçirir.
+from ..common import oturumlar
+
 from ..common.hatalar import KaynakEngellendi, KaynakHatasi, KaynakYanitVermedi
 
 try:
@@ -222,10 +226,10 @@ class AnimezerYanitVermedi(AnimezerHatasi, KaynakYanitVermedi):
 def _yeni_oturum():
     """Yeni HTTP oturumu. Testler ağa çıkmamak için bunu sahteler."""
     if _HAS_CURL:
-        return _http.Session(impersonate=IMPERSONATE)
+        return oturumlar.oturumlu(_http.Session(impersonate=IMPERSONATE))
     oturum = _http.Session()          # curl_cffi yoksa düz requests de 200 alıyor
     oturum.headers["User-Agent"] = _YEDEK_UA
-    return oturum
+    return oturumlar.oturumlu(oturum, curl=False)
 
 
 def _oturum_al():

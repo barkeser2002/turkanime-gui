@@ -5,9 +5,10 @@ Arayüzün tamamı web'de (`gui/web`): pencerenin merkezinde tek bir
 (fansub, ilerleme, güncelleme, gereksinim, bağış onayları, kapanış sorusu)
 HTML/CSS/JS. Bu modülde kalanlar pencere düzeyindeki işler: oynatma (mpv),
 indirme kuyruğu, AniList/Discord/güncelleme/veri bağışı servisleri, kapanış ve
-sayfaların köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak. Qt'de kalan
-tek ayrı pencere çerez tarayıcısı (`cookie_browser`): dış sitenin girişi için
-gerçek bir tarayıcı penceresi olmak zorunda.
+sayfaların köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak. Qt'de
+kalan tek ayrı pencere "Erişimi aç" tarayıcısı (`erisim_penceresi`; TRAnimeİzle
+çerez penceresi `cookie_browser` onun yapılandırması): dış sitenin bot doğrulaması
+için gerçek bir tarayıcı penceresi olmak zorunda.
 
 Akış:  prepare_qt_env() -> QApplication -> MainWindow(QMainWindow) -> exec()
 """
@@ -45,6 +46,7 @@ from ..web.sorular import Soru, SoruMerkezi
 from ..web.uclar_arama import AramaUclari
 from ..web.uclar_ayarlar import AyarlarUclari
 from ..web.uclar_detay import DetayUclari
+from ..web.uclar_erisim import ErisimUclari
 from ..web.uclar_genel import GenelUclar
 from ..web.uclar_kesif import KesifUclari
 from ..web.uclar_indirme import IndirmeUclari
@@ -246,6 +248,11 @@ class MainWindow(QMainWindow):
             self.kopru, anilist=self.anilist, discord=self.discord,
             updates=self.updates, requirements=self.requirements, pencere=self,
             sorular=self.sorular, veri_bagisi=self.veri_bagisi))
+        # "Erişimi aç": bot doğrulamasını kullanıcının çözdüğü pencere. TRAnimeİzle
+        # çerezi Ayarlar'ın yolundan kaydediliyor ("Tarayıcıdan Al" ile aynı sonuç).
+        self.erisim = self.kopru.bagla(ErisimUclari(
+            self.kopru, pencere=self,
+            tranime_cerez=self.ayarlar_uclari._cerez_geldi))  # pylint: disable=protected-access
         self.arama = self.kopru.bagla(AramaUclari(self.kopru))
         self.detay = self.kopru.bagla(DetayUclari(
             self.kopru, oynat=self._on_play, indir=self._on_download,
@@ -510,6 +517,10 @@ class MainWindow(QMainWindow):
             kisa, ayrinti = insanlastir(exc)
             print(f"[Oynatma] {title}: {ayrinti}")
             self._hata_durumu(f"{title} — oynatılamadı: {kisa}")
+            # Bot doğrulamasıysa sayfa "Erişimi aç" teklif etsin; erişim
+            # açılınca aynı bölüm yeniden oynatılır.
+            self.erisim.engel_bildir(exc, str((entry or {}).get("kaynak") or ""),
+                                     baslik=title, yeniden=lambda: self._on_play(entry))
         finally:
             self._playing = False
 
@@ -658,6 +669,7 @@ class MainWindow(QMainWindow):
             self._status("İndirme: " + mesaj)
         else:
             self._hata_durumu("İndirme başarısız: " + mesaj)
+            self._indirme_engeli(task_id, mesaj)
         self._dl_titles.pop(task_id, None)
         # Toplu indirmenin özeti: iptal hata sayılmaz, kullanıcı kendisi kesti.
         if ok:
@@ -678,6 +690,15 @@ class MainWindow(QMainWindow):
         servisin kendi thread'inde (bkz. `gui.web.veri_bagisi`).
         """
         self.veri_bagisi.indirildi(entry, video)
+
+    def _indirme_engeli(self, task_id: str, mesaj: str) -> None:
+        """Bot doğrulamasına takılan indirme: sayfa "Erişimi aç" teklif etsin;
+        erişim açılınca iş aynı satırda yeniden kuyruğa girer."""
+        entry = self.downloads.kayit(task_id) or {}
+        self.erisim.engel_bildir(self.downloads.ayrinti(task_id) or mesaj,
+                                 str(entry.get("kaynak") or ""),
+                                 baslik=str(entry.get("title") or ""),
+                                 yeniden=lambda: self.downloads.retry(task_id))
 
     def _toplu_indirme_bitti(self) -> None:
         """Kuyruk boşaldı: pencere arka plandaysa masaüstü bildirimi.

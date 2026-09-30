@@ -1,0 +1,120 @@
+/* "Erişimi aç": bot doğrulamasına takılan kaynağın düğmesi, oynatma engeli
+ * bildirimi ve Ayarlar'daki erişim oturumları listesi (js/erisim.js).
+ *
+ * Düğme sarı: hata kırmızısının yanında "burada yapılacak bir şey var"
+ * diyen tek sarı öğe; uyarı simgesinin rengiyle (--sari) aynı aile.
+ */
+
+/* ── Düğme ─────────────────────────────────────────────────────────────── */
+.dugme.erisim-dugme {
+  background: color-mix(in srgb, var(--sari) 14%, transparent);
+  border-color: color-mix(in srgb, var(--sari) 42%, transparent);
+  color: #ffd98a;
+}
+
+.dugme.erisim-dugme:hover {
+  background: color-mix(in srgb, var(--sari) 22%, transparent);
+}
+
+/* Pencere açıkken: tıklanamaz ama soluk da değil (beklenen bir durum). */
+.dugme.erisim-dugme.bekliyor:disabled {
+  opacity: 0.85;
+}
+
+.dugme.erisim-dugme.bekliyor svg {
+  animation: erisim-nabiz 1.4s ease-in-out infinite;
+}
+
+@keyframes erisim-nabiz {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Arama uyarı satırında ve "sonuç yok" listesinde metnin hemen yanında. */
+.arama-uyari .erisim-dugme,
+.hata-listesi .erisim-dugme {
+  height: 26px;
+  padding: 0 10px;
+  margin-left: 8px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.arama-uyari .erisim-dugme svg,
+.hata-listesi .erisim-dugme svg {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  color: inherit;
+}
+
+/* Detay: akordiyondaki hata satırının eylemleri. */
+.bolum-hata-eylem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* ── Oynatma engeli bildirimi (kalıcı) ─────────────────────────────────── */
+.bildirim.erisim-bildirimi {
+  align-items: flex-start;
+  max-width: 460px;
+}
+
+.erisim-bildirim-govde {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bildirim-kapat {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  margin: -4px -6px 0 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--soluk);
+}
+
+.bildirim .bildirim-kapat svg {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+
+/* ── Ayarlar: erişim oturumları ────────────────────────────────────────── */
+.erisim-oturumlari {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.erisim-satiri {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--kenar);
+  border-radius: var(--yaricap-k);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.erisim-satiri .kaynak-hap {
+  font-size: 13px;
+  color: var(--metin);
+}
+
+.erisim-bilgi {
+  font-size: 12.5px;
+  color: var(--soluk);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
