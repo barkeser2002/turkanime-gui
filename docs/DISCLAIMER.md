@@ -69,6 +69,7 @@ Bu yazının yazıldığı tarihte proje şu kaynaklara erişebilmektedir:
 | AnimeTR | [animetr.co](https://animetr.co) |
 | Animezer | [animezer.com](https://animezer.com) · oynatıcı: [anizmplayer.com](https://anizmplayer.com), sitenin vekili /api/proxy · video: sibnet, mail.ru, vidmoly, ok.ru |
 | AniMOM | [animom.org](https://animom.org) · oynatıcı: [hdplayersystem.com](https://hdplayersystem.com) |
+| BuguiTR | [buguitr.com](https://buguitr.com) · video: gömülü oynatıcılar (sibnet, ok.ru, vidmoly, Google Drive, krakenfiles, videa) |
 
 > Bu tablo kaynak kodundaki `BASE_URL` sabitlerinden türetilmiştir;
 > `tests/test_disclaimer_adresleri.py` ikisinin ayrışmasını engeller. Daha önce

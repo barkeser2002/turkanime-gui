@@ -56,6 +56,7 @@ ISTEMCI_MODULLERI = [
     "turkanime_api.sources.animetr",
     "turkanime_api.sources.animezer",
     "turkanime_api.sources.animom",
+    "turkanime_api.sources.buguitr",
     "turkanime_api.sources.animedepo",
     # Şifreli eski API pycryptodome istiyor; modül onu ilk şifreli istekte
     # yüklemeli, import anında değil (sunucu imajında Crypto yok).

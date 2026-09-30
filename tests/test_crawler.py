@@ -1059,7 +1059,7 @@ def test_cli_bilinmeyen_kaynagi_reddediyor(tmp_path):
 # 8) Kaynak tablosu — istemciyle aynı adaptörleri kullanıyor muyuz?
 # ─────────────────────────────────────────────────────────────────────────────
 def test_kaynak_tablosu_turkanime_api_adaptorlerini_kullaniyor():
-    from turkanime_api.sources import animpow, anizle, openani, tranimaci
+    from turkanime_api.sources import animpow, anizle, buguitr, openani, tranimaci
     from turkanime_server.crawler.kaynaklar import KAYNAKLAR
 
     defter = KaynakDefteri()
@@ -1067,11 +1067,13 @@ def test_kaynak_tablosu_turkanime_api_adaptorlerini_kullaniyor():
                               "animexe", "animpow", "deokwave", "asyaanimeleri", "animeler", "onepacetr",
                               "animetr",
                               "animezer",
-                              "animom"}
+                              "animom",
+                              "buguitr"}
     assert defter.uclar("anizle").ara is anizle.search_anizle
     assert defter.uclar("openani").bolumler is openani.get_anime_episodes
     assert defter.uclar("tranimaci").akislar is tranimaci.get_episode_streams
     assert defter.uclar("animpow").akislar is animpow.get_episode_streams
+    assert defter.uclar("buguitr").akislar is buguitr.get_episode_streams
     # AnimeDepo taranmaz: ürettiğimiz arşivin şeması o, taramak döngü olurdu
     assert "animedepo" not in KAYNAKLAR
 
