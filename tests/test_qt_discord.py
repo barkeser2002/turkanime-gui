@@ -184,25 +184,23 @@ def test_ayar_acilinca_aninda_baglaniyor(sahte_rpc, ayarla):
     servis.durdur()
 
 
-def test_ayar_sayfasi_anahtari_servisi_tetikliyor(qtbot, sahte_rpc, ayarla):
-    """Ayarlar sayfasındaki kutu: hem diske yazmalı hem servisi uygulamalı."""
-    from turkanime_api.gui.qt.pages.settings import SettingsPage
-
+def test_ayar_sayfasi_anahtari_servisi_tetikliyor(sahte_rpc, ayarla, ayar_uclari):
+    """Ayarlar sayfasındaki anahtar: hem diske yazmalı hem servisi uygulamalı."""
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
-    sayfa = SettingsPage(discord=servis)
-    qtbot.addWidget(sayfa)
-    assert sayfa.chkDiscord.isChecked() is True
+    sayfa = ayar_uclari(discord=servis)
+    assert sayfa.ayarlar()["degerler"]["discord"] is True
 
-    sayfa.chkDiscord.setChecked(False)
+    assert "kapatıldı" in sayfa.discord_ayarla(False)["mesaj"]
     assert prefs.oku().discord is False
     assert servis.bagli is False
     assert sahte_rpc[0].kapandi is True
 
-    sayfa.chkDiscord.setChecked(True)
+    sonuc = sayfa.discord_ayarla(True)
     assert prefs.oku().discord is True
     assert servis.bagli is True
+    assert sonuc["metin"] == "Discord'a bağlı"
 
 
 # ── Kopma / yeniden bağlanma ─────────────────────────────────────────────────

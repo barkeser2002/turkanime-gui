@@ -13,11 +13,11 @@ hiç başlamadığı doğrulanıyor.
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QDialog, QLineEdit
+from PySide6.QtWidgets import QDialog
 
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.gui.qt import katki_dialog
-from turkanime_api.gui.qt.pages.settings import SettingsPage
+from turkanime_api.gui.web.uclar_ayarlar import bagis_kimlikleri
 
 CEREZ = (
     "# Netscape HTTP Cookie File\n"
@@ -26,11 +26,20 @@ CEREZ = (
 
 
 @pytest.fixture
-def sayfa(qtbot, izole_ev):
-    """Geçici bir ev dizinine bağlı ayarlar sayfası (gerçek ayarlara dokunmaz)."""
-    page = SettingsPage()
-    qtbot.addWidget(page)
-    return page
+def sayfa(ayar_uclari, izole_ev):
+    """Geçici bir ev dizinine bağlı ayarlar uçları (gerçek ayarlara dokunmaz)."""
+    return ayar_uclari()
+
+
+def durum(sayfa) -> str:
+    """Sayfanın durum satırına giden son mesaj."""
+    son = sayfa.kopru.son("ayar_durum")
+    return son["mesaj"] if son else ""
+
+
+def geri_cek_acik(sayfa) -> bool:
+    """Sayfa "Bağışımı geri çek"i numara listesi doluysa açıyor."""
+    return bool(sayfa.ayarlar()["bagis"]["kimlikler"])
 
 
 @pytest.fixture
@@ -78,20 +87,19 @@ def test_kimlik_paylasimi_varsayilan_kapali(izole_ev):
 
 
 def test_sayfa_kapali_ayari_yansitiyor(sayfa):
-    assert sayfa.chkKimlikPaylas.isChecked() is False
-    assert sayfa.btnBagisGeriCek.isEnabled() is False
-    assert sayfa.txtSunucuAnahtar.echoMode() == QLineEdit.EchoMode.Password
+    assert sayfa.ayarlar()["degerler"]["kimlik_paylas"] is False
+    assert geri_cek_acik(sayfa) is False
 
 
 # ── Onay verilmeden gönderim yok (asıl mesele) ──────────────────────────────
 def test_ayar_kapaliyken_onay_bile_sorulmuyor(sayfa, casus):
     """Kapalı ayar: diyalog açılmaz, gönderim olmaz."""
     kayit, _ = casus
-    sayfa._on_cookie_ready(CEREZ)
+    sayfa._cerez_geldi(CEREZ)
 
     assert kayit["onay_sorusu"] == 0
     assert kayit["gonderim"] == []
-    assert SettingsPage._bagis_kimlikleri(Dosyalar().ayarlar) == []
+    assert bagis_kimlikleri(Dosyalar().ayarlar) == []
 
 
 def test_onay_verilmezse_hicbir_sey_gonderilmiyor(sayfa, casus):
@@ -99,13 +107,12 @@ def test_onay_verilmezse_hicbir_sey_gonderilmiyor(sayfa, casus):
     kayit, ayar = casus
     ayar["onay"] = False
     Dosyalar().set_ayar("kimlik paylas", True)
-    sayfa.reload()
 
-    sayfa._on_cookie_ready(CEREZ)
+    sayfa._cerez_geldi(CEREZ)
 
     assert kayit["onay_sorusu"] == 1        # soruldu
     assert kayit["gonderim"] == []          # ama gönderilmedi
-    assert SettingsPage._bagis_kimlikleri(Dosyalar().ayarlar) == []
+    assert bagis_kimlikleri(Dosyalar().ayarlar) == []
     # Çerez yine de kaydedilmiş olmalı: bağışın reddi kontrolü boşa çıkarmaz.
     assert ".AitrWeb.Session" in Dosyalar().ayarlar.get("tranime_cookie", "")
 
@@ -114,14 +121,13 @@ def test_onay_verilirse_gonderiliyor_ve_numara_saklaniyor(sayfa, casus):
     kayit, ayar = casus
     ayar["onay"] = True
     Dosyalar().set_ayar("kimlik paylas", True)
-    sayfa.reload()
 
-    sayfa._on_cookie_ready(CEREZ)
+    sayfa._cerez_geldi(CEREZ)
 
     assert [d for d, _ in kayit["gonderim"]] == [CEREZ]
     assert kayit["gonderim"][0][1] == katki_dialog.KAYNAK_TRANIME
     assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
-    assert sayfa.btnBagisGeriCek.isEnabled() is True
+    assert geri_cek_acik(sayfa) is True
 
 
 def test_gonderim_basarisizsa_numara_yazilmiyor(sayfa, casus):
@@ -130,22 +136,20 @@ def test_gonderim_basarisizsa_numara_yazilmiyor(sayfa, casus):
     ayar["onay"] = True
     ayar["gonderim_hatasi"] = "Sunucu hatası (503)."
     Dosyalar().set_ayar("kimlik paylas", True)
-    sayfa.reload()
 
-    sayfa._on_cookie_ready(CEREZ)
+    sayfa._cerez_geldi(CEREZ)
 
     assert len(kayit["gonderim"]) == 1
-    assert SettingsPage._bagis_kimlikleri(Dosyalar().ayarlar) == []
-    assert "gönderilemedi" in sayfa.lblStatus.text()
+    assert bagis_kimlikleri(Dosyalar().ayarlar) == []
+    assert "gönderilemedi" in durum(sayfa)
 
 
 def test_bos_cerez_teklif_bile_edilmiyor(sayfa, casus):
     kayit, ayar = casus
     ayar["onay"] = True
     Dosyalar().set_ayar("kimlik paylas", True)
-    sayfa.reload()
 
-    sayfa._kimlik_bagisi_teklif("")
+    sayfa.kimlik_bagisi_teklif("")
 
     assert kayit["onay_sorusu"] == 0
     assert kayit["gonderim"] == []
@@ -211,15 +215,14 @@ def test_reddedilen_diyalog_onay_dondurmuyor(qtbot, monkeypatch):
 def test_geri_cekme_numarayi_temizliyor(sayfa, casus):
     kayit, _ = casus
     Dosyalar().set_ayar("kimlik bagis id", ["BAGIS-1234"])
-    sayfa.reload()
-    assert sayfa.btnBagisGeriCek.isEnabled() is True
+    assert geri_cek_acik(sayfa) is True
 
-    sayfa._bagis_geri_cek()
+    sonuc = sayfa.bagis_geri_cek()
 
     assert kayit["geri_cekme"] == ["BAGIS-1234"]
     assert Dosyalar().ayarlar["kimlik bagis id"] == []
-    assert sayfa.btnBagisGeriCek.isEnabled() is False
-    assert "geri çekildi" in sayfa.lblStatus.text()
+    assert geri_cek_acik(sayfa) is False
+    assert "geri çekildi" in sonuc["mesaj"]
 
 
 def test_geri_cekme_basarisizsa_numara_kaliyor(sayfa, casus):
@@ -227,18 +230,17 @@ def test_geri_cekme_basarisizsa_numara_kaliyor(sayfa, casus):
     kayit, ayar = casus
     ayar["geri_cekme_hatasi"] = "Sunucuya ulaşılamadı."
     Dosyalar().set_ayar("kimlik bagis id", ["BAGIS-1234"])
-    sayfa.reload()
 
-    sayfa._bagis_geri_cek()
+    sonuc = sayfa.bagis_geri_cek()
 
     assert kayit["geri_cekme"] == ["BAGIS-1234"]
     assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
-    assert "geri çekilemedi" in sayfa.lblStatus.text()
+    assert "geri çekilemedi" in sonuc["mesaj"]
 
 
 def test_bagis_yokken_geri_cekme_aga_cikmiyor(sayfa, casus):
     kayit, _ = casus
-    sayfa._bagis_geri_cek()
+    sayfa.bagis_geri_cek()
     assert kayit["geri_cekme"] == []
 
 
@@ -267,10 +269,8 @@ def test_yapilandirma_ayarlardan_okunuyor(izole_ev):
 
 
 def test_ayarlar_sayfasi_sunucu_bilgisini_kaydediyor(sayfa):
-    sayfa.chkKimlikPaylas.setChecked(True)
-    sayfa.txtSunucu.setText("https://ornek.test")
-    sayfa.txtSunucuAnahtar.setText("gizli")
-    sayfa.save()
+    sayfa.ayarlari_kaydet({"kimlik_paylas": True, "sunucu_adresi": "https://ornek.test",
+                           "sunucu_anahtari": " gizli "})
 
     ayarlar = Dosyalar().ayarlar
     assert ayarlar["kimlik paylas"] is True

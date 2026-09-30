@@ -31,8 +31,8 @@ savunma birden var:
    (Bölüm/Sezon/Episode/Season), sonra yalnız kod biçimleri (S01E02, 1x02).
    Eşleşme de metnin SONUNDAN aranır; işaret hep sonda, ad hep başta durur.
 
-Parser burada TEK yerde durur; `gui/qt/pages/episodes.py`, `pages/detail.py` ve
-`qt/progress_dialog.py` aynı fonksiyonları import eder. İki ayrı regex seti
+Parser burada TEK yerde durur; detay sayfası (`gui/web/uclar_detay.py`),
+indirme kuyruğu ve `qt/progress_dialog.py` aynı fonksiyonları import eder. İki ayrı regex seti
 tutmak, aynı bölümün iki yerde farklı numaralanması demekti — bu modül o
 ayrışmayı kapatmak için çıkarıldı.
 """

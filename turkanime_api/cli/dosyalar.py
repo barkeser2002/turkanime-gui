@@ -186,7 +186,7 @@ class Dosyalar:
             # bağışlıyor (özelliğin var olma sebebi bu). Tek dizgide ikinci
             # bağış birincinin üstüne yazıyor ve eski numara yok oluyordu.
             # Eski kurulumlardaki düz dizgi okunurken listeye çevriliyor
-            # (bkz. `gui.qt.pages.settings.SettingsPage._bagis_kimlikleri`).
+            # (bkz. `gui.web.uclar_ayarlar.bagis_kimlikleri`).
             "kimlik bagis id": [],
             # Sunucu adresi/anahtarı koda gömülü DEĞİL: gömülü olsaydı
             # istemcinin her kopyası aynı sunucuya kimlik göndermeye hazır

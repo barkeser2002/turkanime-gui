@@ -1,5 +1,9 @@
 """AniList entegrasyonu: OAuth, İzleme Listem sayfası, ilerleme senkronu.
 
+Sayfalar web'de: İzleme Listem `web.uclar_izleme` + `izleme.js`, AniList
+ayarları `web.uclar_ayarlar`. Kart/durum mantığı Python'da sınanıyor, sayfa
+davranışı (sekmeler, giriş paneli, hata) web sürücüsüyle.
+
 Hiçbir test ağa çıkmaz ve **gerçek OAuth akışı asla açılmaz**: `anilist_client`
 singleton'ı tümüyle sahtelenir, `AniListAuthServer` yerine sayaç tutan bir ikiz
 konur, `webbrowser.open` sahtelenip yalnızca çağrıldığı doğrulanır.
@@ -9,17 +13,14 @@ from __future__ import annotations
 import threading
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLineEdit
 
 from turkanime_api.gui.qt import prefs
 from turkanime_api.gui.qt.anilist import (
     DURUMLAR, AniListService, baslik_skoru, deslug, en_iyi_eslesme,
     geri_donus_portu, girisleri_duzlestir, senkron_guncellemeleri,
 )
-from turkanime_api.gui.qt.pages.settings import SettingsPage
-from turkanime_api.gui.qt.pages.watchlist import WatchlistPage
 from turkanime_api.gui.qt.progress_dialog import ProgressDialog
+from turkanime_api.gui.web.uclar_izleme import izleme_karti
 
 DURUM_KODLARI = [kod for kod, _ in DURUMLAR]
 
@@ -150,10 +151,22 @@ def lists(*entries, name="Watching"):
     return [{"name": name, "entries": list(entries)}]
 
 
-def sayfa(qtbot, servis: AniListService) -> WatchlistPage:
-    page = WatchlistPage(servis)
-    qtbot.addWidget(page)
-    return page
+KARTLAR = ("document.querySelectorAll('[data-sayfa=watchlist] .izgara "
+           ".kart:not(.iskelet-kart)')")
+SAYFA = "document.querySelector('[data-sayfa=watchlist]')"
+
+
+def listeyi_ac(main_window, web, kart_sayisi=None):
+    """Giriş durumunu yükle, İzleme Listem'i aç (isteğe bağlı kart bekle)."""
+    main_window.anilist.baslat()
+    main_window.show_page("watchlist")
+    if kart_sayisi is not None:
+        web.bekle(f"{KARTLAR}.length === {kart_sayisi}")
+
+
+def kart_verisi(**kw):
+    """Sahte AniList girişinden sayfaya giden kart verisi."""
+    return izleme_karti(girisleri_duzlestir(lists(entry(**kw)))[0])
 
 
 # ── Saf yardımcılar (Qt'siz) ────────────────────────────────────────────────
@@ -269,166 +282,138 @@ def test_senkron_bolum_sayisini_asan_ilerlemeyi_yazmiyor():
 
 
 # ── Listem sayfası ──────────────────────────────────────────────────────────
-@pytest.mark.parametrize("durum,etiket", DURUMLAR)
-def test_her_durum_ayri_filtreleniyor(qtbot, sahte_anilist, durum, etiket):
+def test_her_durum_ayri_filtreleniyor(main_window, web, sahte_anilist):
     """Beş durumun her biri kendi listesini çekip göstermeli."""
     ist = sahte_anilist()
     for kod in DURUM_KODLARI:
         ist.listeler[kod] = lists(entry(title=f"{kod} Anime", status=kod))
+    listeyi_ac(main_window, web, 1)
 
-    page = sayfa(qtbot, AniListService())
-    page.cmbStatus.setCurrentIndex(DURUM_KODLARI.index(durum))
-    page.refresh()
-
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-    assert page.durum() == durum
-    assert page.cards()[0].lblTitle.text() == f"{durum} Anime"
-    assert page.cards()[0].lblSource.text() == etiket
-    assert ("list", 7, durum) in ist.cagrilar
-
-
-def test_kart_alanlari_ilerleme_ve_skor(qtbot, sahte_anilist):
-    ist = sahte_anilist()
-    ist.listeler["CURRENT"] = lists(
-        entry(title="Frieren", episodes=28, progress=7, score=92))
-
-    page = sayfa(qtbot, AniListService())
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-
-    kart = page.cards()[0]
-    assert kart.lblProgress.text() == "İzlenen: 7/28"
-    assert (kart.barProgress.maximum(), kart.barProgress.value()) == (28, 7)
-    assert kart.lblScore.text() == "★ 92"
-    assert kart.lblSource.text() == "İzliyorum"
+    for kod, etiket in DURUMLAR:
+        web.js(f"document.querySelector('.sekme[data-durum={kod}]').click()")
+        web.bekle(f"{KARTLAR}.length === 1 && {KARTLAR}[0]"
+                  f".querySelector('.kart-baslik').textContent === '{kod} Anime'")
+        assert web.js(f"{KARTLAR}[0].querySelector('.kart-rozet').textContent") == etiket
+        assert web.js(f"document.querySelector('.sekme.secili').dataset.durum") == kod
+        assert ("list", 7, kod) in ist.cagrilar
 
 
-def test_kart_bilinmeyen_toplam_ve_skorsuz(qtbot, sahte_anilist):
+def test_kart_alanlari_ilerleme_ve_skor():
+    kart = kart_verisi(title="Frieren", episodes=28, progress=7, score=92)
+    assert kart["baslik"] == "Frieren"
+    assert kart["alt"] == "İzlenen: 7/28 · ★ 92"
+    assert kart["ilerleme"] == 0.25
+    assert kart["rozet"] == "İzliyorum"
+
+
+def test_kart_bilinmeyen_toplam_ve_skorsuz():
     """Yayını süren animede `episodes` boş gelir; çubuk dolu görünmemeli."""
-    ist = sahte_anilist()
-    ist.listeler["CURRENT"] = lists(
-        entry(title="Devam Eden", episodes=None, progress=3, score=0))
-
-    page = sayfa(qtbot, AniListService())
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-
-    kart = page.cards()[0]
-    assert kart.lblProgress.text() == "İzlenen: 3/?"
-    assert kart.barProgress.value() == 0
-    assert kart.lblScore.text() == "Puansız"
+    kart = kart_verisi(title="Devam Eden", episodes=None, progress=3, score=0)
+    assert kart["alt"] == "İzlenen: 3/?"
+    assert kart["ilerleme"] is None
 
 
-def test_izlenen_toplami_asarsa_cubuk_tasmiyor(qtbot, sahte_anilist):
-    ist = sahte_anilist()
-    ist.listeler["CURRENT"] = lists(entry(episodes=12, progress=15))
-
-    page = sayfa(qtbot, AniListService())
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-    assert page.cards()[0].barProgress.value() == 12
+def test_izlenen_toplami_asarsa_cubuk_tasmiyor():
+    assert kart_verisi(episodes=12, progress=15)["ilerleme"] == 1.0
 
 
-def test_bos_liste_mesaji(qtbot, sahte_anilist):
+def test_bos_liste_mesaji(main_window, web, sahte_anilist):
     sahte_anilist()
-    page = sayfa(qtbot, AniListService())
-    page.refresh()
-    qtbot.waitUntil(lambda: page.btnRefresh.isEnabled(), timeout=5000)
-    assert page.cards() == []
-    assert "anime yok" in page.lblStatus.text()
+    listeyi_ac(main_window, web)
+    web.bekle(f"{SAYFA}.innerText.includes('Bu listede anime yok')")
+    assert web.js(f"{KARTLAR}.length") == 0
 
 
-def test_giris_yokken_yonlendirme_gosteriliyor(qtbot, sahte_anilist):
+def test_giris_yokken_yonlendirme_gosteriliyor(main_window, web, sahte_anilist):
     """Boş ekran değil, ne yapılacağını söyleyen panel çıkmalı."""
     ist = sahte_anilist(token=None)
-    page = sayfa(qtbot, AniListService())
-    page.show()
+    listeyi_ac(main_window, web)
 
-    assert page.pnlLogin.isVisibleTo(page)
-    assert "Ayarlar" in page.lblLoginHint.text()
-    assert not page.results.isVisibleTo(page)
-    assert not page.btnRefresh.isEnabled()
-
-    page.refresh()          # çökmemeli
-    qtbot.wait(80)
-    assert page.cards() == []
-    assert ist.cagrilar == [], "giriş yokken ağ ucuna hiç gidilmemeli"
+    web.bekle("document.querySelector('.giris-paneli').innerText.includes('Ayarlar')")
+    assert web.js(f"{SAYFA}.querySelector('.sekmeler').hidden") is True
+    dugmeler = f"[...{SAYFA}.querySelectorAll('.sayfa-eylem button')]"
+    assert web.js(f"{dugmeler}.every(d => d.disabled)") is True
+    assert web.js(f"{KARTLAR}.length") == 0
+    assert not any(c[0] == "list" for c in ist.cagrilar), \
+        "giriş yokken liste ucuna hiç gidilmemeli"
 
 
-def test_ayarlara_yonlendirme_butonu(qtbot, main_window, sahte_anilist):
+def test_ayarlara_yonlendirme_butonu(qtbot, main_window, web, sahte_anilist):
+    """Girişsiz liste sayfası nereye gidileceğini söylüyor ve götürüyor."""
     sahte_anilist(token=None)
-    page = main_window.pages["watchlist"]
     main_window.show_page("watchlist")
-    page._apply_auth_state()
+    web.bekle("document.querySelector('.giris-paneli').innerText.includes('AniList girişi gerekli')")
+    web.js("document.querySelector('.giris-paneli button').click()")
+    qtbot.waitUntil(lambda: main_window._current_page == "settings", timeout=5000)
+    web.bekle("TA.aktif === 'settings'")
+    # Üst çubuktaki dişli seçili görünüyor.
+    web.bekle("document.querySelector('.ust-ayar').classList.contains('aktif')")
 
-    qtbot.mouseClick(page.btnGoSettings, Qt.MouseButton.LeftButton)
-    assert main_window.stack.currentWidget() is main_window.pages["settings"]
 
-
-def test_kart_tiklamasi_detay_sayfasini_aciyor(qtbot, main_window, sahte_anilist):
+def test_kart_tiklamasi_detay_sayfasini_aciyor(qtbot, main_window, web, sahte_anilist):
     ist = sahte_anilist()
     ist.listeler["CURRENT"] = lists(entry(title="Cowboy Bebop"))
 
-    page = main_window.pages["watchlist"]
-    main_window.show_page("watchlist")
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+    listeyi_ac(main_window, web, 1)
+    web.js(f"{KARTLAR}[0].click()")
+    qtbot.waitUntil(lambda: main_window._current_page == "detail", timeout=5000)
 
-    qtbot.mouseClick(page.cards()[0], Qt.MouseButton.LeftButton)
-
-    detay = main_window.pages["detail"]
-    assert main_window.stack.currentWidget() is detay
-    assert detay.lblTitle.text() == "Cowboy Bebop"
+    web.bekle("TA.aktif === 'detail' && !!document.querySelector('.detay-bilgi h1')")
+    assert web.js("document.querySelector('.detay-bilgi h1').textContent") == "Cowboy Bebop"
 
 
-def test_kullanici_bilgisi_alinamayinca_liste_silinmiyor(qtbot, sahte_anilist):
+def test_kullanici_bilgisi_alinamayinca_liste_silinmiyor(main_window, web, sahte_anilist):
     """Jeton dururken gelen `auth_changed(None)` "çıkış yapıldı" demek değil."""
     ist = sahte_anilist()
     ist.listeler["CURRENT"] = lists(entry(title="Cowboy Bebop"))
+    listeyi_ac(main_window, web, 1)
 
-    servis = AniListService()
-    page = sayfa(qtbot, servis)
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
-
-    servis.auth_changed.emit(None)          # ağ dalgalanması
-    assert len(page.cards()) == 1, "kartlar sebepsiz silinmemeli"
+    main_window.anilist.auth_changed.emit(None)          # ağ dalgalanması
+    web.bekle(f"{KARTLAR}.length === 1")
+    assert web.js("document.querySelector('.giris-paneli').childElementCount") == 0
 
     ist.access_token = None
-    servis.auth_changed.emit(None)          # gerçek çıkış
-    assert page.cards() == []
-    assert page.pnlLogin.isVisibleTo(page) or not page.results.isVisibleTo(page)
+    main_window.anilist.auth_changed.emit(None)          # gerçek çıkış
+    web.bekle(f"{KARTLAR}.length === 0 && "
+              "document.querySelector('.giris-paneli').childElementCount === 1")
 
 
-def test_otomatik_senkron_kart_sayisini_silmiyor(qtbot, sahte_anilist):
-    """Girişten sonraki kendiliğinden senkron durum satırını ele geçirmemeli."""
+def test_otomatik_senkron_durum_satirini_ezmiyor(main_window, web, sahte_anilist):
+    """Girişten sonraki kendiliğinden senkron durum satırını ele geçirmemeli;
+    kullanıcının başlattığı senkron ise bitince "sürüyor"da kalmamalı."""
     ist = sahte_anilist()
     ist.listeler["CURRENT"] = lists(entry(title="Cowboy Bebop"))
+    listeyi_ac(main_window, web, 1)
+    durum = f"{SAYFA}.querySelector('.sayfa-eylem .durum')"
+    web.bekle(f"{durum}.textContent === '1 anime'")
 
-    servis = AniListService()
-    page = sayfa(qtbot, servis)
-    page.refresh()
-    qtbot.waitUntil(lambda: len(page.cards()) == 1, timeout=5000)
+    main_window.anilist.sync_done.emit(0)            # otomatik senkron, değişen yok
+    web.qtbot.wait(100)
+    assert web.js(f"{durum}.textContent") == "1 anime"
+    assert not web.js("!!document.querySelector('.bildirim')")
 
-    servis.sync_done.emit(0)            # otomatik senkron, değişen yok
-    assert page.lblStatus.text() == "1 anime"
+    web.js(f"[...{SAYFA}.querySelectorAll('.sayfa-eylem button')]"
+           ".find(d => d.textContent.includes('Senkronize')).click()")
+    web.bekle(f"{durum}.classList.contains('suruyor') || "
+              f"{durum}.textContent.includes('güncel')")
+    main_window.anilist.sync_done.emit(0)
+    web.bekle(f"{durum}.textContent.includes('güncel') && "
+              f"!{durum}.classList.contains('suruyor')")
 
-    page._on_sync_clicked()             # kullanıcı istedi
-    servis.sync_done.emit(0)
-    assert "güncel" in page.lblStatus.text()
 
-
-def test_liste_hatasi_bildiriliyor(qtbot, sahte_anilist):
+def test_liste_hatasi_bildiriliyor(main_window, web, sahte_anilist):
     ist = sahte_anilist()
 
     def patla(user_id, status=None):
         raise RuntimeError("AniList 503")
 
     ist.get_user_anime_list = patla
-    page = sayfa(qtbot, AniListService())
-    page.refresh()
-    qtbot.waitUntil(lambda: "503" in page.lblStatus.text(), timeout=5000)
-    assert page.btnRefresh.isEnabled()
+    listeyi_ac(main_window, web)
+    web.bekle(f"!!{SAYFA}.querySelector('.bos-durum.hata') && "
+              f"{SAYFA}.querySelector('.bos-durum.hata').innerText.includes('503')")
+    yenile = (f"[...{SAYFA}.querySelectorAll('.sayfa-eylem button')]"
+              ".find(d => d.textContent.includes('Yenile'))")
+    assert web.js(f"{yenile}.disabled") is False
 
 
 # ── İlerleme yazma ──────────────────────────────────────────────────────────
@@ -629,7 +614,8 @@ def test_oauth_basarisi_headeri_guncelliyor(qtbot, main_window, sahte_anilist,
     ist.access_token = "yeni-jeton"
     threading.Thread(target=sunucular[0].on_success, daemon=True).start()
 
-    qtbot.waitUntil(lambda: main_window.lblAniList.text() == "kullanici",
+    qtbot.waitUntil(lambda: getattr(main_window, "anilist_kullanici", {}).get("ad")
+                    == "kullanici",
                     timeout=5000)
 
 
@@ -678,43 +664,45 @@ def test_cikis_jetonu_siliyor(qtbot, sahte_anilist):
     assert servis.giris_var_mi() is False
 
 
-# ── Ayarlar sayfası ─────────────────────────────────────────────────────────
-def test_ayarlar_anilist_alanlarini_dolduruyor(qtbot, sahte_anilist):
-    ist = sahte_anilist()
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
+# ── Ayarlar sayfası (AniList bölümü) ────────────────────────────────────────
+@pytest.fixture
+def ayarlar(ayar_uclari, sahte_anilist):
+    """AniList bölümünün Python tarafı; ``kur(**istemci)`` sahte istemciyi de kurar."""
+    def kur(**kw):
+        ist = sahte_anilist(**kw)
+        servis = AniListService()
+        u = ayar_uclari(anilist=servis)
+        return u, ist, servis
+    return kur
 
-    assert page.txtAniListId.text() == ist.client_id
-    assert page.txtAniListRedirect.text() == ist.redirect_uri
-    assert page.txtAniListSecret.echoMode() == QLineEdit.EchoMode.Password
+
+def test_ayarlar_anilist_alanlarini_dolduruyor(ayarlar):
+    u, ist, _ = ayarlar()
+    a = u.ayarlar()["anilist"]
+    assert a["client_id"] == ist.client_id
+    assert a["redirect_uri"] == ist.redirect_uri
+    assert a["client_secret"] == ist.client_secret
+    assert a["giris"] is True
 
 
-def test_ayarlar_anilist_alanlari_kaydediliyor(qtbot, sahte_anilist,
-                                               preserved_settings):
-    ist = sahte_anilist()
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
+def test_ayarlar_anilist_alanlari_kaydediliyor(ayarlar, preserved_settings):
+    u, ist, _ = ayarlar()
 
-    page.txtAniListId.setText("12345")
-    page.txtAniListSecret.setText("yeni-secret")
-    page.txtAniListRedirect.setText("http://localhost:9999/anilist-login")
-    page.save()
+    sonuc = u.ayarlari_kaydet({}, anilist={
+        "client_id": "12345", "client_secret": "yeni-secret",
+        "redirect_uri": "http://localhost:9999/anilist-login"})
 
     assert ("config", "12345", "yeni-secret",
             "http://localhost:9999/anilist-login") in ist.cagrilar
-    assert "kaydedildi" in page.lblStatus.text()
+    assert "kaydedildi" in sonuc["mesaj"]
 
 
-def test_ayarlar_giris_butonu_once_yapilandirmayi_kaydediyor(qtbot, sahte_anilist,
-                                                             sahte_oauth):
+def test_ayarlar_giris_butonu_once_yapilandirmayi_kaydediyor(qtbot, ayarlar, sahte_oauth):
     """Yeni yapıştırılan Client ID yok sayılıp eski ayarla giriş denenmemeli."""
-    ist = sahte_anilist(token=None)
+    u, ist, _ = ayarlar(token=None)
     _sunucular, acilan = sahte_oauth
 
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
-    page.txtAniListId.setText("777")
-    page._anilist_login()
+    assert u.anilist_giris("777", ist.client_secret, ist.redirect_uri) is True
 
     qtbot.waitUntil(lambda: bool(acilan), timeout=5000)
     assert ("config", "777", ist.client_secret, ist.redirect_uri) in ist.cagrilar
@@ -734,67 +722,59 @@ def test_oauth_secretsiz_istemci_implicit_akisa_dusuyor(qtbot, sahte_anilist,
     assert "response_type=code" not in acilan[0]
 
 
-def test_ayarlar_secret_alani_opsiyonel_oldugunu_soyluyor(qtbot, sahte_anilist):
-    """Alan artık zorunlu değil; kullanıcı boş bırakabileceğini görmeli."""
+def test_ayarlar_secret_alani_sayfada(main_window, web, sahte_anilist, izole_ev):
+    """Alan zorunlu değil (kullanıcı boş bırakabileceğini görmeli) ve gizli."""
     sahte_anilist()
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
+    main_window.show_page("settings")
+    alan = "document.querySelector('input[placeholder=\"Client Secret (opsiyonel)\"]')"
+    web.bekle(f"!!{alan}", timeout=8000)
+    assert web.js(f"{alan}.type") == "password"
+    ipucu = web.js(f"{alan}.closest('.ayar-deger').querySelector('.ipucu').textContent")
+    assert "opsiyonel" in ipucu.lower() and "implicit" in ipucu.lower()
+    assert "sızmış" not in ipucu.lower()
 
-    assert "opsiyonel" in page.txtAniListSecret.placeholderText().lower()
-    ipucu = page.lblAniListSecretIpucu.text().lower()
-    assert "opsiyonel" in ipucu and "implicit" in ipucu
 
-
-def test_ayarlar_bos_secret_kaydedilebiliyor(qtbot, sahte_anilist,
-                                             preserved_settings):
+def test_ayarlar_bos_secret_kaydedilebiliyor(ayarlar, preserved_settings):
     """Secret'ı silip kaydetmek hata vermemeli (Implicit akışa geçiş)."""
-    ist = sahte_anilist()
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
+    u, ist, _ = ayarlar()
 
-    page.txtAniListSecret.setText("")
-    page.save()
+    sonuc = u.ayarlari_kaydet({}, anilist={
+        "client_id": ist.client_id, "client_secret": "",
+        "redirect_uri": ist.redirect_uri})
 
     assert ("config", ist.client_id, "", ist.redirect_uri) in ist.cagrilar
-    assert "kaydedildi" in page.lblStatus.text()
+    assert "kaydedildi" in sonuc["mesaj"]
 
 
-def test_ayarlar_sizan_secret_temizligini_duyuruyor(qtbot, sahte_anilist):
+def test_ayarlar_sizan_secret_temizligini_duyuruyor(ayarlar, sahte_anilist):
     """Sessiz temizlik "secret'ım nereye gitti?" sorusuyla baş başa bırakırdı."""
-    ist = sahte_anilist()
+    u, ist, _ = ayarlar()
     ist.client_secret = ""
     ist.sizan_secret_temizlendi = True
 
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
-
-    ipucu = page.lblAniListSecretIpucu.text().lower()
-    assert "sızmış" in ipucu and "silindi" in ipucu
-    assert "implicit" in ipucu
+    uyari = u.ayarlar()["anilist"]["sizan_uyari"].lower()
+    assert "sızmış" in uyari and "silindi" in uyari
+    assert "implicit" in uyari
 
 
-def test_ayarlar_temizlik_yokken_normal_ipucu_kaliyor(qtbot, sahte_anilist):
-    sahte_anilist()
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
-    assert "sızmış" not in page.lblAniListSecretIpucu.text().lower()
+def test_ayarlar_temizlik_yokken_uyari_yok(ayarlar):
+    u, _, _ = ayarlar()
+    assert u.ayarlar()["anilist"]["sizan_uyari"] == ""
 
 
-def test_ayarlar_cikis_durumu_gosteriyor(qtbot, sahte_anilist):
-    ist = sahte_anilist()
-    page = SettingsPage(AniListService())
-    qtbot.addWidget(page)
+def test_ayarlar_cikis_durumu_gosteriyor(ayarlar):
+    u, ist, _ = ayarlar()
 
-    page._anilist_logout()
+    durum = u.anilist_cikis()
+
     assert ist.access_token is None
-    assert "Giriş yapılmamış" in page.lblAniList.text()
+    assert durum["giris"] is False and "Giriş yapılmamış" in durum["metin"]
 
 
-def test_ayarlar_giris_durumunu_yansitiyor(qtbot, sahte_anilist):
-    sahte_anilist()
-    servis = AniListService()
-    page = SettingsPage(servis)
-    qtbot.addWidget(page)
+def test_ayarlar_giris_durumunu_yansitiyor(ayarlar):
+    u, _, servis = ayarlar()
 
     servis.auth_changed.emit({"id": 7, "name": "kullanici"})
-    assert "kullanici" in page.lblAniList.text()
+
+    durum = u.kopru.son("ayar_anilist")
+    assert durum["giris"] is True and "kullanici" in durum["metin"]

@@ -169,10 +169,12 @@ def test_shutdown_pools_gorsel_havuzunu_da_bosaltiyor(qtbot, sahte_get):
     assert shutdown_pools(2000) is True
 
 
-def test_kesif_yenilemesi_ikinci_kez_indirmiyor(qtbot, sahte_get, monkeypatch):
-    """Aynı posterler ikinci yenilemede ağa çıkmadan karta basılmalı."""
+def test_kesif_yenilemesi_ikinci_kez_indirmiyor(sahte_get, monkeypatch, main_window, web):
+    """Aynı posterler ikinci yenilemede (ve başka sayfada) ağa çıkmadan gelmeli.
+
+    Posterler web sayfasına `ta://gorsel` üzerinden bu önbellekten veriliyor.
+    """
     import turkanime_api.jikan_client as jikan_mod
-    from turkanime_api.gui.qt.pages.discover import DiscoverPage
 
     kayitlar = [{"id": i, "title": {"romaji": f"Anime {i}"},
                  "coverImage": {"large": f"https://kapak/k{i}.png"}}
@@ -180,19 +182,15 @@ def test_kesif_yenilemesi_ikinci_kez_indirmiyor(qtbot, sahte_get, monkeypatch):
     monkeypatch.setattr(jikan_mod, "get_trending_anime_list",
                         lambda *a, **k: list(kayitlar))
     istekler = sahte_get(lambda url: Yanit(png_baytlari()))
+    kartlar = "document.querySelectorAll('[data-sayfa=trending] .izgara .kart')"
+    yuklu = f"[...{kartlar}].filter(k => !!k.querySelector('img.yuklu')).length === 3"
 
-    sayfa = DiscoverPage("trending")
-    qtbot.addWidget(sayfa)
+    main_window.show_page("trending")
+    web.bekle(f"{kartlar}.length === 3 && {yuklu}", timeout=8000)
+    assert sorted(set(istekler)) == [f"https://kapak/k{i}.png" for i in range(3)]
+    assert len(istekler) == 3, "aynı poster iki kez indirildi"
 
-    def _kapaklar_geldi():
-        kartlar = sayfa.cards()
-        return len(kartlar) == 3 and all(k._src_pixmap is not None for k in kartlar)
-
-    sayfa.refresh()
-    qtbot.waitUntil(_kapaklar_geldi, timeout=5000)
-    assert len(istekler) == 3
-
-    sayfa.refresh()
-    qtbot.waitUntil(lambda: sayfa._busy is False, timeout=5000)
-    qtbot.waitUntil(_kapaklar_geldi, timeout=5000)
+    web.js("[...document.querySelectorAll('[data-sayfa=trending] .sayfa-eylem button')]"
+           ".find(d => d.textContent.includes('Yenile')).click()")
+    web.bekle(f"{kartlar}.length === 3 && {yuklu}", timeout=8000)
     assert len(istekler) == 3, "önbellekteki posterler yeniden indirildi"

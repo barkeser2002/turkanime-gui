@@ -84,7 +84,13 @@ testpaths = ["tests"]
 # adapters-test-all.py bir pytest paketi değil, elle çalıştırılan ağ betiği.
 # NOT: buraya `-q` KOYMA — komut satırında da `-q` verilince `-qq` olur ve
 # pytest özet satırını ("N passed") hiç basmaz; doğrulama körleşir.
-addopts = "--ignore=tests/adapters-test-all.py"
+#
+# `--no-qt-log`: pytest-qt'nin Qt mesaj yakalayıcısı bir PYTHON fonksiyonu.
+# Chromium kendi GPU thread'inden ("Chrome_InProcGpu", Python'dan habersiz)
+# Qt uyarısı basınca o fonksiyon GIL'siz çağrılıyor ve süreç segfault'la
+# düşüyordu (gdb ile yakalandı: QMessageLogger::warning → _PyObject_Call).
+# Uygulamanın kendisi mesaj yakalayıcı kurmuyor; çökme yalnızca testteydi.
+addopts = "--ignore=tests/adapters-test-all.py --no-qt-log"
 markers = [
     "network: gerçek ağ erişimi gerektirir (varsayılan olarak atlanır; --network ile çalıştır)",
 ]

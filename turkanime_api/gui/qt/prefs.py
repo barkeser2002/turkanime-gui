@@ -337,7 +337,8 @@ def seri_adi(bolum, yedek: str = "") -> str:
 def kitaplik_kimligi(entry: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """Bölüm kaydından kitaplık anahtarı: kaynak, kimlik, seri adı, kapak.
 
-    Kaynak ve kimlik `EpisodePage._kimlik_damgala`'dan gelir. Kaynağı
+    Kaynak ve kimlik detay sayfasının `bolumler` ucundan gelir
+    (`gui.web.uclar_detay`). Kaynağı
     bilinmeyen kayıt (eski akışlar, testlerin çıplak `{"obj": ...}`'i)
     kitaplığa YAZILMAZ: kaynaksız bir kayıt yeniden açılamaz, yani "izlemeye
     devam et"te tıklanınca hiçbir yere gitmeyen bir kart olurdu.

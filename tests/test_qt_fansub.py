@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from turkanime_api.gui.qt.fansub import FansubDialog, FansubSecici, fansub_ozeti
-from turkanime_api.gui.qt.pages.downloads import BITMIS_DURUMLAR
+from turkanime_api.gui.qt.indirme import BITMIS_DURUMLAR
 
 
 class FansubluBolum:

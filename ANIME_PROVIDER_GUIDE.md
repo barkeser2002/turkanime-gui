@@ -31,7 +31,7 @@ Kayıttan türetilenler (hiçbirine elle ekleme yapılmaz):
 |-----------|-------|
 | Paralel arama (`SearchEngine.adapters`) | `turkanime_api/common/adapters.py` |
 | Bölüm + oynatma/indirme (`FUNCTION_SOURCES`, `BUILDERS`, `METADATA_ONLY`) | `turkanime_api/gui/qt/sources_bridge.py` |
-| Bölüm satırı rozeti (`SOURCE_COLORS`, `SOURCE_SHORT`) | `turkanime_api/gui/qt/pages/episodes.py` |
+| Arayüzdeki kaynak rozeti (renk, kısaltma, etiket; web `kaynaklar` ucu) | `turkanime_api/gui/web/uclar_genel.py`, `uclar_detay.py::kaynak_bilgisi` |
 | CLI "Kaynak seç" menüsü, `SOURCE_TITLES` | `turkanime_api/cli/__main__.py` |
 | `PROVIDERS` | `turkanime_api/sources/__init__.py` |
 | Sunucu tarayıcısının tablosu (`taranabilir=True` olanlar) | `turkanime_server/crawler/kaynaklar.py` |

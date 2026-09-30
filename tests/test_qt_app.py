@@ -9,39 +9,66 @@ from turkanime_api.gui.qt.app import NAV_ITEMS, MainWindow
 
 
 def test_window_builds_all_pages(main_window):
+    """Pencerenin tamamı tek web görünümü; her sayfa onun bir rotası."""
     for key, _label in NAV_ITEMS:
-        assert key in main_window.pages, f"{key} sayfası kurulmadı"
-    # Bölüm sayfası menüde yok ama stack'te olmalı (arama sonucundan açılır)
-    assert "episodes" in main_window.pages
-    assert main_window.stack.count() == len(main_window.pages)
+        assert main_window.pages[key] is main_window.web, f"{key} rotası yok"
+    # Detay (künye + bölümler) menüde yok ama web görünümünde bir rota.
+    assert main_window.pages["detail"] is main_window.web
+    assert "episodes" not in main_window.pages
+    assert main_window.centralWidget() is main_window.web
+    # Qt durum çubuğu gizli: mesajlar sayfanın alt çubuğunda.
+    assert not main_window.statusBar().isVisible()
 
 
-def test_page_switching(main_window):
+def test_page_switching(main_window, web):
     for key in ("downloads", "settings", "search", "home"):
         main_window.show_page(key)
-        assert main_window.stack.currentWidget() is main_window.pages[key]
+        assert main_window._current_page == key
+        web.bekle(f"TA.aktif === {key!r}")
+    # Menü üst çubukta; seçili öğe işaretli.
+    web.bekle("document.querySelector('.menu-ogesi[data-git=home]').classList.contains('aktif')")
 
 
-def test_search_from_header_routes_to_search_page(main_window, monkeypatch):
-    """Aramaya basınca arama sayfasına geçilmeli (ağa çıkmadan doğrula)."""
-    started: list = []
-    page = main_window.pages["search"]
-    monkeypatch.setattr(page, "start_search", lambda q: started.append(q))
+def test_ust_cubuk_menusu_ve_arama(main_window, web, sahte_arama):
+    """Menü tıklaması Python'dan geçiyor; arama kutusu kaynak seçebiliyor."""
+    sorgular = sahte_arama(sonuclar={"AnimeciX": [{"slug": "1", "title": "Naruto"}]})
+    web.js("document.querySelector('.menu-ogesi[data-git=library]').click()")
+    web.qtbot.waitUntil(lambda: main_window._current_page == "library", timeout=5000)
+    web.bekle("document.querySelectorAll('.ust-kaynak option').length > 5")
+    web.js("var f = document.querySelector('.ust-ara'); f.querySelector('input').value = 'naruto';"
+           "f.querySelector('select').value = 'AnimeciX'; f.requestSubmit()")
+    web.qtbot.waitUntil(lambda: sorgular == ["naruto"], timeout=5000)
+    web.bekle("document.querySelector('[data-sayfa=search] .sayfa-baslik p').textContent"
+              ".includes('yalnızca AnimeciX')")
 
-    main_window.txtSearch.setText("naruto")
-    main_window._on_search()
 
-    assert main_window.stack.currentWidget() is page
-    assert started == ["naruto"]
+def test_durum_mesaji_alt_cubukta(main_window, web):
+    main_window.statusBar().showMessage("merhaba dünya", 0)
+    web.bekle("document.querySelector('.durum-metni').textContent === 'merhaba dünya'")
+    main_window._hata_durumu("oynatılamadı: kaynak yok")
+    web.bekle("document.querySelector('.durum-metni').classList.contains('hata')")
+    assert web.js("document.querySelector('.surum').textContent").startswith("v")
 
 
-def test_empty_search_is_ignored(main_window, monkeypatch):
-    started: list = []
-    monkeypatch.setattr(main_window.pages["search"], "start_search",
-                        lambda q: started.append(q))
-    main_window.txtSearch.setText("   ")
-    main_window._on_search()
-    assert started == []
+def test_search_from_header_routes_to_search_page(main_window, web, sahte_arama):
+    """Aramaya basınca arama sayfasına geçilmeli; sayfa aramayı başlatır."""
+    sorgular = sahte_arama(sonuclar={"TürkAnime": [{"slug": "naruto", "title": "Naruto"}]})
+
+    main_window.ara("naruto")
+
+    assert main_window._current_page == "search"
+    web.bekle("TA.aktif === 'search'")
+    web.qtbot.waitUntil(lambda: sorgular == ["naruto"], timeout=5000)
+    assert web.js("document.querySelector('.arama-cubugu input').value") == "naruto"
+    web.bekle("document.querySelector('.ust-ara input').value === 'naruto'")
+
+
+def test_empty_search_is_ignored(main_window, web, sahte_arama):
+    sorgular = sahte_arama()
+    main_window.ara("   ")
+    web.qtbot.wait(200)
+    assert sorgular == []
+    assert main_window._current_page == "home"
 
 
 def test_download_dir_never_empty_or_cwd():
@@ -139,13 +166,12 @@ def _giris(no: int):
 
 @pytest.fixture
 def indirme_penceresi(izole_ev, main_window, monkeypatch, tmp_path):
-    """Bölüm listesi açık pencere; indirme işleri başlamaz (bekliyor'da kalır)."""
-    import turkanime_api.gui.qt.pages.downloads as dl_mod
+    """İndirme işleri başlamaz (bekliyor'da kalır)."""
+    import turkanime_api.gui.qt.indirme as dl_mod
 
     monkeypatch.setattr(dl_mod, "run_bg", lambda *a, **k: None)
     monkeypatch.setattr(MainWindow, "_download_dir",
                         staticmethod(lambda: str(tmp_path / "indir")))
-    main_window.show_page("episodes")
     return main_window
 
 
@@ -153,17 +179,17 @@ def test_indir_bolum_listesinde_birakiyor_menude_sayac(indirme_penceresi, qtbot)
     """ESKİ HATA: "İndir" İndirilenler'e geçiyordu; bölüm listesinin menüde
     düğmesi ve "Geri"si olmadığından kullanıcı listeye dönemiyordu."""
     win = indirme_penceresi
-    liste = win.pages["episodes"]
-    dugme = win._nav_buttons["downloads"]
+    win.show_page("detail")
+    onceki = win._current_page
 
     win._on_download(_giris(1))
 
-    assert win.stack.currentWidget() is liste
-    qtbot.waitUntil(lambda: "(1)" in dugme.text(), timeout=2000)
+    assert win._current_page == onceki
+    qtbot.waitUntil(lambda: getattr(win, "indirme_sayisi", 0) == 1, timeout=2000)
     assert "sırasına alındı" in win.statusBar().currentMessage()
 
     win.downloads.cancel_all()
-    qtbot.waitUntil(lambda: dugme.text() == "İndirilenler", timeout=2000)
+    qtbot.waitUntil(lambda: win.indirme_sayisi == 0, timeout=2000)
 
 
 def test_ayni_bolum_ikinci_kez_indirilince_zaten_kuyrukta(indirme_penceresi):
@@ -177,21 +203,31 @@ def test_ayni_bolum_ikinci_kez_indirilince_zaten_kuyrukta(indirme_penceresi):
     assert "zaten kuyrukta" in win.statusBar().currentMessage()
 
 
-def test_toplu_indirme_sayfada_kaliyor_tekrari_sayiyor(indirme_penceresi, qtbot):
+def test_toplu_indirme_sayfada_kaliyor_tekrari_sayiyor(indirme_penceresi, web,
+                                                      sahte_bolumler):
+    """Detay sayfasında seçilenleri indir: sayfada kalınır, ikinci basışta
+    kuyruktakiler sayılır ve yeniden eklenmez."""
     win = indirme_penceresi
-    liste = win.pages["episodes"]
-    liste.load("TürkAnime", "naruto-test", "Naruto Test",
-               episodes=[_giris(i) for i in (1, 2, 3)])
-    liste.btnAll.setChecked(True)
+    sahte_bolumler({"TürkAnime": [_giris(i) for i in (1, 2, 3)]})
+    win._on_anime_selected("TürkAnime", "naruto-test", "Naruto Test")
+    web.detay_bekle("TürkAnime", 3)
+    web.js("Array.from(document.querySelectorAll('.ak-arac button'))"
+           ".find(b => b.textContent === 'Tümü').click()")
+    indir = ("Array.from(document.querySelectorAll('.eylem-cubugu button'))"
+             ".find(b => b.textContent.includes('Seçilenleri İndir')).click()")
+    web.js(indir)
+    web.bekle("document.querySelector('#bildirimler').innerText"
+              ".includes('3 bölüm indirme sırasına alındı')")
+    assert win._current_page == "detail"
+    web.qtbot.waitUntil(lambda: win.indirme_sayisi == 3, timeout=2000)
+    # Üst çubukta İndirilenler rozeti.
+    web.bekle("document.querySelector('.menu-sayac').textContent === '3'")
+    # Satırlar "Kuyrukta" rozetini alır.
+    web.bekle("document.querySelectorAll('.bolum-satiri .rozet .donen').length === 3")
 
-    liste._download_selected()
-
-    assert win.stack.currentWidget() is liste
-    assert liste.lblStatus.isVisible()
-    assert "3 bölüm indirme sırasına alındı" in liste.lblStatus.text()
-    qtbot.waitUntil(lambda: "(3)" in win._nav_buttons["downloads"].text(), timeout=2000)
-
-    liste._download_selected()
-
-    assert "3 bölüm zaten kuyrukta" in liste.lblStatus.text()
+    web.js(indir)
+    web.bekle("document.querySelector('#bildirimler').innerText"
+              ".includes('3 bölüm zaten kuyrukta')")
     assert len(win.downloads.active_ids()) == 3
+
+

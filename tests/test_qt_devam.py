@@ -15,7 +15,6 @@ import pytest
 
 from turkanime_api.cli.dosyalar import Dosyalar
 from turkanime_api.common import kutuphane, mpv_oynatici
-from turkanime_api.gui.qt.pages.episodes import EpisodePage
 from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 from turkanime_api.sources.adapter import AdapterVideo
 
@@ -171,59 +170,65 @@ def test_izlerken_kaydet_yalnizca_tam_izlemede_indirilmis_sayiliyor(
     assert kayit.exists()
 
 
-# ── Bölüm listesi: Devam et / Sıradaki ───────────────────────────────────────
+# ── Detay sayfası: Devam et / Sıradaki ───────────────────────────────────────
 class ListeBolumu:
     def __init__(self, no):
         self.slug = f"naruto-{no}-bolum"
         self.anime = Anime()
 
 
-def _liste(qtbot):
-    page = EpisodePage()
-    qtbot.addWidget(page)
-    bolumler = [{"title": f"{no}. Bölüm", "obj": ListeBolumu(no)} for no in range(1, 7)]
-    page.load("TürkAnime", "naruto", "Naruto", episodes=bolumler)
-    return page
+def _liste(main_window, web, sahte_bolumler):
+    """Naruto'nun 6 bölümü TürkAnime'de; oynatılanlar listesi döner."""
+    istenen: list = []
+    main_window.detay._oynat = istenen.append
+    sahte_bolumler({"TürkAnime": [{"title": f"{no}. Bölüm", "obj": ListeBolumu(no)}
+                                  for no in range(1, 7)]})
+    main_window._on_anime_selected("TürkAnime", "naruto", "Naruto", None)
+    web.detay_bekle("TürkAnime", 6)
+    return istenen
 
 
-def test_devam_et_yarim_kalan_bolume_gidiyor(izole_ev, qtbot):
+DEVAM = "document.querySelector('.eylem-cubugu .dugme.marka')"
+
+
+def test_devam_et_yarim_kalan_bolume_gidiyor(izole_ev, main_window, web, sahte_bolumler):
     d = Dosyalar()
     for no in range(1, 5):
         d.set_gecmis("naruto", f"naruto-{no}-bolum", "izlendi")
     kutuphane.konum_kaydet("TürkAnime", "naruto", "naruto-5-bolum", 734.2, 1420)
 
-    page = _liste(qtbot)
-    assert not page.btnDevam.isHidden()
-    assert "5" in page.btnDevam.text() and "12:14" in page.btnDevam.text()
-    istenen = []
-    page.play_requested.connect(istenen.append)
-    page.btnDevam.click()
+    istenen = _liste(main_window, web, sahte_bolumler)
+    web.bekle(f"!!{DEVAM}")
+    metin = web.js(f"{DEVAM}.textContent")
+    assert "Devam et: 5. Bölüm" in metin and "12:14" in metin
+    web.js(f"{DEVAM}.click()")
+    web.qtbot.waitUntil(lambda: bool(istenen), timeout=5000)
     assert istenen[0]["obj"].slug == "naruto-5-bolum"
 
     # 5 sonuna kadar izlendi: konum silinir, izlendi yazılır → Sıradaki 6.
     kutuphane.konum_sil("TürkAnime", "naruto", "naruto-5-bolum")
     d.set_gecmis("naruto", "naruto-5-bolum", "izlendi")
-    page.refresh_history()
-    assert page.btnDevam.text().startswith("▶ Sıradaki: 6. Bölüm")
-    page.btnDevam.click()
+    main_window._refresh_episode_history()
+    web.bekle(f"{DEVAM}.textContent.includes('Sıradaki: 6. Bölüm')")
+    web.js(f"{DEVAM}.click()")
+    web.qtbot.waitUntil(lambda: len(istenen) == 2, timeout=5000)
     assert istenen[1]["obj"].slug == "naruto-6-bolum"
 
 
-def test_hic_izlenmemis_ya_da_bitmis_seride_dugme_yok(izole_ev, qtbot):
-    page = _liste(qtbot)
-    assert page.btnDevam.isHidden()
-    d = Dosyalar()
-    d.set_gecmis("naruto", "naruto-6-bolum", "izlendi")
-    page.refresh_history()
-    assert page.btnDevam.isHidden(), "son bölüm izlendi: sıradaki yok"
+def test_hic_izlenmemis_ya_da_bitmis_seride_dugme_yok(izole_ev, main_window, web,
+                                                      sahte_bolumler):
+    _liste(main_window, web, sahte_bolumler)
+    web.bekle("!!document.querySelector('.eylem-cubugu button')")
+    assert not web.js(f"!!{DEVAM}")
+    Dosyalar().set_gecmis("naruto", "naruto-6-bolum", "izlendi")
+    main_window._refresh_episode_history()
+    web.bekle("document.querySelectorAll('.bolum-satiri.izlendi').length === 1")
+    assert not web.js(f"!!{DEVAM}"), "son bölüm izlendi: sıradaki yok"
 
 
-def test_ayar_sayfasi_ilerlemeyi_sor(izole_ev, qtbot):
-    from turkanime_api.gui.qt.pages.settings import SettingsPage
-    page = SettingsPage()
-    qtbot.addWidget(page)
-    page.reload()
-    assert not page.chkAskProgress.isChecked()
-    page.chkAskProgress.setChecked(True)
-    page.save()
+def test_ayar_sayfasi_ilerlemeyi_sor(izole_ev, ayar_uclari):
+    uclar = ayar_uclari()
+    assert uclar.ayarlar()["degerler"]["ilerlemeyi_sor"] is False
+    uclar.ayarlari_kaydet({"ilerlemeyi_sor": True})
     assert Dosyalar().ayarlar["ilerlemeyi sor"] is True
+    assert uclar.ayarlar()["degerler"]["ilerlemeyi_sor"] is True

@@ -180,6 +180,18 @@ def test_gomulu_dosya_pakete_konuyor():
     assert isinstance(veri, list) and veri
 
 
+def test_web_arayuzu_pakete_konuyor():
+    """Web arayüzünün dosyaları `gui.web.sema.STATIK`'te aranıyor (modülün
+    yanında); PyInstaller onları ancak spec'te `datas` olarak görürse taşır."""
+    spec = SPEC.read_text(encoding="utf-8")
+    assert ("('turkanime_api/gui/web/statik', 'turkanime_api/gui/web/statik')"
+            in spec)
+    assert "'PySide6.QtWebChannel'" in spec
+    from turkanime_api.gui.web import sema
+    assert (sema.STATIK / "index.html").is_file()
+    assert sema.STATIK == DEPO_KOKU / "turkanime_api" / "gui" / "web" / "statik"
+
+
 def _bicimler(kayit) -> set:
     bicim = kayit.get("format") or []
     return {bicim} if isinstance(bicim, str) else set(bicim)

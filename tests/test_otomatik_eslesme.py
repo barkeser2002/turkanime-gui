@@ -1,4 +1,5 @@
-"""Detay sayfasının otomatik kaynak eşleştirmesi (eşik + başlık varyantları).
+"""Otomatik kaynak eşleştirme (eşik + başlık varyantları): `gui/web/eslestirme`
+ve detay sayfasının `eslestir` ucu.
 
 ESKİ HATA: `_do_resolve` her kaynaktan TEK aday istiyor ve onu skorsuz
 bağlıyordu. `Kaynak.ara` listeyi alaka sıralamasından önce kestiği için bu,
@@ -14,11 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from turkanime_api.gui.qt.pages import detail as detail_mod
-from turkanime_api.gui.qt.pages.detail import (
-    AnimeMatchDialog, DetailPage, en_iyi_aday, en_iyi_slug, eslesme_basliklari,
-)
 from turkanime_api.gui.qt.sources_bridge import METADATA_ONLY, supported_sources
+from turkanime_api.gui.web import eslestirme
+from turkanime_api.gui.web.eslestirme import (
+    en_iyi_aday, en_iyi_slug, eslesme_basliklari, kaynaklari_esle,
+)
+from turkanime_api.gui.web.uclar_detay import DetayUclari
 from turkanime_api.sources import animedepo
 
 
@@ -49,25 +51,14 @@ def yerel_arsiv(tmp_path, monkeypatch):
     animedepo.sifirla()
 
 
-@pytest.fixture
-def page(qtbot):
-    widget = DetailPage()
-    qtbot.addWidget(widget)
-    return widget
-
-
 @pytest.fixture(autouse=True)
 def _kayit_yok(monkeypatch):
-    monkeypatch.setattr(detail_mod, "save_match", lambda *a: True)
+    monkeypatch.setattr(eslestirme, "save_match", lambda *a: True)
 
 
 @pytest.fixture
-def diyalog_yasak(monkeypatch, page):
-    """Eşleşme bulunması gereken senaryoda diyalog açılırsa test düşsün."""
-    def _patla():
-        raise AssertionError("otomatik eşleşme varken diyalog açıldı")
-
-    monkeypatch.setattr(page, "open_match_dialog", _patla)
+def uclar():
+    return DetayUclari(None, oynat=lambda e: None, indir=lambda e: None)
 
 
 @pytest.fixture
@@ -87,18 +78,6 @@ def sahte_motor(monkeypatch):
         return sorgular
 
     return _kur
-
-
-@pytest.fixture
-def sahte_fetch(monkeypatch):
-    cagrilar: list = []
-
-    def fake(source, slug, title):
-        cagrilar.append((source, slug))
-        return [{"title": "1. Bölüm", "obj": object()}]
-
-    monkeypatch.setattr(detail_mod, "fetch_episodes", fake)
-    return cagrilar
 
 
 def kayitlar(*ciftler):
@@ -147,95 +126,53 @@ def test_eslesme_basliklari_sirali_ve_tekrarsiz():
 
 
 # ── Arşivle (gerçek motor, ağsız) ───────────────────────────────────────────
-def test_kesif_karti_arsive_kendiliginden_baglaniyor(qtbot, page, yerel_arsiv,
-                                                      diyalog_yasak):
-    """Keşif kartı → "Bölümleri Getir": diyalog yok, arşiv birebir eşleşiyor."""
+def test_kesif_karti_arsive_kendiliginden_baglaniyor(uclar, yerel_arsiv):
+    """Keşif kartı: arşiv birebir eşleşiyor, ikinci sezon bağlanmıyor."""
     yerel_arsiv({"sousou-no-frieren": "Sousou no Frieren",
                  "sousou-no-frieren-2": "Sousou no Frieren 2nd Season"})
-    page.show_anime({"title": {"romaji": "Sousou no Frieren"}})
-    assert page.current_source() == "TürkAnime", "varsayılan kaynak arşiv olmalı"
-
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000) as sinyal:
-        page.load_episodes()
-
-    assert page._bindings == {"TürkAnime": "sousou-no-frieren"}
-    assert page.current_source() == "TürkAnime"
-    assert sinyal.args[:2] == ["TürkAnime", "sousou-no-frieren"]
-    assert "Eşleşme: TürkAnime (arşiv) → Sousou no Frieren" in page.lblStatus.text()
+    rid = uclar.ac_kesif({"title": {"romaji": "Sousou no Frieren"}})
+    sonuc = uclar.eslestir(rid, ["TürkAnime"])
+    assert uclar.oturum.baglar == {"TürkAnime": "sousou-no-frieren"}
+    assert sonuc["yeni"] == ["TürkAnime"]
+    (kaynak,) = sonuc["kaynaklar"]
+    assert kaynak["eslesme"] == "Sousou no Frieren"     # sayfa "↳ Eşleşme: …" gösterir
 
 
-def test_romaji_tutmazsa_ingilizce_adla_baglaniyor(qtbot, page, yerel_arsiv,
-                                                   diyalog_yasak):
+def test_romaji_tutmazsa_ingilizce_adla_baglaniyor(uclar, yerel_arsiv):
     yerel_arsiv({"the-apothecary-diaries": "The Apothecary Diaries",
                  "kusuriya": "Kusuriya Tenshi"})
-    page.show_anime({"title": {"romaji": "Kusuriya no Hitorigoto",
-                               "english": "The Apothecary Diaries"}})
-
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000):
-        page.load_episodes()
-    assert page._bindings == {"TürkAnime": "the-apothecary-diaries"}
+    rid = uclar.ac_kesif({"title": {"romaji": "Kusuriya no Hitorigoto",
+                                    "english": "The Apothecary Diaries"}})
+    uclar.eslestir(rid, ["TürkAnime"])
+    assert uclar.oturum.baglar == {"TürkAnime": "the-apothecary-diaries"}
 
 
-def test_yalnizca_benzer_aday_varsa_diyalog_dolu_ve_aramis_aciliyor(
-        qtbot, page, sahte_motor, monkeypatch):
-    """"[Oshi no Ko]" → yalnızca "Hoshi no Koe": bağlama yok, diyalog açılır."""
+def test_yalnizca_benzer_aday_varsa_baglanmiyor(uclar, sahte_motor):
+    """"[Oshi no Ko]" → yalnızca "Hoshi no Koe" (0.91): bağlama yok; sayfa
+    "Otomatik eşleşme bulunamadı" deyip seçim penceresini öneriyor."""
     sorgular = sahte_motor({"TürkAnime": kayitlar(("hoshi-no-koe", "Hoshi no Koe"))})
-    gorulen: dict = {}
-
-    def sahte_exec(dialog):
-        # "Ara"ya BASILMADAN ağaç dolmalı.
-        qtbot.waitUntil(lambda: dialog.tree.topLevelItemCount() == 1, timeout=5000)
-        gorulen["sorgu"] = dialog.txtQuery.text()
-        gorulen["aday"] = dialog.tree.topLevelItem(0).child(0).text(0)
-        return 0                            # İptal
-
-    monkeypatch.setattr(AnimeMatchDialog, "exec", sahte_exec)
-    page.show_anime({"title": {"romaji": "[Oshi no Ko]"}})
-    page.load_episodes()
-
-    qtbot.waitUntil(lambda: "sorgu" in gorulen, timeout=5000)
-    assert gorulen == {"sorgu": "[Oshi no Ko]", "aday": "Hoshi no Koe"}
-    assert page._bindings == {}
+    rid = uclar.ac_kesif({"title": {"romaji": "[Oshi no Ko]"}})
+    sonuc = uclar.eslestir(rid, ["TürkAnime"])
+    assert uclar.oturum.baglar == {}
+    assert sonuc["yeni"] == [] and sonuc["eslesmeyen"] == ["TürkAnime"]
     assert sorgular[0] == "[Oshi no Ko]"
-    qtbot.waitUntil(lambda: "bağlı değil" in page.lblStatus.text(), timeout=2000)
-
-
-def test_diyalogda_secim_yuklemeyi_surduruyor(qtbot, page, sahte_motor,
-                                              sahte_fetch, monkeypatch):
-    sahte_motor({"TürkAnime": kayitlar(("hoshi-no-koe", "Hoshi no Koe"))})
-
-    def sec(dialog):
-        dialog.selection = ("TürkAnime", "oshi-no-ko", "Oshi no Ko")
-        return int(AnimeMatchDialog.DialogCode.Accepted)
-
-    monkeypatch.setattr(AnimeMatchDialog, "exec", sec)
-    page.show_anime({"title": {"romaji": "[Oshi no Ko]"}})
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000):
-        page.load_episodes()
-    assert sahte_fetch == [("TürkAnime", "oshi-no-ko")]
 
 
 # ── "Tüm kaynaklar" ─────────────────────────────────────────────────────────
-def test_tum_kaynaklar_dogru_adayi_baglayip_eslesmeyeni_soyluyor(
-        qtbot, page, sahte_motor, sahte_fetch):
+def test_tum_kaynaklar_dogru_adayi_baglayip_eslesmeyeni_soyluyor(uclar, sahte_motor):
     sahte_motor({
         "TürkAnime": kayitlar(("one-piece", "One Piece")),
         "AnimeciX": kayitlar(("111", "Koisuru One Piece"), ("222", "One Piece")),
         "Anizle": kayitlar(("fan", "One Piece Fan Letter")),
         "AniList": kayitlar(("21", "One Piece")),
     })
-    page.show_match("TürkAnime", "one-piece", "One Piece")
-    page.chkAllSources.setChecked(True)
-
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000):
-        page.load_episodes()
-
-    cekilen = dict(sahte_fetch)
-    assert cekilen["AnimeciX"] == "222", "ham ilk sonuç (Koisuru) bağlandı"
-    assert "Anizle" not in cekilen, "eşiği geçmeyen aday bağlandı"
-    assert "AniList" not in page._bindings
-    assert "Eşleşme bulunamayan" in page.lblStatus.text()
-    assert "Anizle" in page.lblStatus.text()
+    rid = uclar.ac_sonuc("TürkAnime", "one-piece", "One Piece")
+    sonuc = uclar.eslestir(rid, None)
+    baglar = uclar.oturum.baglar
+    assert baglar["AnimeciX"] == "222", "ham ilk sonuç (Koisuru) bağlandı"
+    assert "Anizle" not in baglar, "eşiği geçmeyen aday bağlandı"
+    assert "AniList" not in baglar
+    assert "Anizle" in sonuc["eslesmeyen"]
 
 
 def _casus_motor(monkeypatch, cevap=None):
@@ -261,63 +198,43 @@ def _casus_motor(monkeypatch, cevap=None):
     return cagrilan
 
 
-def test_tek_kaynak_eslestirmesi_yalnizca_o_kaynagi_ariyor(qtbot, page,
-                                                           monkeypatch, sahte_fetch):
+def test_tek_kaynak_eslestirmesi_yalnizca_o_kaynagi_ariyor(uclar, monkeypatch):
     cagrilan = _casus_motor(monkeypatch, {"AnimeciX": [("17", "Cowboy Bebop")]})
-    page.show_match("TürkAnime", "cowboy-bebop", "Cowboy Bebop")
-    page.cmbSource.setCurrentIndex(page.cmbSource.findData("AnimeciX"))
-
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000):
-        page.load_episodes()
+    rid = uclar.ac_sonuc("TürkAnime", "cowboy-bebop", "Cowboy Bebop")
+    uclar.eslestir(rid, ["AnimeciX"])
     assert cagrilan == ["AnimeciX"]
-    assert sahte_fetch == [("AnimeciX", "17")]
+    assert uclar.oturum.baglar["AnimeciX"] == "17"
 
 
-def test_tum_kaynaklar_oynatilabilirleri_ariyor_anilisti_asla(qtbot, page,
-                                                               monkeypatch, sahte_fetch):
+def test_tum_kaynaklar_oynatilabilirleri_ariyor_anilisti_asla(uclar, monkeypatch):
     cagrilan = _casus_motor(monkeypatch)
-    page.show_match("TürkAnime", "cowboy-bebop", "Cowboy Bebop")
-    page.chkAllSources.setChecked(True)
-
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000):
-        page.load_episodes()
+    rid = uclar.ac_sonuc("TürkAnime", "cowboy-bebop", "Cowboy Bebop")
+    uclar.eslestir(rid, None)
     beklenen = {s for s in supported_sources() if s not in METADATA_ONLY} - {"TürkAnime"}
     assert set(cagrilan) == beklenen, "zaten bağlı arşiv de yeniden arandı"
     assert not METADATA_ONLY & set(cagrilan)
 
 
 # ── AniList arama kartı ─────────────────────────────────────────────────────
-def test_anilist_karti_metadata_kaydi_olarak_aciliyor(qtbot, page, sahte_motor,
-                                                      sahte_fetch, diyalog_yasak):
+def test_anilist_karti_metadata_kaydi_olarak_aciliyor(uclar, sahte_motor):
     sahte_motor({"TürkAnime": kayitlar(("sousou-no-frieren", "Sousou no Frieren"))})
-    page.show_match("AniList", "154587", "Sousou no Frieren",
-                    kayit={"slug": "154587", "title": "Sousou no Frieren",
-                           "image": "https://img/frieren.jpg"})
-
-    assert "AniList" not in page._bindings
-    assert page.cmbSource.findData("AniList") < 0
-    assert page._anime["coverImage"] == {"large": "https://img/frieren.jpg"}
-
-    with qtbot.waitSignal(page.episodes_ready, timeout=5000):
-        page.load_episodes()
-    assert sahte_fetch == [("TürkAnime", "sousou-no-frieren")]
-    assert "metadata" not in page.lblStatus.text()
+    rid = uclar.ac_sonuc("AniList", "154587", "Sousou no Frieren",
+                         {"slug": "154587", "title": "Sousou no Frieren",
+                          "image": "https://img/frieren.jpg"})
+    assert uclar.oturum.baglar == {}
+    assert uclar.oturum.anime["coverImage"] == {"large": "https://img/frieren.jpg"}
+    uclar.eslestir(rid, ["TürkAnime"])
+    assert uclar.oturum.baglar == {"TürkAnime": "sousou-no-frieren"}
 
 
-def test_do_resolve_ilgisiz_sonucu_baglamiyor(qtbot, page, sahte_motor):
+def test_ilgisiz_sonuc_baglanmiyor(sahte_motor):
     sahte_motor({"AnimeciX": kayitlar(("5", "Tamamen Başka Bir Seri"))})
-    rid = page.show_anime({"title": {"romaji": "Cowboy Bebop"}})
-    yayilan: list = []
-    page.sources_resolved.disconnect()
-    page.sources_resolved.connect(yayilan.append)
-
-    page._do_resolve(rid, "Cowboy Bebop", {}, False, "AnimeciX", ["Cowboy Bebop"])
-    _rid, baglar, _hepsi, _istenen, rapor = yayilan[0]
+    baglar, _eslesen, eslesmeyen = kaynaklari_esle(["Cowboy Bebop"], ["AnimeciX"])
     assert baglar == {}
-    assert rapor["eslesmeyen"] == ["AnimeciX"]
+    assert eslesmeyen == ["AnimeciX"]
 
 
-def test_varyant_turu_yalnizca_cevap_veren_eslesmeyenleri_ariyor(page, sahte_motor):
+def test_varyant_turu_yalnizca_cevap_veren_eslesmeyenleri_ariyor(sahte_motor):
     """İkinci başlıkla tur: hata veren kaynağa yeniden gidilmiyor."""
     from turkanime_api.common.adapters import AramaSonuclari
 
@@ -326,12 +243,8 @@ def test_varyant_turu_yalnizca_cevap_veren_eslesmeyenleri_ariyor(page, sahte_mot
                               hatalar={"Anizle": "kapalı"})
 
     sorgular = sahte_motor(sonuc)
-    rid = page.show_anime({"title": {"romaji": "A"}})
-    yayilan: list = []
-    page.sources_resolved.disconnect()
-    page.sources_resolved.connect(yayilan.append)
-
-    page._do_resolve(rid, "A", {}, True, "TürkAnime", ["A", "B", "C", "D"])
+    _baglar, _eslesen, eslesmeyen = kaynaklari_esle(["A", "B", "C", "D"],
+                                                     ["AnimeciX", "Anizle"])
     # 3 tur sınırı; AnimeciX cevap verdi ama bulamadı → sonraki varyantlar denendi.
     assert sorgular == ["A", "B", "C"]
-    assert "Anizle" in yayilan[0][4]["eslesmeyen"]
+    assert "Anizle" in eslesmeyen

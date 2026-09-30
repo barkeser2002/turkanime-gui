@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 
 from turkanime_api.gui.qt import prefs
-from turkanime_api.gui.qt.pages.episodes import EpisodePage, EpisodeRow
 from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 
 
@@ -213,40 +212,49 @@ class SahteGecmis:
         return (slug in self._izlendi, slug in self._indirildi)
 
 
-def _episode(bolum, title="1. Bölüm", source="TürkAnime"):
-    return {"season": 1, "number": 1, "title": title,
-            "sources": {source: {"title": title, "obj": bolum}}}
+def _bolumler(gecmis=None, monkeypatch=None, sahte_bolumler=None, bolum=None):
+    """Detay uçlarıyla tek bölümlük TürkAnime listesi; dönen: (uçlar, rid, satır)."""
+    from turkanime_api.gui.web.uclar_detay import DetayUclari
+    if gecmis is not None:
+        monkeypatch.setattr(prefs.Gecmis, "yukle", classmethod(lambda cls: gecmis))
+    sahte_bolumler({"TürkAnime": [{"title": "1. Bölüm", "obj": bolum or SahteBolum()}]})
+    uclar = DetayUclari(None, oynat=lambda e: None, indir=lambda e: None)
+    rid = uclar.ac_sonuc("TürkAnime", "naruto-test", "Naruto Test")
+    return uclar, rid, uclar.bolumler(rid, "TürkAnime")["bolumler"][0]
 
 
-def test_satirda_izlendi_ve_indirildi_rozeti(qtbot):
+def test_satirda_izlendi_ve_indirildi_rozeti(monkeypatch, sahte_bolumler, ayarla):
+    ayarla(**{"izlendi ikonu": True})
     bolum = SahteBolum()
-    row = EpisodeRow(_episode(bolum),
-                     gecmis=SahteGecmis(izlendi=[bolum.slug], indirildi=[bolum.slug]))
-    qtbot.addWidget(row)
-
-    assert row.izlendi and row.indirildi
-    assert row.lblHistory.isVisibleTo(row)
-    assert "izlendi" in row.lblHistory.toolTip()
+    _, _, satir = _bolumler(SahteGecmis(izlendi=[bolum.slug], indirildi=[bolum.slug]),
+                            monkeypatch, sahte_bolumler, bolum)
+    assert satir["rozet"] is True
+    assert satir["izlendi"] is True and satir["indirildi"] is True
 
 
-def test_satirda_gecmis_yoksa_rozet_gizli(qtbot):
-    row = EpisodeRow(_episode(SahteBolum()), gecmis=SahteGecmis())
-    qtbot.addWidget(row)
-    assert not row.izlendi and not row.indirildi
-    assert not row.lblHistory.isVisibleTo(row)
+def test_satirda_gecmis_yoksa_rozet_gizli(monkeypatch, sahte_bolumler, ayarla):
+    ayarla(**{"izlendi ikonu": True})
+    _, _, satir = _bolumler(SahteGecmis(), monkeypatch, sahte_bolumler)
+    assert not satir["izlendi"] and not satir["indirildi"]
 
 
-def test_ikon_ayari_kapaliyken_gecmis_okunmuyor(qtbot, ayarla):
+def test_ikon_ayari_kapaliyken_rozet_gosterilmiyor(main_window, web, monkeypatch,
+                                                   sahte_bolumler, ayarla):
+    """Rozet kapalı; geçmiş yine okunuyor ("İzlenmemişler" seçimi ona bakıyor)."""
     ayarla(**{"izlendi ikonu": False})
-    page = EpisodePage()
-    qtbot.addWidget(page)
-    page.load("TürkAnime", "naruto-test", "Naruto Test",
-              episodes=[{"title": "1. Bölüm", "obj": SahteBolum()}])
-    assert page._gecmis is None
-    assert not page._rows[0].lblHistory.isVisibleTo(page._rows[0])
+    bolum = SahteBolum()
+    _, _, satir = _bolumler(SahteGecmis(izlendi=[bolum.slug]), monkeypatch,
+                            sahte_bolumler, bolum)
+    assert satir["rozet"] is False and satir["izlendi"] is True
+
+    main_window._on_anime_selected("TürkAnime", "naruto-test", "Naruto Test", None)
+    web.detay_bekle("TürkAnime", 1)
+    web.qtbot.wait(200)                      # `bolum_durumlari` tazelemesi
+    assert web.js("document.querySelectorAll('.bolum-satiri.izlendi').length") == 0
+    assert web.js("document.querySelectorAll('.bolum-rozetler .rozet').length") == 0
 
 
-def test_liste_gercek_gecmisi_okuyor(qtbot, izole_ev):
+def test_liste_gercek_gecmisi_okuyor(izole_ev, sahte_bolumler):
     """`gecmis.json`'daki kayıt satır rozetine yansımalı.
 
     `izole_ev` şart: aşağıdaki "indirildi False" iddiası dosyanın BOŞ
@@ -258,17 +266,12 @@ def test_liste_gercek_gecmisi_okuyor(qtbot, izole_ev):
     Dosyalar().set_ayar("izlendi ikonu", True)
     Dosyalar().set_gecmis("naruto-test", "naruto-test-1-bolum", "izlendi")
 
-    page = EpisodePage()
-    qtbot.addWidget(page)
-    page.load("TürkAnime", "naruto-test", "Naruto Test",
-              episodes=[{"title": "1. Bölüm", "obj": SahteBolum()}])
-
-    assert page._rows[0].izlendi is True
-    assert page._rows[0].indirildi is False
+    uclar, rid, satir = _bolumler(sahte_bolumler=sahte_bolumler)
+    assert satir["izlendi"] is True
+    assert satir["indirildi"] is False
 
     Dosyalar().set_gecmis("naruto-test", "naruto-test-1-bolum", "indirildi")
-    page.refresh_history()
-    assert page._rows[0].indirildi is True
+    assert uclar.bolum_durumlari(rid)["durumlar"]["TürkAnime"][0]["indirildi"] is True
 
 
 # ── Yedekli oynatma: mpv başarısızsa izlendi yazılmıyor, sıradaki aday ──────

@@ -8,7 +8,7 @@ yaramıyor" sınıfı hatalar:
   `sources.tranime.set_session_cookie`'ye vermiyordu; global None kalıyor,
   `search_tranime` daha isteği kurmadan boş liste dönüyordu.
 * Dört ayar (`1080p aday sayisi`, `izlerken kaydet`, `izlendi ikonu`,
-  `manuel fansub`) davranışı belirliyordu ama Qt tarafında yazacak kontrol
+  `manuel fansub`) davranışı belirliyordu ama arayüzde yazacak kontrol
   yoktu — yalnızca okunuyorlardı.
 * OpenAnime kaynağı kullanıcıya "Ayarlar'dan token'ını girin" diyordu; öyle bir
   alan hiç olmadı.
@@ -16,6 +16,9 @@ yaramıyor" sınıfı hatalar:
 `prefs` SAHTELENMİYOR: soru "ayar okunuyor mu?" değil, "diske yazılıp diskten
 geri okunuyor mu?". Sahte bir `prefs` yalnızca sahteyi sınardı. Bu yüzden her
 test `izole_ev` ile geçici bir yapılandırma köküne bağlanıyor.
+
+Ayarlar sayfası web'de; sınanan, sayfanın çağırdığı `AyarlarUclari` uçları
+(`ayarlar`, `ayarlari_kaydet`, `cerez_temizle`).
 """
 from __future__ import annotations
 
@@ -30,17 +33,13 @@ CEREZ = (".tranimeizle.co\tTRUE\t/\tTRUE\t2000000000\t"
 
 
 @pytest.fixture
-def sayfa(qtbot, izole_ev):
-    """Tek başına açılmış `SettingsPage` (ana pencere kurmadan).
+def sayfa(ayar_uclari, izole_ev):
+    """Ayarlar sayfasının Python tarafı (ana pencere kurmadan).
 
-    `izole_ev` şart: sayfa gerçek `ayarlar.json`'a yazıyor, izole edilmezse
+    `izole_ev` şart: uçlar gerçek `ayarlar.json`'a yazıyor, izole edilmezse
     test kullanıcının yapılandırmasını bozar.
     """
-    from turkanime_api.gui.qt.pages.settings import SettingsPage
-
-    sf = SettingsPage()
-    qtbot.addWidget(sf)
-    return sf
+    return ayar_uclari()
 
 
 @pytest.fixture
@@ -102,15 +101,14 @@ def test_ascii_ad_varsayilanlarda_var(izole_ev):
 
 
 # ── Dört eksik kontrol ───────────────────────────────────────────────────────
+DORT_AYAR = {"aday": 11, "izlerken_kaydet": True, "izlendi_ikonu": False,
+             "manuel_fansub": True}
+
+
 def test_dort_ayar_kaydet_ile_diske_yaziliyor(sayfa):
     """ESKİ HATA: `save()` yalnızca 6 anahtar yazıyordu; aday sayısı, izlerken
-    kaydet, izlendi ikonu ve manuel fansub'un Qt'de yazıcısı yoktu."""
-    sayfa.spnAday.setValue(11)
-    sayfa.chkWhileWatching.setChecked(True)
-    sayfa.chkWatchedIcon.setChecked(False)
-    sayfa.chkManualFansub.setChecked(True)
-
-    sayfa.save()
+    kaydet, izlendi ikonu ve manuel fansub'un arayüzde yazıcısı yoktu."""
+    sayfa.ayarlari_kaydet(dict(DORT_AYAR))
 
     ayarlar = Dosyalar().ayarlar
     assert ayarlar["1080p aday sayisi"] == 11
@@ -121,14 +119,9 @@ def test_dort_ayar_kaydet_ile_diske_yaziliyor(sayfa):
 
 def test_kaydedilen_dort_ayar_prefs_uzerinden_geri_okunuyor(sayfa):
     """Yazım ile okuma aynı anahtar adında buluşmalı: `prefs.oku` ayar
-    adlarını kendi listesinden çözüyor, sayfa başka bir ad yazsa fark
+    adlarını kendi listesinden çözüyor, uç başka bir ad yazsa fark
     edilmezdi."""
-    sayfa.spnAday.setValue(11)
-    sayfa.chkWhileWatching.setChecked(True)
-    sayfa.chkWatchedIcon.setChecked(False)
-    sayfa.chkManualFansub.setChecked(True)
-
-    sayfa.save()
+    sayfa.ayarlari_kaydet(dict(DORT_AYAR))
 
     tercih = prefs.oku()
     assert tercih.aday_sayisi == 11
@@ -137,31 +130,26 @@ def test_kaydedilen_dort_ayar_prefs_uzerinden_geri_okunuyor(sayfa):
     assert tercih.manuel_fansub is True
 
 
-def test_reload_dort_ayari_diskten_kontrollere_yaziyor(sayfa):
+def test_okuma_dort_ayari_diskten_forma_veriyor(sayfa):
     """Kaydedilen değer forma dönmezse kullanıcı bir sonraki açılışta eski
     değeri görür ve farkında olmadan geri yazar."""
     Dosyalar().set_ayar(ayar_list={
         "1080p aday sayisi": 5, "izlerken kaydet": True,
         "izlendi ikonu": False, "manuel fansub": True})
 
-    sayfa.reload()
+    deger = sayfa.ayarlar()["degerler"]
 
-    assert sayfa.spnAday.value() == 5
-    assert sayfa.chkWhileWatching.isChecked() is True
-    assert sayfa.chkWatchedIcon.isChecked() is False
-    assert sayfa.chkManualFansub.isChecked() is True
+    assert deger["aday"] == 5
+    assert deger["izlerken_kaydet"] is True
+    assert deger["izlendi_ikonu"] is False
+    assert deger["manuel_fansub"] is True
 
 
 def test_kaydet_onceki_ayarlari_bozmuyor(sayfa):
     """Yeni anahtarlar eklenirken eski altı anahtarın yazımı düşmemeli."""
-    hedef = sayfa._dosya().ta_path
-    sayfa.txtDir.setText(hedef)
-    sayfa.spnParallel.setValue(7)
-    sayfa.chkMaxRes.setChecked(False)
-    sayfa.chkRemember.setChecked(False)
-    sayfa.chkAria.setChecked(True)
-
-    sayfa.save()
+    hedef = Dosyalar().ta_path
+    sayfa.ayarlari_kaydet({"indirilenler": hedef, "paralel": 7, "max_res": False,
+                           "dakika_hatirla": False, "aria2c": True})
 
     ayarlar = Dosyalar().ayarlar
     assert ayarlar["indirilenler"] == hedef
@@ -171,37 +159,43 @@ def test_kaydet_onceki_ayarlari_bozmuyor(sayfa):
     assert ayarlar["aria2c kullan"] is True
 
 
+def test_formda_olmayan_alan_yazilmiyor(sayfa):
+    """Sayfa yalnızca bildiği alanları gönderiyor; eksik alan diskteki değeri
+    varsayılana ezmemeli."""
+    Dosyalar().set_ayar("manuel fansub", True)
+    sayfa.ayarlari_kaydet({"paralel": 4})
+    assert Dosyalar().ayarlar["manuel fansub"] is True
+
+
 # ── TRAnimeİzle çerezi süreç içine giriyor mu? ───────────────────────────────
-def test_acilista_diskteki_cerez_kaynaga_ulasiyor(qtbot, izole_ev,
+def test_acilista_diskteki_cerez_kaynaga_ulasiyor(ayar_uclari, izole_ev,
                                                   temiz_kaynak_global):
     """ESKİ HATA: çerez diske yazılıyor ama `set_session_cookie` üretimde hiç
     çağrılmıyordu; `SESSION_COOKIE` None kalıyor ve `search_tranime` daha
     isteği kurmadan boş liste dönüyordu — kullanıcı her açılışta 0 bölüm."""
-    from turkanime_api.gui.qt.pages.settings import SettingsPage
     tranime, _ = temiz_kaynak_global
 
     Dosyalar().set_ayar("tranime_cookie", CEREZ)
     assert tranime.SESSION_COOKIE is None, "ön koşul: süreçte çerez yok"
 
-    qtbot.addWidget(SettingsPage())   # açılışta kurulan sayfa
+    ayar_uclari()                    # açılışta kurulan uçlar
 
     assert tranime.SESSION_COOKIE == "SAHTE-OTURUM-DEGERI"
 
 
-def test_acilista_yuklenen_cerez_istek_basliklarina_giriyor(qtbot, izole_ev,
+def test_acilista_yuklenen_cerez_istek_basliklarina_giriyor(ayar_uclari, izole_ev,
                                                             temiz_kaynak_global):
     """Global'i doldurmak yetmez: çerez giden isteğe de girmeli.
 
     `_get_cookies()` her TRAnimeİzle isteğinin çerez sözlüğünü kuruyor; asıl
     kanıt burada. Ağa çıkılmıyor — yalnızca sözlük kuruluyor.
     """
-    from turkanime_api.gui.qt.pages.settings import SettingsPage
     tranime, _ = temiz_kaynak_global
 
     Dosyalar().set_ayar("tranime_cookie", CEREZ)
     assert ".AitrWeb.Session" not in tranime._get_cookies()
 
-    qtbot.addWidget(SettingsPage())
+    ayar_uclari()
 
     assert tranime._get_cookies()[".AitrWeb.Session"] == "SAHTE-OTURUM-DEGERI"
 
@@ -211,10 +205,11 @@ def test_yeni_cerez_kaydedilince_aninda_kaynaga_gidiyor(sayfa,
     """Çerez alındıktan sonra yeniden başlatmak gerekmemeli."""
     tranime, _ = temiz_kaynak_global
 
-    sayfa._on_cookie_ready(CEREZ)
+    sayfa._cerez_geldi(CEREZ)                                  # noqa: SLF001
 
     assert Dosyalar().ayarlar["tranime_cookie"] == CEREZ
     assert tranime.SESSION_COOKIE == "SAHTE-OTURUM-DEGERI"
+    assert sayfa.kopru.son("ayar_cerez")["var"] is True
 
 
 def test_cerez_temizlenince_surec_ici_kopya_da_dusuyor(sayfa,
@@ -222,10 +217,10 @@ def test_cerez_temizlenince_surec_ici_kopya_da_dusuyor(sayfa,
     """ESKİ HATA: "Temizle" yalnızca diski siliyordu; kaynak, uygulama kapanana
     kadar iptal edilmiş çerezle istek atmaya devam ediyordu."""
     tranime, _ = temiz_kaynak_global
-    sayfa._on_cookie_ready(CEREZ)
+    sayfa._cerez_geldi(CEREZ)                                  # noqa: SLF001
     assert tranime.SESSION_COOKIE
 
-    sayfa._clear_cookie()
+    assert sayfa.cerez_temizle()["var"] is False
 
     assert Dosyalar().ayarlar["tranime_cookie"] == ""
     assert tranime.SESSION_COOKIE is None
@@ -237,9 +232,8 @@ def test_openani_jetonu_kaydedilip_kaynaga_gidiyor(sayfa, temiz_kaynak_global):
     token'ını girmeyi deneyin" diyordu ama böyle bir alan yoktu."""
     _, openani = temiz_kaynak_global
 
-    sayfa.txtOpenAniToken.setText("JETON-123")
-    sayfa.txtOpenAniRefresh.setText("TAZELE-456")
-    sayfa.save()
+    sayfa.ayarlari_kaydet({"openani_token": "JETON-123",
+                           "openani_refresh": "TAZELE-456"})
 
     ayarlar = Dosyalar().ayarlar
     assert ayarlar["openani_token"] == "JETON-123"
@@ -248,25 +242,26 @@ def test_openani_jetonu_kaydedilip_kaynaga_gidiyor(sayfa, temiz_kaynak_global):
     assert openani.OPENANI_REFRESH_TOKEN == "TAZELE-456"
 
 
-def test_acilista_diskteki_openani_jetonu_kaynaga_ulasiyor(qtbot, izole_ev,
+def test_acilista_diskteki_openani_jetonu_kaynaga_ulasiyor(ayar_uclari, izole_ev,
                                                            temiz_kaynak_global):
     """Jeton da çerez gibi süreç-içi global; açılışta geri yüklenmezse ancak
     kullanıcı Ayarlar'a girip Kaydet'e basınca etkili olurdu."""
-    from turkanime_api.gui.qt.pages.settings import SettingsPage
     _, openani = temiz_kaynak_global
 
     Dosyalar().set_ayar(ayar_list={"openani_token": "JETON-ACILIS",
                                    "openani_refresh_token": "TAZELE-ACILIS"})
 
-    qtbot.addWidget(SettingsPage())
+    ayar_uclari()
 
     assert openani.OPENANI_TOKEN == "JETON-ACILIS"
     assert openani.OPENANI_REFRESH_TOKEN == "TAZELE-ACILIS"
 
 
-def test_openani_jetonu_gizli_yaziliyor(sayfa):
-    """Jeton hesabın kendisi demek; ekranda düz metin durmamalı."""
-    from PySide6.QtWidgets import QLineEdit
-
-    assert sayfa.txtOpenAniToken.echoMode() == QLineEdit.EchoMode.Password
-    assert sayfa.txtOpenAniRefresh.echoMode() == QLineEdit.EchoMode.Password
+def test_gizli_alanlar_sayfada_parola_kutusu(izole_ev, main_window, web):
+    """Jeton ve anahtarlar hesabın kendisi demek; ekranda düz metin durmamalı."""
+    main_window.show_page("settings")
+    web.bekle("!!document.querySelector('[data-bolum=oynatma] input')")
+    for yer in ("token çerezi (opsiyonel)", "refreshToken çerezi (opsiyonel)",
+                "Sunucu API anahtarı", "Client Secret (opsiyonel)"):
+        assert web.js(f"document.querySelector('input[placeholder=\"{yer}\"]').type") \
+            == "password", yer

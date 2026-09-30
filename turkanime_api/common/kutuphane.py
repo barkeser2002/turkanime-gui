@@ -230,6 +230,11 @@ def _seriler(veri: Dict[str, Any]) -> List[Dict[str, Any]]:
             if isinstance(s, dict) and s.get("kaynak") and s.get("kimlik")]
 
 
+def seri_sayisi(veri: Optional[Dict[str, Any]] = None) -> int:
+    """Kitaplıktaki seri sayısı (izlenmiş ya da favori; ana sayfa hero'su)."""
+    return len(_seriler(veri if veri is not None else oku()))
+
+
 def devam_listesi(veri: Optional[Dict[str, Any]] = None,
                   sinir: Optional[int] = None) -> List[Dict[str, Any]]:
     """İzlenmiş seriler, en son izlenen başta."""
@@ -315,6 +320,6 @@ def bitti_mi(konum: Any, sure: Any, sebep: str = "") -> bool:
 
 __all__ = ["DOSYA_ADI", "GECMIS_SINIRI", "BITTI_ORANI", "ASGARI_KONUM",
            "kutuphane_yolu", "anahtar", "oku", "izleme_kaydet", "favori_ayarla",
-           "konum_kaydet", "konum_sil", "devam_listesi", "favoriler",
+           "konum_kaydet", "konum_sil", "seri_sayisi", "devam_listesi", "favoriler",
            "favori_mi", "gecmis_listesi", "konum_getir", "sure_metni",
            "sonraki_bolum", "bitti_mi"]
