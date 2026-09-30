@@ -124,6 +124,16 @@ _PATTERNS: List[Tuple[re.Pattern, Optional[int], Optional[int], Optional[int], f
     # Bunlar "yalnız sezon" kalıbından ÖNCE denenmeli: "2. Sezon 5. Bölüm"
     # metninde "Sezon 5" alt dizesi vardır ve sezon-yalnız kalıbı sezonu 5
     # sanıp bölümü hiç bulamaz.
+    # Sezonlu ARA bölüm: "2. Sezon 5.5. Bölüm" / "2nd Season 5.1. Bölüm" /
+    # "Sezon 2 - 5.5. Bölüm". Sezonlu tam bölüm kalıplarından ÖNCE: onlar
+    # "5.1. Bölüm" metninin yalnız "1. Bölüm" kısmını görüp ara bölümü
+    # 1. bölüm sanıyor, "5.5"te de kesiri düşürüp 5. bölümün yerine koyuyordu.
+    (re.compile(rf"(?i)\b{_N}\s*\.\s*{_SEZON}\b.*?\b{_N}\s*\.\s*{_ALT}\s*\.\s*"
+                r"(?:Bölüm|Bolum|Episode)\b"), 1, 2, 3, 0.95),
+    (re.compile(rf"(?i)\b{_N}{_SIRA}\s*{_SEZON}\b.*?\b{_N}\s*\.\s*{_ALT}\s*\.\s*"
+                r"(?:Bölüm|Bolum|Episode)\b"), 1, 2, 3, 0.95),
+    (re.compile(rf"(?i){_SEZON}\s*{_N}\b.*?\b{_N}\s*\.\s*{_ALT}\s*\.\s*"
+                r"(?:Bölüm|Bolum|Episode)\b"), 1, 2, 3, 0.95),
     # "2. Sezon 5. Bölüm" / "2.Sezon 5.Bolum"
     (re.compile(rf"(?i)\b{_N}\s*\.\s*{_SEZON}\b.*?\b{_N}\s*\.\s*"
                 r"(?:Bölüm|Bolum|Episode)\b"), 1, 2, None, 0.95),
