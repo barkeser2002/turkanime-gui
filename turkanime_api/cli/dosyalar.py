@@ -233,6 +233,12 @@ class Dosyalar:
             # Eski kurulumlardaki düz dizgi okunurken listeye çevriliyor
             # (bkz. `gui.web.uclar_ayarlar.bagis_kimlikleri`).
             "kimlik bagis id": [],
+            # Veri bağışı — VARSAYILAN KAPALI. Yalnızca ayar sayfasındaki onay
+            # penceresinde açıkça onay verilince açılır; "onayi" onaylanan
+            # metnin sürümü (metin değişirse eski onay geçmez, 0 = onay yok).
+            # Bkz. `gui.web.veri_bagisi`.
+            "veri bagisi": False,
+            "veri bagisi onayi": 0,
             # Sunucu adresi/anahtarı koda gömülü DEĞİL: gömülü olsaydı
             # istemcinin her kopyası aynı sunucuya kimlik göndermeye hazır
             # gelirdi. Boş bırakılırsa bağış ucu istemci tarafında da kapalıdır.

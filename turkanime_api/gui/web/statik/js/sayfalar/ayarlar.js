@@ -1,8 +1,10 @@
 /* Ayarlar: oynatma/indirme, bölüm listesi, çevrimdışı arşiv, kaynak
- * oturumları, kimlik bağışı, bağlantı, AniList, Discord ve bakım.
+ * oturumları, kimlik bağışı, veri bağışı, bağlantı, AniList, Discord ve bakım.
  *
  * Form alanları "Kaydet" ile yazılıyor (değişiklik olunca alttaki çubuk
- * beliriyor). Discord anahtarı ve arşiv/çerez/bağış eylemleri anlık.
+ * beliriyor). Discord anahtarı ve arşiv/çerez/bağış eylemleri anlık. Veri
+ * bağışı anahtarı bilerek formda DEĞİL: "Kaydet" onu onaysız açamasın; açmak
+ * Python'un onay penceresinden geçer (gui/web/veri_bagisi.py).
  */
 (function () {
   "use strict";
@@ -16,6 +18,7 @@
     ["arsiv", "Çevrimdışı Arşiv", "kutuphane"],
     ["oturum", "Kaynak Oturumları", "tamam"],
     ["bagis", "Kimlik Bağışı", "kalp"],
+    ["veri", "Veri Bağışı", "kivilcim"],
     ["baglanti", "Bağlantı", "dis"],
     ["anilist", "AniList", "yildiz"],
     ["bakim", "Discord ve Bakım", "ayar"]
@@ -54,6 +57,11 @@
       TA.dinle("ayar_durum", function (v) { self.durumYaz(v.mesaj, v.tur); });
       TA.dinle("ayar_cerez", function (v) { self.cerezGoster(v); });
       TA.dinle("ayar_bagis", function (v) { self.bagisGoster(v); });
+      // Onay cevabı ve göndericinin sayaçları (arka plandan) bu olayla gelir.
+      TA.dinle("ayar_veri_bagisi", function (v) {
+        self.veriGoster(v);
+        if (v.mesaj) self.durumYaz(v.mesaj, v.tur);
+      });
       TA.dinle("ayar_anilist", function (v) { self.anilistGoster(v); });
       TA.dinle("arsiv_ilerleme", function (v) { self.arsivIlerleme(v); });
       TA.dinle("arsiv_sonuc", function (v) {
@@ -162,6 +170,7 @@
       this.secretIpucu = h("p.ipucu");
       this.discordEl = h("p.ipucu");
       this.arsivKur();
+      this.veriKur(v.veri_bagisi || {});
 
       TA.bosalt(this.govde);
       TA.ekle(this.govde, [
@@ -208,6 +217,7 @@
           this.bagisEl,
           h("div.dugme-satiri", null, this.bagisDugme)
         ]),
+        this.kart("veri", "Veri Bağışı", "Oynattığın bölümlerin kaydını projenin sunucusuna bağışla; arşiv, kullanıcıların ulaşabildiği kaynaklardan büyür. Kapalıyken hiçbir şey toplanmaz ya da gönderilmez. Açarken ne gönderildiğini anlatan bir onay penceresi çıkar; özellik yalnızca onu onaylarsan açılır.", [this.veriEl]),
         this.kart("baglanti", "Bağlantı", "Cloudflare korumalı siteler için.", [
           this.satir("FlareSolverr", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
             "Boş bırakılırsa yalnızca yerel QtWebEngine çözücü kullanılır.")
@@ -255,6 +265,7 @@
       this.discordEl.textContent = v.discord_metni;
       this.cerezGoster(v.cerez);
       this.bagisGoster(v.bagis);
+      this.veriGoster(v.veri_bagisi || {});
       this.anilistGoster(v.anilist);
     },
 
@@ -311,6 +322,76 @@
       TA.cagir("bagis_geri_cek").then(function (s) {
         self.bagisGoster(s);
         self.durumYaz(s.mesaj, s.tur);
+      }, function (e) { self.durumYaz(e.message, "hata"); });
+    },
+
+    // ── Veri bağışı ─────────────────────────────────────────────────────────
+    // Açıklama metni Python'dan (veri_bagisi.ACIKLAMA): onay penceresiyle aynı
+    // şeyi söylemeli, iki yerde ayrı yazılınca ayrışır.
+    veriKur: function (d) {
+      var self = this;
+      var satir = this.anahtar("", "Oynattığım bölümlerin verisini bağışla",
+        "Sunucu adresi ve API anahtarı Oturum Kimliği Bağışı bölümündeki alanlardan okunur.",
+        function (acik) { self.veriAyarla(acik); });
+      this.veriKutu = satir.querySelector("input");
+      this.veriDurumEl = h("p.ipucu.veri-durumu", { role: "status" });
+      this.veriSayacEl = h("dl.bilgi-tablosu.veri-sayac");
+      this.veriTemizleDugme = this.dugme("Kuyruğu temizle", "kapat", function () { self.veriKuyrugunuTemizle(); });
+      this.veriEl = h("div.veri-paneli", null,
+        satir,
+        h("dl.bilgi-tablosu.metinli.veri-aciklama", null, (d.aciklama || []).map(function (a) {
+          return [h("dt", null, a.baslik), h("dd", null, a.metin)];
+        })),
+        this.veriDurumEl,
+        this.veriSayacEl,
+        h("div.dugme-satiri", null, this.veriTemizleDugme));
+    },
+
+    veriGoster: function (d) {
+      if (!this.veriKutu || !d) return;
+      this.veriSon = d;
+      // Onay penceresi açıkken anahtar "açık" görünür ama kilitli: cevap
+      // gelene kadar hiçbir şey açılmadı, ikinci tık ikinci pencere açmasın.
+      this.veriKutu.checked = !!(d.acik || d.bekliyor);
+      this.veriKutu.disabled = !!d.bekliyor;
+      this.veriDurumEl.textContent = d.bekliyor
+        ? "Onay penceresi açık — onaylamadan hiçbir şey açılmaz ya da gönderilmez."
+        : (d.metin || "");
+      this.veriDurumEl.classList.toggle("uyari", !!(d.acik && d.sebep));
+      this.veriDurumEl.classList.toggle("tamam", !!(d.acik && !d.sebep));
+      TA.bosalt(this.veriSayacEl);
+      TA.ekle(this.veriSayacEl, [
+        h("dt", null, "Gönderilen"),
+        h("dd", { dataset: { sayac: "gonderilen" } },
+          TA.sayi(d.gonderilen || 0) + (d.son_gonderim ? " (son: " + d.son_gonderim + ")" : "")),
+        h("dt", null, "Bekleyen"),
+        h("dd", { dataset: { sayac: "bekleyen" } },
+          TA.sayi(d.bekleyen || 0) + (d.bekleme ? " — sonraki deneme " + d.bekleme : "")),
+        h("dt", null, "Düşürülen"),
+        h("dd", { dataset: { sayac: "dusurulen" } }, TA.sayi(d.dusurulen || 0)),
+        h("dt", null, "Son hata"),
+        h("dd", { dataset: { sayac: "son_hata" } },
+          d.son_hata ? (d.son_hata_zamani ? d.son_hata_zamani + " — " : "") + d.son_hata : "—")
+      ]);
+      this.veriTemizleDugme.disabled = !d.bekleyen;
+    },
+
+    veriAyarla: function (acik) {
+      var self = this;
+      TA.cagir("veri_bagisi_ayarla", { acik: acik }).then(function (d) {
+        self.veriGoster(d);
+        if (d.mesaj) self.durumYaz(d.mesaj, d.tur);
+      }, function (e) {
+        self.durumYaz(e.message, "hata");
+        if (self.veriSon) self.veriGoster(self.veriSon);       // anahtar eski hâline
+      });
+    },
+
+    veriKuyrugunuTemizle: function () {
+      var self = this;
+      TA.cagir("veri_bagisi_temizle").then(function (d) {
+        self.veriGoster(d);
+        self.durumYaz(d.mesaj, d.tur);
       }, function (e) { self.durumYaz(e.message, "hata"); });
     },
 

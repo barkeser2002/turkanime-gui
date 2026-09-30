@@ -10,6 +10,8 @@ __pycache__/
 ayarlar.json
 gecmis.json
 kutuphane.json
+# Veri bağışının gönderilmemiş kuyruğu (izlenen bölümler; gui/web/veri_bagisi.py)
+katki_kuyrugu.json
 geckodriver.log
 log
 debug.log

@@ -152,6 +152,7 @@ def _bolumu_kur(kayit: Dict[str, Any]) -> Any:
             bos_mesaji=kaynak.bos_akis_mesaji),
         player_name=kaynak.oynatici,
         slug=str(kayit.get("bolum_slug") or "") or None,
+        kimlik=bolum_id,
     )
 
 
@@ -227,6 +228,10 @@ class DownloadManager(QObject):
     progress = Signal(str, int, str)    # task_id, yüzde, ayrıntı
     state = Signal(str, str)            # task_id, durum
     finished = Signal(str, bool, str)   # task_id, başarılı mı, mesaj
+    # Dosyası diskte doğrulanmış indirme: (bölüm kaydı, indirilen video).
+    # `finished` yalnızca kimlik taşıyor; veri bağışı hangi akışın indiğini
+    # (adres, oynatıcı) buradan öğreniyor (bkz. `gui.web.veri_bagisi`).
+    indirildi = Signal(object, object)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -565,6 +570,7 @@ class DownloadManager(QObject):
                 job.dosya = None
             if job.dosya:
                 job.entry["yerel_dosya"] = job.dosya
+            self._yay("indirildi", job.entry, video)
             self._bitir(job, True, DURUM_TAMAMLANDI)
             return
 

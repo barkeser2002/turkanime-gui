@@ -13,17 +13,22 @@ Ayarlar `cli.dosyalar.Dosyalar` üzerinden okunup yazılıyor (CLI ile ortak
   pencereden sonradan geldiği için (`gui.web.sorular`) ayar kapısı gönderim
   anında bir kez daha denetlenir. Bağış numarası geri çekmenin tek anahtarı;
   liste olarak saklanır, silinemeyen numara ayarda kalır.
+* **Veri bağışı** "Kaydet" formunun DIŞINDA: form her alanı yazıyor, bu ayar
+  formda olsaydı "Kaydet" onaysız açabilirdi. Açmak `veri_bagisi_ayarla` →
+  onay penceresi → yalnızca açık onayda ayar yazılır; kapatmak anında ve
+  bekleyen kuyruğu siler (`gui.web.veri_bagisi`).
 * **Çevrimdışı arşiv**: durum sayfa AÇILINCA arka planda okunur (kurulumda
   değil: megabaytlık dizin.json). İndirme/silme/klasör denetimi arka planda;
   aynı anda tek arşiv işi. Silme yalnızca `<veri kökü>/cevrimdisi_arsiv`.
 
 Olaylar: ``ayar_durum`` (sayfanın üst satırı), ``ayar_cerez``,
-``ayar_anilist``, ``arsiv_ilerleme``, ``arsiv_sonuc``.
+``ayar_anilist``, ``ayar_veri_bagisi``, ``arsiv_ilerleme``, ``arsiv_sonuc``.
 """
 from __future__ import annotations
 
 import threading
 import time
+import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -173,9 +178,10 @@ class AyarlarUclari(QObject):
     """Ayarlar sayfasının Python tarafı (GUI thread'inde yaşar)."""
 
     def __init__(self, kopru: Kopru, *, anilist, discord=None, updates=None,
-                 requirements=None, pencere=None, sorular=None):
+                 requirements=None, pencere=None, sorular=None, veri_bagisi=None):
         super().__init__()
         from ..qt.workers import UiBridge
+        from .veri_bagisi import VeriBagisi
         self._kopru = kopru
         self._ui = UiBridge(self)
         self.anilist = anilist
@@ -186,6 +192,24 @@ class AyarlarUclari(QObject):
         # Bağış onay penceresi buradan soruluyor (`gui.web.sorular`). Yoksa
         # (sayfasız kurulum) onay alınamaz, yani bağış da yapılamaz.
         self._sorular = sorular
+        # Veri bağışı servisi pencereyle ORTAK (oynatma/indirme kancaları onu
+        # besliyor); verilmezse sayaçları okuyabilmek için kendi örneği — ona
+        # kanca bağlı olmadığı için hiçbir şey toplamaz. Sayaç değişince sayfa
+        # tazelensin diye durum olayı servise bağlanıyor (gönderici thread'inden
+        # gelir; `Kopru.yay` thread güvenli). Bağ ZAYIF: servis → bu QObject
+        # döngüsünü Python'un döngü toplayıcısı herhangi bir thread'de
+        # yıkabilirdi (bkz. `sorular.Soru._son`).
+        self._veri_bagisi = veri_bagisi if veri_bagisi is not None else VeriBagisi()
+        zayif = weakref.ref(self)
+
+        def _veri_bildir() -> None:
+            uclar = zayif()
+            if uclar is not None:
+                uclar._kopru.yay("ayar_veri_bagisi", uclar._veri_durumu())
+        self._veri_bagisi.bildir = _veri_bildir
+        # Onay penceresi açık mı: aynı anda tek pencere, sayfadaki anahtar da
+        # cevap gelene kadar "bekliyor" gösterir.
+        self._veri_onay_bekliyor = False
         self._cerez_isci = None
         self._arsiv_mesgul: Optional[str] = None        # None | "indirme" | "islem"
         self._arsiv_iptal: Optional[threading.Event] = None
@@ -265,6 +289,7 @@ class AyarlarUclari(QObject):
             "degerler": deger,
             "cerez": cerez_durumu(str(ayarlar.get("tranime_cookie") or "")),
             "bagis": self._bagis_durumu(bagis_kimlikleri(ayarlar)),
+            "veri_bagisi": self._veri_durumu(),
             "discord_metni": self._discord_metni(),
             "anilist": dict(self._anilist_durumu(),
                             client_id=anilist.client_id,
@@ -312,6 +337,9 @@ class AyarlarUclari(QObject):
                                      anilist.get("client_secret", ""),
                                      anilist.get("redirect_uri", "")):
                 raise UcHatasi("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı")
+        # Sunucu adresi/anahtarı değişmiş olabilir: bekleyen veri bağışı varsa
+        # gönderici yeni yapılandırmayla (ve sıfırlanmış beklemeyle) denesin.
+        self._veri_bagisi.ayar_degisti()
         if not self._kimlikleri_uygula():
             raise UcHatasi("Ayarlar kaydedildi ama kaynak çerez/jetonları uygulanamadı")
         return {"mesaj": "Ayarlar kaydedildi."}
@@ -448,6 +476,80 @@ class AyarlarUclari(QObject):
         return dict(self._bagis_durumu(kalan), tur="tamam",
                     mesaj="Bağışınız geri çekildi ve sunucudan silindi." if len(kimlikler) == 1
                     else f"{len(kimlikler)} bağış geri çekildi ve sunucudan silindi.")
+
+    # ── Veri bağışı ─────────────────────────────────────────────────────────
+    @staticmethod
+    def _vb():
+        from . import veri_bagisi
+        return veri_bagisi
+
+    def _veri_durumu(self, **ek: Any) -> Dict[str, Any]:
+        """Kartın gösterdiği her şey: açık mı, sayaçlar, son hata, açıklama."""
+        vb = self._vb()
+        durum = self._veri_bagisi.durum()
+        durum["bekliyor"] = self._veri_onay_bekliyor
+        durum["aciklama"] = [{"baslik": b, "metin": m} for b, m in vb.ACIKLAMA]
+        durum.update(ek)
+        return durum
+
+    @uc()
+    def veri_bagisi_durumu(self) -> Dict[str, Any]:
+        return self._veri_durumu()
+
+    @uc()
+    def veri_bagisi_ayarla(self, acik: bool) -> Dict[str, Any]:
+        """Anahtar. Kapatmak anında; açmak YALNIZCA onay penceresinden.
+
+        Açarken hiçbir şey yazılmıyor: onay sonradan, `_veri_onay_cevabi`'na
+        geliyor. Sayfa o arada anahtarı "bekliyor" gösterir.
+        """
+        vb = self._vb()
+        if not acik:
+            try:
+                self._dosya().set_ayar(ayar_list={vb.AYAR_ACIK: False, vb.AYAR_ONAY: 0})
+            except Exception as exc:
+                raise UcHatasi(f"Veri bağışı kapatılamadı: ayar yazılamadı ({exc})") from exc
+            silinen = self._veri_bagisi.kapat()
+            return self._veri_durumu(
+                tur="tamam", mesaj="Veri bağışı kapatıldı; artık hiçbir şey gönderilmiyor."
+                + (f" Gönderilmemiş {silinen} kayıt silindi." if silinen else ""))
+        if vb.acik_mi(self._dosya().ayarlar or {}):
+            return self._veri_durumu(tur="bilgi", mesaj="Veri bağışı zaten açık.")
+        if not self._veri_onay_bekliyor:
+            self._veri_onay_bekliyor = True
+            vb.onay_al(self._sorular, self._veri_onay_cevabi)
+        return self._veri_durumu()
+
+    def _veri_onay_cevabi(self, onay: Any) -> None:
+        """Onay penceresi kapandı; ``onay`` gerçek ``True`` değilse ayar yazılmaz."""
+        self._veri_onay_bekliyor = False
+        vb = self._vb()
+        if onay is not True:
+            self._kopru.yay("ayar_veri_bagisi", self._veri_durumu(
+                tur="bilgi", mesaj="Veri bağışı açılmadı; hiçbir şey gönderilmeyecek."))
+            return
+        try:
+            self._dosya().set_ayar(ayar_list={vb.AYAR_ACIK: True,
+                                              vb.AYAR_ONAY: vb.ONAY_SURUMU})
+        except Exception as exc:
+            self._kopru.yay("ayar_veri_bagisi", self._veri_durumu(
+                tur="hata", mesaj=f"Veri bağışı açılamadı: ayar yazılamadı ({exc})."))
+            return
+        self._veri_bagisi.ayar_degisti()
+        durum = self._veri_durumu()
+        mesaj = ("Veri bağışı açıldı." if not durum["sebep"]
+                 else f"Veri bağışı açıldı, ama gönderim yok: {durum['sebep']}")
+        self._kopru.yay("ayar_veri_bagisi", dict(
+            durum, tur="bilgi" if durum["sebep"] else "tamam", mesaj=mesaj))
+
+    @uc("veri_bagisi_temizle", arka=True)
+    def veri_bagisi_temizle(self) -> Dict[str, Any]:
+        """"Kuyruğu temizle": gönderilmemiş kayıtlar silinir, özellik açık kalır."""
+        silinen = self._veri_bagisi.temizle()
+        return self._veri_durumu(
+            tur="tamam" if silinen else "bilgi",
+            mesaj=f"Gönderilmemiş {silinen} kayıt silindi." if silinen
+            else "Kuyrukta gönderilmemiş kayıt yok.")
 
     # ── Discord / bakım ─────────────────────────────────────────────────────
     @uc()
