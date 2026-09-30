@@ -14,7 +14,12 @@ Katmanlar:
 * `gorunum`  — `WebGorunum`: köprüyü ve şemayı kurulu tek QWebEngineView.
 * `uclar_*`  — sayfaların Python tarafı (keşif, arama, ...). Qt'siz iş
                mantığı mevcut modüllerden (`common/`, `sources/`) geliyor.
+* `sorular`  — Python'dan sayfaya soru (modal pencere) ve cevabının geri
+               çağrıyla dönüşü; eski Qt diyaloglarının ``exec()``'i yerine.
+* `pencereler`, `katki` — o pencerelerin Python tarafı (ilerleme,
+               güncelleme, gereksinim, kapanış; kimlik bağışı onayı).
 
-Geçiş sayfa sayfa yapılıyor: taşınan sayfalar tek bir `WebGorunum`'da
-rota olarak açılıyor, taşınmayanlar eski Qt sayfası olarak kalıyor.
+Bütün sayfalar ve küçük pencereler tek bir `WebGorunum`'da. Qt'de kalan tek
+ayrı pencere çerez tarayıcısı (`gui.qt.cookie_browser`): dış sitenin girişi
+için gerçek bir tarayıcı penceresi.
 """

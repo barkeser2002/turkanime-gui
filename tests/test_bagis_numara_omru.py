@@ -76,8 +76,8 @@ def _sayfa(ayarlar, gonderilen=None, geri_cekilen=None, yazma_hatasi=False,
         KAYNAK_TRANIME = "tranime"
 
         @staticmethod
-        def onay_al(*_a, **_k):
-            return True
+        def onay_al(_sorular, _kaynak, geri):
+            geri(True)
 
         @staticmethod
         def bagis_gonder(*_a, **_k):

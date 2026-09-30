@@ -9,16 +9,13 @@ Burada kontrol gerçekten yapılır; ama:
   (Ayarlar sayfasındaki "Gereksinimleri Denetle" bu tercihi geri alır).
 
 Tespit ve kurulum `common.requirements`'ta; burası thread → sinyal köprüsü.
+Sihirbaz penceresi web arayüzünde (`gui.web.pencereler.GereksinimPenceresi`).
 """
 from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout,
-    QWidget,
-)
 
 from . import prefs
 from .workers import run_bg
@@ -119,92 +116,4 @@ class RequirementsService(QObject):
         return prefs.ayar_yaz(gereksinim_atlandi=bool(atlandi))
 
 
-class RequirementsDialog(QDialog):
-    """Eksik araçları listeler, indirip kurar, "Atla"yı hatırlar."""
-
-    def __init__(self, servis: RequirementsService, eksikler: Sequence[str],
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setWindowTitle("Eksik Gereksinimler")
-        self.setModal(True)
-        self.setMinimumWidth(440)
-
-        self.servis = servis
-        self.eksikler = list(eksikler)
-        self.atlandi = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(10)
-
-        head = QLabel("Bazı araçlar bulunamadı")
-        head.setObjectName("Subtitle")
-        layout.addWidget(head)
-
-        self.lblList = QLabel("\n".join(f"• {ad}" for ad in self.eksikler))
-        layout.addWidget(self.lblList)
-
-        note = QLabel("Bunlar olmadan oynatma, birleştirme veya indirme "
-                      "çalışmayabilir. Otomatik kurulumu şimdi yapabilirsiniz.")
-        note.setObjectName("Muted")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setVisible(False)
-        layout.addWidget(self.bar)
-
-        self.lblStatus = QLabel("")
-        self.lblStatus.setObjectName("Muted")
-        self.lblStatus.setWordWrap(True)
-        layout.addWidget(self.lblStatus)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        self.btnInstall = QPushButton("İndir ve Kur")
-        self.btnInstall.setObjectName("Primary")
-        self.btnInstall.clicked.connect(self._kur)
-        row.addWidget(self.btnInstall)
-        self.btnSkip = QPushButton("Atla")
-        self.btnSkip.clicked.connect(self._atla)
-        row.addWidget(self.btnSkip)
-        layout.addLayout(row)
-
-        servis.progress.connect(self._on_progress)
-        servis.install_done.connect(self._on_done)
-
-    # ── Davranış ────────────────────────────────────────────────────────────
-    def _kur(self) -> None:
-        if not self.servis.kur(self.eksikler):
-            return
-        self.btnInstall.setEnabled(False)
-        self.btnInstall.setText("Kuruluyor…")
-        self.bar.setVisible(True)
-        self.lblStatus.setText("Gereksinimler indiriliyor…")
-
-    def _atla(self) -> None:
-        """Bir daha sorma tercihini yaz ve kapat."""
-        self.atlandi = self.servis.atlandi_yaz(True)
-        self.reject()
-
-    def _on_progress(self, yuzde: int, ayrinti: str) -> None:
-        self.bar.setValue(max(0, min(100, yuzde)))
-        self.lblStatus.setText(ayrinti)
-
-    def _on_done(self, sonuclar) -> None:
-        basarisiz = [(ad, hata) for ad, ok, hata in (sonuclar or []) if not ok]
-        if not basarisiz:
-            self.lblStatus.setText("Tüm gereksinimler kuruldu.")
-            self.btnInstall.setText("Tamamlandı")
-            self.btnSkip.setText("Kapat")
-            return
-        self.lblStatus.setText("Kurulamayanlar:\n" + "\n".join(
-            f"• {ad}: {hata}" for ad, hata in basarisiz))
-        self.lblStatus.setStyleSheet("color: #d63031;")
-        self.btnInstall.setEnabled(True)
-        self.btnInstall.setText("Tekrar Dene")
-
-
-__all__ = ["RequirementsService", "RequirementsDialog"]
+__all__ = ["RequirementsService"]

@@ -31,15 +31,12 @@
     var cipler = h("div.kaynak-cipleri.modal-cipler");
     var sonuclar = h("div.modal-sonuclar");
 
+    var pk = null;
+
     function kapat() {
       cozuculer.forEach(function (c) { c(); });
-      ortu.remove();
-      document.removeEventListener("keydown", tus);
+      if (pk) pk.kapat();
       acik = null;
-    }
-
-    function tus(e) {
-      if (e.key === "Escape") kapat();
     }
 
     function ara() {
@@ -111,17 +108,18 @@
         : toplam ? toplam + " aday — doğru olanı seç." : "Hiçbir kaynakta sonuç bulunamadı.";
     }));
 
-    var pencere = h("div.modal", { role: "dialog", "aria-modal": "true", "aria-label": "İstediğin anime değil mi?" },
-      h("header.modal-baslik", null,
-        h("div", null, h("h3", null, "İstediğin anime değil mi?"),
-          h("p.soluk", null, "Doğru kaydı seç; bölümler o kaynaktan gelir.")),
-        h("button.ikon-dugme", { onclick: kapat, "aria-label": "Kapat", title: "Kapat" }, TA.ikon("kapat"))),
-      h("form.arama-cubugu.modal-arama", { onsubmit: function (e) { e.preventDefault(); ara(); } },
-        TA.ikon("ara"), girdi, dugme),
-      durum, cipler, sonuclar);
-    var ortu = h("div.modal-ortu", { onclick: function (e) { if (e.target === ortu) kapat(); } }, pencere);
-    document.body.appendChild(ortu);
-    document.addEventListener("keydown", tus);
+    // Ortak pencere yığını (bilesenler.js): üstüne başka pencere açılırsa
+    // (ör. açılıştaki güncelleme penceresi) Esc önce onu kapatır.
+    pk = TA.pencere({
+      etiket: "İstediğin anime değil mi?",
+      vazgec: kapat,
+      icerik: [
+        TA.pencereBasligi("İstediğin anime değil mi?", "Doğru kaydı seç; bölümler o kaynaktan gelir.", kapat),
+        h("form.arama-cubugu.modal-arama", { onsubmit: function (e) { e.preventDefault(); ara(); } },
+          TA.ikon("ara"), girdi, dugme),
+        durum, cipler, sonuclar
+      ]
+    });
     acik = { kapat: kapat };
     girdi.focus();
     girdi.select();

@@ -9,9 +9,10 @@ Ayarlar `cli.dosyalar.Dosyalar` üzerinden okunup yazılıyor (CLI ile ortak
   `prefs.kaynak_kimliklerini_uygula()` çağrılıyor; çağrılmazsa TRAnimeİzle
   her açılışta 0 bölüm döndürür.
 * **Kimlik bağışı** iki kapılı: "kimlik paylas" ayarı açık VE onay penceresi
-  onaylanmış. Çerez ÖNCE diske yazılır, bağış SONRA sorulur. Bağış numarası
-  geri çekmenin tek anahtarı; liste olarak saklanır, silinemeyen numara
-  ayarda kalır.
+  onaylanmış. Çerez ÖNCE diske yazılır, bağış SONRA sorulur. Onay sayfadaki
+  pencereden sonradan geldiği için (`gui.web.sorular`) ayar kapısı gönderim
+  anında bir kez daha denetlenir. Bağış numarası geri çekmenin tek anahtarı;
+  liste olarak saklanır, silinemeyen numara ayarda kalır.
 * **Çevrimdışı arşiv**: durum sayfa AÇILINCA arka planda okunur (kurulumda
   değil: megabaytlık dizin.json). İndirme/silme/klasör denetimi arka planda;
   aynı anda tek arşiv işi. Silme yalnızca `<veri kökü>/cevrimdisi_arsiv`.
@@ -172,7 +173,7 @@ class AyarlarUclari(QObject):
     """Ayarlar sayfasının Python tarafı (GUI thread'inde yaşar)."""
 
     def __init__(self, kopru: Kopru, *, anilist, discord=None, updates=None,
-                 requirements=None, pencere=None):
+                 requirements=None, pencere=None, sorular=None):
         super().__init__()
         from ..qt.workers import UiBridge
         self._kopru = kopru
@@ -182,6 +183,9 @@ class AyarlarUclari(QObject):
         self.updates = updates
         self.requirements = requirements
         self._pencere = pencere
+        # Bağış onay penceresi buradan soruluyor (`gui.web.sorular`). Yoksa
+        # (sayfasız kurulum) onay alınamaz, yani bağış da yapılamaz.
+        self._sorular = sorular
         self._cerez_isci = None
         self._arsiv_mesgul: Optional[str] = None        # None | "indirme" | "islem"
         self._arsiv_iptal: Optional[threading.Event] = None
@@ -358,23 +362,43 @@ class AyarlarUclari(QObject):
     # ── Oturum kimliği bağışı ───────────────────────────────────────────────
     @staticmethod
     def _katki():
-        from ..qt import katki_dialog
-        return katki_dialog
+        from . import katki
+        return katki
 
-    def kimlik_bagisi_teklif(self, netscape: str) -> None:
-        """Ayar açıksa onay penceresi; onay yoksa HİÇBİR ŞEY gönderilmez."""
-        if not netscape:
-            return
+    def _paylasim_ayarlari(self) -> Optional[Dict[str, Any]]:
+        """Ayarlar — yalnızca "kimlik paylas" AÇIKSA (kapı 1), yoksa None."""
         try:
             ayarlar: Dict[str, Any] = self._dosya().ayarlar or {}
         except Exception:
-            return
-        if not bool(ayarlar.get("kimlik paylas", False)):
+            return None
+        return ayarlar if bool(ayarlar.get("kimlik paylas", False)) else None
+
+    def kimlik_bagisi_teklif(self, netscape: str) -> None:
+        """Ayar açıksa onay penceresi; onay yoksa HİÇBİR ŞEY gönderilmez.
+
+        Onay sayfadaki pencereden SONRADAN gelir; gönderim `_bagis_cevabi`'nda.
+        """
+        if not netscape or self._paylasim_ayarlari() is None:
             return
         katki = self._katki()
-        if not katki.onay_al(katki.KAYNAK_TRANIME, self._pencere):
+        katki.onay_al(self._sorular, katki.KAYNAK_TRANIME,
+                      lambda onay: self._bagis_cevabi(netscape, onay))
+
+    def _bagis_cevabi(self, netscape: str, onay: Any) -> None:
+        """Onay penceresi kapandı. ``onay`` gerçek ``True`` değilse gönderim yok.
+
+        Kapı 1 burada YENİDEN denetleniyor: pencere açıkken ayar kapatıldıysa
+        (ya da ayar okunamıyorsa) kullanıcının son sözü "gönderme"dir.
+        Ayarlar da taze okunuyor: numara listesi arada değişmiş olabilir.
+        """
+        if onay is not True:
             self._durum("Oturum kimliği bağışlanmadı.")
             return
+        ayarlar = self._paylasim_ayarlari()
+        if ayarlar is None:
+            self._durum("Oturum kimliği bağışlanmadı: bağış ayarı kapalı ya da okunamadı.")
+            return
+        katki = self._katki()
         try:
             bagis_id = katki.bagis_gonder(netscape, katki.KAYNAK_TRANIME, ayarlar)
         except Exception as exc:

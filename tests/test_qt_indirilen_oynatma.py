@@ -22,7 +22,6 @@ from turkanime_api.gui.qt.indirme import (
     BITMIS_DURUMLAR, DURUM_HATA, DURUM_IPTAL, DURUM_TAMAMLANDI, DownloadManager,
     satir_basligi,
 )
-from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 
 
 class Anime:
@@ -83,7 +82,6 @@ def sahte_mpv(monkeypatch):
 
     monkeypatch.setattr(mpv_oynatici, "mpv_bul", lambda: "/opt/sahte/mpv")
     monkeypatch.setattr(mpv_oynatici.sp, "Popen", Proc)
-    monkeypatch.setattr(ProgressDialog, "exec", lambda self: 0)
     return kayit
 
 

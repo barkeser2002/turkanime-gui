@@ -173,9 +173,9 @@ class Dosyalar:
             "cookie_tutorial_dismissed": False,
             # Oturum kimliği bağışı — VARSAYILAN KAPALI ve öyle kalmalı.
             # Açıkken bile tek başına hiçbir şey göndermez: çerez alındığında
-            # yalnızca onay diyaloğunun GÖSTERİLMESİNE izin verir, gönderim
-            # kullanıcının o diyaloğu onaylamasına bağlıdır
-            # (bkz. `gui.qt.katki_dialog`).
+            # yalnızca onay penceresinin GÖSTERİLMESİNE izin verir, gönderim
+            # kullanıcının o pencereyi onaylamasına bağlıdır
+            # (bkz. `gui.web.katki`).
             "kimlik paylas": False,
             # Sunucunun verdiği bağış numaraları; geri çekmenin tek anahtarı.
             # Bağışçıyı sunucuda tanımlayan tek şey bunlar olduğu için bir

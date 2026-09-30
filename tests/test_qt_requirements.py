@@ -15,7 +15,8 @@ import pytest
 
 from turkanime_api.common import requirements as core
 from turkanime_api.gui.qt import prefs
-from turkanime_api.gui.qt.requirements import RequirementsDialog, RequirementsService
+from turkanime_api.gui.qt.requirements import RequirementsService
+from turkanime_api.gui.web.pencereler import GereksinimPenceresi
 
 ARAC = core.ARACLAR[1]          # "mpv"
 EXE = core._calistirilabilir(ARAC)
@@ -189,20 +190,32 @@ def test_atla_tercihi_hatirlaniyor(qtbot, monkeypatch, ayarla):
         assert servis.denetle(kullanici_istegi=True) is True
 
 
-def test_diyalogdaki_atla_ayara_yaziyor(qtbot, ayarla):
-    ayarla(gereksinim_atlandi=False)
+def test_penceredeki_atla_ayara_yaziyor(soru_merkezi, izole_ayarla):
+    izole_ayarla(gereksinim_atlandi=False)
     servis = RequirementsService()
-    dialog = RequirementsDialog(servis, ["mpv", "ffmpeg"])
-    qtbot.addWidget(dialog)
-    assert "mpv" in dialog.lblList.text() and "ffmpeg" in dialog.lblList.text()
+    pencere = GereksinimPenceresi(soru_merkezi, servis, ["mpv", "ffmpeg"])
+    assert pencere.soru.veri["eksikler"] == ["mpv", "ffmpeg"]
 
-    dialog.btnSkip.click()
-    assert dialog.atlandi is True
+    soru_merkezi.cevapla(pencere.soru.kimlik, {"atla": True})      # "Atla"
+    assert pencere.atlandi is True
     assert prefs.oku().gereksinim_atlandi is True
 
 
-def test_kurulum_sonucu_diyaloga_yansiyor(qtbot, monkeypatch, ayarla):
-    ayarla(gereksinim_atlandi=False)
+@pytest.mark.parametrize("cevap", [None, {"atla": False}, {"atla": "evet"}])
+def test_esc_ve_kapat_atla_tercihine_dokunmuyor(soru_merkezi, izole_ayarla, cevap):
+    """Esc/× (ve kurulumdan sonraki "Kapat") yalnızca kapatır.
+
+    Qt'de "Kapat" etiketi "Atla" işleyicisine bağlı kalmıştı: bütün araçları
+    kurmuş kullanıcıya habersizce "bir daha sorma" yazıyordu.
+    """
+    izole_ayarla(gereksinim_atlandi=False)
+    pencere = GereksinimPenceresi(soru_merkezi, RequirementsService(), ["mpv"])
+    soru_merkezi.cevapla(pencere.soru.kimlik, cevap)
+    assert pencere.atlandi is False
+    assert prefs.oku().gereksinim_atlandi is False
+
+
+def _sahte_kurulum(monkeypatch):
     monkeypatch.setattr(core, "gereksinim_listesi_getir", lambda *a, **k: LISTE)
     monkeypatch.setattr(core, "paket_url", lambda *a, **k: "https://ornek/mpv.zip")
 
@@ -212,18 +225,42 @@ def test_kurulum_sonucu_diyaloga_yansiyor(qtbot, monkeypatch, ayarla):
         return "/kurulan/mpv"
 
     monkeypatch.setattr(core, "indir_ve_kur", sahte_kur)
+    monkeypatch.setattr(core, "path_hazirla", lambda: None)
+
+
+def test_kurulum_sonucu_pencereye_yansiyor(qtbot, monkeypatch, izole_ayarla, soru_merkezi):
+    izole_ayarla(gereksinim_atlandi=False)
+    _sahte_kurulum(monkeypatch)
 
     servis = RequirementsService()
-    dialog = RequirementsDialog(servis, ["mpv", "ffmpeg"])
-    qtbot.addWidget(dialog)
+    pencere = GereksinimPenceresi(soru_merkezi, servis, ["mpv", "ffmpeg"])
 
     with qtbot.waitSignal(servis.install_done, timeout=10000) as blocker:
-        dialog.btnInstall.click()
+        assert soru_merkezi.soru_eylem(pencere.soru.kimlik, "kur") is True   # "İndir ve Kur"
+        assert pencere.soru.veri["durum"] == "kuruluyor"
     qtbot.wait(100)
 
     assert blocker.args[0] == [("mpv", True, ""), ("ffmpeg", False, "arşiv bozuk")]
-    assert "ffmpeg" in dialog.lblStatus.text()
-    assert dialog.btnInstall.text() == "Tekrar Dene"
+    assert pencere.soru.veri["durum"] == "hata"            # sayfada "Tekrar Dene"
+    assert "ffmpeg" in pencere.soru.veri["metin"] and "arşiv bozuk" in pencere.soru.veri["metin"]
+    guncellemeler = soru_merkezi.olaylar.hepsi("soru_guncelle")
+    assert any(g["veri"].get("yuzde", 0) > 0 for g in guncellemeler), "ilerleme taşınmalı"
+
+
+def test_kapanan_pencere_servisi_dinlemiyor(monkeypatch, soru_merkezi):
+    """Diyalog `deleteLater` ile bağlarını bırakıyordu; pencere de bırakmalı."""
+    duyulan: list = []
+    monkeypatch.setattr(GereksinimPenceresi, "_on_done", lambda self, s: duyulan.append(s))
+    servis = RequirementsService()
+    kapandi: list = []
+    pencere = GereksinimPenceresi(soru_merkezi, servis, ["mpv"], kapandi=lambda: kapandi.append(1))
+    servis.install_done.emit([("mpv", True, "")])
+    assert len(duyulan) == 1                  # açıkken dinliyor
+
+    pencere.kapat()
+    assert kapandi == [1] and not pencere.soru.acik
+    servis.install_done.emit([("mpv", True, "")])
+    assert len(duyulan) == 1, "kapanmış pencere hâlâ servisi dinliyor"
 
 
 def test_liste_alinamazsa_hepsi_basarisiz(qtbot, monkeypatch, ayarla):
@@ -242,17 +279,60 @@ def test_liste_alinamazsa_hepsi_basarisiz(qtbot, monkeypatch, ayarla):
 # ── Ana pencere ──────────────────────────────────────────────────────────────
 def test_ana_pencere_sihirbazi_aciyor(main_window, qtbot):
     main_window._on_requirements_missing(["mpv"])
-    dialog = main_window._req_dialog
-    assert isinstance(dialog, RequirementsDialog)
+    pencere = main_window._gereksinim_penceresi
+    assert isinstance(pencere, GereksinimPenceresi)
 
     main_window._on_requirements_missing(["mpv"])       # ikinci pencere yok
-    assert main_window._req_dialog is dialog
+    assert main_window._gereksinim_penceresi is pencere
 
-    dialog.reject()
+    pencere.kapat()
     qtbot.wait(50)
-    assert main_window._req_dialog is None
+    assert main_window._gereksinim_penceresi is None
 
 
 def test_eksik_yoksa_sihirbaz_acilmiyor(main_window):
     main_window._on_requirements_missing([])
-    assert main_window._req_dialog is None
+    assert main_window._gereksinim_penceresi is None
+
+
+GEREKSINIM = "document.querySelector('[data-soru=gereksinim]')"
+
+
+def _dugme(etiket):
+    return f"[...{GEREKSINIM}.querySelectorAll('button')].find(b => b.textContent === '{etiket}')"
+
+
+def test_sihirbaz_sayfada_atla(main_window, web, izole_ayarla):
+    izole_ayarla(gereksinim_atlandi=False)
+    main_window._on_requirements_missing(["mpv", "ffmpeg"])
+    web.bekle("!!" + GEREKSINIM)
+    metin = web.js(GEREKSINIM + ".innerText")
+    assert "mpv" in metin and "ffmpeg" in metin
+    assert "Bunlar olmadan oynatma" in metin
+    # Süren iş olabilir: dış tık kapatmıyor.
+    web.js(GEREKSINIM + ".parentElement.click()")
+    web.qtbot.wait(100)
+    assert web.js("!!" + GEREKSINIM)
+
+    web.js(_dugme("Atla") + ".click()")
+    web.bekle("!" + GEREKSINIM)
+    web.qtbot.waitUntil(lambda: main_window._gereksinim_penceresi is None, timeout=5000)
+    assert prefs.oku().gereksinim_atlandi is True
+
+
+def test_sihirbaz_sayfada_kurulum_ve_kapat(main_window, web, izole_ayarla, monkeypatch):
+    izole_ayarla(gereksinim_atlandi=False)
+    monkeypatch.setattr(core, "gereksinim_listesi_getir", lambda *a, **k: LISTE)
+    monkeypatch.setattr(core, "paket_url", lambda *a, **k: "https://ornek/mpv.zip")
+    monkeypatch.setattr(core, "indir_ve_kur", lambda *a, **k: "/kurulan/mpv")
+    monkeypatch.setattr(core, "path_hazirla", lambda: None)
+
+    main_window._on_requirements_missing(["mpv"])
+    web.bekle("!!" + GEREKSINIM)
+    web.js(_dugme("İndir ve Kur") + ".click()")
+    web.bekle(GEREKSINIM + ".innerText.includes('Tüm gereksinimler kuruldu.')", timeout=10000)
+    assert web.js(_dugme("Tamamlandı") + ".disabled") is True
+    web.js(_dugme("Kapat") + ".click()")
+    web.bekle("!" + GEREKSINIM)
+    web.qtbot.waitUntil(lambda: main_window._gereksinim_penceresi is None, timeout=5000)
+    assert prefs.oku().gereksinim_atlandi is False, "Kapat 'bir daha sorma' yazmamalı"

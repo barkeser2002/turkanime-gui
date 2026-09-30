@@ -1,4 +1,4 @@
-"""Oturum kimliği bağışı — onay diyaloğu ve sunucu çağrıları.
+"""Oturum kimliği bağışı — onay penceresi ve sunucu çağrıları.
 
 Kullanıcı, kaynak siteye ait oturum çerezini projenin sunucusuna bağışlayabilir.
 Bu, sunucunun o siteye **kullanıcının hesabıyla** istek yapması demektir; yani
@@ -8,14 +8,23 @@ birden yapar: metni dürüst tutar ve gönderimi mekanik olarak onaya bağlar.
 Üç kural:
 
 1. **Onay verilmeden hiçbir şey gönderilmez.** `bagis_gonder` yalnızca çağrılınca
-   ağa çıkar; onay ile gönderim arasındaki tek köprü `KimlikBagisDialog`'un
-   `Accepted` dönmesidir. Ayarın açık olması TEK BAŞINA yetmez — ayar sadece
-   diyaloğun gösterilmesine izin verir.
+   ağa çıkar; onay ile gönderim arasındaki tek köprü `onay_al`'ın geri
+   çağrısına ``True`` gitmesidir, o da YALNIZCA sayfadaki pencere
+   ``{"onay": true, "okudum": true}`` cevabını verdiğinde (`onay_cevabi_mi`).
+   Başka her sonuç — Esc, dış tık, "Vazgeç", kutusuz onay, bozuk/eksik alan,
+   sayfanın hiç bağlanmaması, uygulamanın kapanması — onay DEĞİLDİR. Ayarın
+   açık olması TEK BAŞINA yetmez — ayar sadece pencerenin gösterilmesine izin
+   verir.
 2. **Metin pazarlama yapmaz.** Kullanıcıya ne kaybedebileceği (hesabın
    kapanması) yazılı olarak söylenir. "Projeye destek ol" cümlesi bilerek yok.
 3. **Kaza sonucu onay olmaz.** Onay düğmesi, kullanıcı "okudum" kutusunu
-   işaretlemeden etkin değildir ve varsayılan düğme *Vazgeç*'tir; Enter'a basmak
-   bağış yapmaz.
+   işaretlemeden etkin değildir ve odak *Vazgeç*'tedir; pencere açıkken Enter
+   HER ZAMAN vazgeçer (Qt'deki varsayılan düğme gibi), bağış yapmaz. Kutu
+   sayfada atlatılsa bile Python ``okudum`` alanını ayrıca istiyor.
+
+Pencere eskiden bir Qt diyaloğuydu (`KimlikBagisDialog`); artık web arayüzünde
+(``statik/js/pencereler.js``, tür ``bagis_onayi``) ve soru-cevap düzeni
+`gui.web.sorular`'da. Kurallar değişmedi, yalnızca cevap geri çağrıyla geliyor.
 
 Sunucu adresi ve API anahtarı koda gömülü değildir, ayarlardan gelir. Adres ya
 da anahtar boşsa uç istemci tarafında da kapalıdır: yanlış yapılandırılmış bir
@@ -23,12 +32,7 @@ istemcinin kimliği nereye gönderdiğini bilmemesi kabul edilemez.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
-
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
-)
+from typing import Any, Callable, Dict, Optional, Tuple
 
 # Bağışın SUNUCUDAKİ kaynak adı. Buradaki dizgi sunucunun `BAGIS_KAYNAKLARI`
 # beyaz listesiyle harfi harfine aynı olmak zorunda: sunucu `KAYNAK_CEREZLERI`
@@ -57,13 +61,13 @@ KAYNAK_TURLERI = {
     KAYNAK_OPENANI: TUR_TOKEN,      # Bearer jetonu
 }
 
-# Ağ çağrılarının tavanı: diyalog kapandıktan sonra arayüz beklemede kalır,
+# Ağ çağrılarının tavanı: pencere kapandıktan sonra arayüz beklemede kalır,
 # yanıtsız bir sunucu yüzünden süresiz donmamalı.
 ZAMAN_ASIMI = 15
 
 ONAY_BASLIK = "Oturum kimliğini bağışla"
 
-# Diyaloğun gövdesi. Testler buradaki üç kritik ifadeyi arıyor:
+# Pencerenin gövdesi. Testler buradaki üç kritik ifadeyi arıyor:
 # "senin adına giriş", "hesabın kapanabilir", "geri çek…".
 # Büyük harf kullanılmıyor: Türkçe "İ" harfinin `str.lower()` çıktısı
 # birleşik noktalı "i̇" olduğu için metni büyük harfle vurgulamak, aynı
@@ -98,7 +102,7 @@ ONAY_KUTUSU = "Yukarıdakileri okudum; hesabımın kapanma riskini kabul ediyoru
 
 
 def onay_metni(kaynak: str = KAYNAK_TRANIME) -> str:
-    """Diyalog gövdesi — site adı yerleştirilmiş hâlde."""
+    """Pencere gövdesi — site adı yerleştirilmiş hâlde (sayfada DÜZ METİN)."""
     return ONAY_METNI.format(site=KAYNAK_ADLARI.get(kaynak, kaynak))
 
 
@@ -106,73 +110,43 @@ class KatkiHatasi(RuntimeError):
     """Bağış gönderilemedi / geri çekilemedi."""
 
 
-# ── Diyalog ─────────────────────────────────────────────────────────────────
-class KimlikBagisDialog(QDialog):
-    """Bağış onayı. `exec()` yalnızca kullanıcı bilerek onaylarsa `Accepted`.
+# ── Onay penceresi ─────────────────────────────────────────────────────────
+ONAY_DUGMESI = "Kimliğimi bağışla"
+VAZGEC_DUGMESI = "Vazgeç"
 
-    Onay düğmesi başlangıçta PASİF: kullanıcı "okudum" kutusunu işaretlemeden
-    etkinleşmez. Varsayılan düğme *Vazgeç*, yani diyalog açıkken Enter'a basmak
-    bağış yapmaz — istem dışı onayın iki ayrı yolu da kapalı.
+
+def onay_cevabi_mi(cevap: Any) -> bool:
+    """Pencerenin cevabı AÇIK onay mı?
+
+    Yalnızca ``{"onay": True, "okudum": True}`` — ikisi de gerçek ``True``
+    (``1``, ``"true"`` değil). Sayfadaki düğme kutu işaretlenmeden zaten
+    pasif; buradaki ikinci denetim, sayfa tarafında bir hata ya da atlatma
+    olsa bile "okudum" demeden onayın geçmemesi için.
     """
-
-    def __init__(self, kaynak: str = KAYNAK_TRANIME,
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.kaynak = kaynak
-        self.setWindowTitle(ONAY_BASLIK)
-        self.setModal(True)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(12)
-
-        baslik = QLabel(ONAY_BASLIK)
-        baslik.setObjectName("Title")
-        layout.addWidget(baslik)
-
-        self.lblMetin = QLabel(onay_metni(kaynak))
-        self.lblMetin.setWordWrap(True)
-        # Düz metin: gövde kullanıcıya gösterilen tek bilgi kaynağı, HTML olarak
-        # yorumlanıp bir kısmı görünmez hâle gelmemeli.
-        self.lblMetin.setTextFormat(Qt.TextFormat.PlainText)
-        self.lblMetin.setMinimumWidth(520)
-        layout.addWidget(self.lblMetin)
-
-        self.chkAnladim = QCheckBox(ONAY_KUTUSU)
-        self.chkAnladim.toggled.connect(self._kutu_degisti)
-        layout.addWidget(self.chkAnladim)
-
-        satir = QHBoxLayout()
-        satir.addStretch(1)
-        self.btnIptal = QPushButton("Vazgeç")
-        self.btnIptal.setDefault(True)        # Enter = vazgeç
-        self.btnIptal.setAutoDefault(True)
-        self.btnIptal.clicked.connect(self.reject)
-        satir.addWidget(self.btnIptal)
-
-        self.btnOnay = QPushButton("Kimliğimi bağışla")
-        self.btnOnay.setEnabled(False)        # kutu işaretlenene dek pasif
-        self.btnOnay.setDefault(False)
-        self.btnOnay.setAutoDefault(False)
-        self.btnOnay.clicked.connect(self.accept)
-        satir.addWidget(self.btnOnay)
-        layout.addLayout(satir)
-
-    def _kutu_degisti(self, isaretli: bool) -> None:
-        self.btnOnay.setEnabled(bool(isaretli))
+    return (isinstance(cevap, dict) and cevap.get("onay") is True
+            and cevap.get("okudum") is True)
 
 
-def onay_al(kaynak: str = KAYNAK_TRANIME,
-            parent: Optional[QWidget] = None) -> bool:
-    """Diyaloğu göster; kullanıcı onayladıysa True.
+def onay_al(sorular: Any, kaynak: str, geri: Callable[[bool], Any]) -> Any:
+    """Onay penceresini göster; ``geri(True)`` YALNIZCA kullanıcı bilerek
+    onaylarsa, diğer her sonuçta ``geri(False)`` — tam bir kez.
 
-    Ayrı fonksiyon olmasının sebebi çağrı yerinin (ayarlar sayfası) diyalog
-    sınıfını değil yalnızca "onay var mı" sorusunu tanıması: gönderim kararı tek
-    bir boolean'a bağlı kalır, sayfa tarafında yanlışlıkla `exec()` dönüşünü
-    yorumlama fırsatı olmaz.
+    Ayrı fonksiyon olmasının sebebi çağrı yerinin (ayarlar uçları) pencereyi
+    değil yalnızca "onay var mı" sorusunu tanıması: gönderim kararı tek bir
+    boolean'a bağlı kalır, sayfanın ham cevabını yorumlama fırsatı olmaz.
+    Soru merkezi yoksa (sayfasız kurulum) soru sorulamaz: onay yok.
     """
-    dialog = KimlikBagisDialog(kaynak, parent)
-    return dialog.exec() == QDialog.DialogCode.Accepted
+    if sorular is None:
+        geri(False)
+        return None
+    return sorular.sor("bagis_onayi", {
+        "kaynak": kaynak,
+        "baslik": ONAY_BASLIK,
+        "metin": onay_metni(kaynak),
+        "kutu": ONAY_KUTUSU,
+        "onay_dugmesi": ONAY_DUGMESI,
+        "vazgec_dugmesi": VAZGEC_DUGMESI,
+    }, lambda cevap: geri(onay_cevabi_mi(cevap)))
 
 
 # ── Sunucu çağrıları ────────────────────────────────────────────────────────
@@ -334,5 +308,6 @@ def _hata_metni(yanit) -> str:
 __all__ = ["KAYNAK_TRANIME", "KAYNAK_OPENANI", "KAYNAK_ADLARI",
            "KAYNAK_TURLERI", "TUR_COOKIE", "TUR_TOKEN",
            "ONAY_BASLIK", "ONAY_METNI",
-           "ONAY_KUTUSU", "KatkiHatasi", "KimlikBagisDialog", "onay_metni",
-           "onay_al", "sunucu_yapilandirmasi", "bagis_gonder", "bagis_geri_cek"]
+           "ONAY_KUTUSU", "ONAY_DUGMESI", "VAZGEC_DUGMESI", "KatkiHatasi",
+           "onay_metni", "onay_cevabi_mi", "onay_al", "sunucu_yapilandirmasi",
+           "bagis_gonder", "bagis_geri_cek"]

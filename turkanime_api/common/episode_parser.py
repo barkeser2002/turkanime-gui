@@ -32,7 +32,8 @@ savunma birden var:
    Eşleşme de metnin SONUNDAN aranır; işaret hep sonda, ad hep başta durur.
 
 Parser burada TEK yerde durur; detay sayfası (`gui/web/uclar_detay.py`),
-indirme kuyruğu ve `qt/progress_dialog.py` aynı fonksiyonları import eder. İki ayrı regex seti
+indirme kuyruğu ve ilerleme penceresi (`gui/web/pencereler.py`) aynı
+fonksiyonları import eder. İki ayrı regex seti
 tutmak, aynı bölümün iki yerde farklı numaralanması demekti — bu modül o
 ayrışmayı kapatmak için çıkarıldı.
 """
