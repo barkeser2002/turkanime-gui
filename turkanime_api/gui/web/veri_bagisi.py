@@ -143,6 +143,9 @@ GECICI_YOL_ISARETLERI = frozenset({"expires", "sig", "signature", "token", "srci
 # JWT (imzalı HLS'lerin yol/sorgu jetonu): "eyJ…" + iki nokta.
 _JWT = re.compile(r"^eyJ[\w-]+\.[\w-]+\.[\w-]+$")
 _KAYNAK_ANAHTARI = re.compile(r"^[a-z0-9_]{1,50}$")
+# TürkAnime arşivi sunucunun kendi çıktısı: oradan oynayanı geri yollamak
+# sunucuya yeni bir şey söylemez, yalnızca kuyruğu doldurur.
+BAGISLANMAYAN_MODULLER = frozenset({"animedepo"})
 _KATKI_ID = re.compile(r"^[0-9a-f]{32}$")
 
 # ── Metinler ────────────────────────────────────────────────────────────────
@@ -375,6 +378,7 @@ def anlik_al(entry: Optional[Dict[str, Any]], video: Any) -> Optional[Dict[str, 
     KOPYALANIR.
 
     Bağışlanmayanlar: kaydı bilinmeyen ya da yalnızca bilgi (AniList) kaynağı,
+    sunucunun kendi arşivi (TürkAnime),
     yerel dosya (adres http(s) değil), kaynağın kendi bölüm kimliği olmayan
     bölüm (sunucu arşivi o kimlikle anahtarlıyor; tahmin etmek arşivi kirletir),
     anime kimliği olmayan kayıt (aynı sebep).
@@ -386,7 +390,7 @@ def anlik_al(entry: Optional[Dict[str, Any]], video: Any) -> Optional[Dict[str, 
     if kaynak is None or not kaynak.oynatilabilir:
         return None
     modul = str(kaynak.modul or "").lower()
-    if not _KAYNAK_ANAHTARI.match(modul):
+    if not _KAYNAK_ANAHTARI.match(modul) or modul in BAGISLANMAYAN_MODULLER:
         return None
     adres = str(getattr(video, "url", "") or "")
     if urlsplit(adres).scheme.lower() not in ("http", "https"):

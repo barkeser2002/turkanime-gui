@@ -212,8 +212,8 @@ SENARYOLAR = {
     "numarasiz": lambda: _govde(title="Film"),
     "sezonlu_ara_bolum": lambda: _govde(title="Naruto 2. Sezon 5.5. Bölüm"),
     "sureli_oynayan": lambda: _govde(oynayan=OKCDN),
-    "arsiv_kaynagi": lambda: _govde(kaynak="TürkAnime", kimlik="07-ghost",
-                                    bolum_kimlik="07-ghost/07-ghost-1-bolum"),
+    "cf_kaynagi": lambda: _govde(kaynak="Deokwave", kimlik="12345",
+                                 bolum_kimlik="12345/1"),
     "sinirlar": _uc_uca,
 }
 
@@ -240,12 +240,23 @@ def test_govde_yalnizca_sozlesmenin_alanlarini_tasiyor():
                for v in govde["videolar"])
 
 
-@pytest.mark.parametrize("kaynak", [k.ad for k in kaynak_kaydi.kaynaklar(metadata=False)])
+BAGISLANAN_KAYNAKLAR = [k for k in kaynak_kaydi.kaynaklar(metadata=False)
+                        if k.modul not in vb.BAGISLANMAYAN_MODULLER]
+
+
+@pytest.mark.parametrize("kaynak", [k.ad for k in BAGISLANAN_KAYNAKLAR])
 def test_her_oynatilabilir_kaynagin_adi_sozlesmede_gecerli(sozlesme, kaynak):
-    """Kaynak adı kayıttaki modül adı (küçük harf); sunucu tanımıyorsa 400 verir
-    ve kayıt düşer — ama biçim yüzünden 422 hiçbir kaynakta olmamalı."""
+    """Kaynak adı kayıttaki modül adı (küçük harf); biçim yüzünden 422 hiçbir
+    kaynakta olmamalı."""
     hatalar = gecerli_mi(_govde(kaynak=kaynak), sozlesme)
     assert not hatalar, "\n".join(hatalar[:5])
+
+
+def test_sunucu_bagislanan_her_kaynagi_kabul_ediyor(sozlesme):
+    """Sunucunun tanımadığı kaynak 400 alır ve istemci onu 7 gün susturur:
+    listede olmayan bir kaynağın bağışı hiç ulaşmaz."""
+    eksik = sorted({k.modul for k in BAGISLANAN_KAYNAKLAR} - set(sozlesme["kaynaklar"]))
+    assert not eksik, f"sunucu bu kaynakları reddediyor: {eksik}"
 
 
 # ── Doğrulayıcı boş değil: sözleşmede yazılı sınırları gerçekten uyguluyor ──

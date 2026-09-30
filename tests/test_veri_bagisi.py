@@ -481,9 +481,14 @@ def test_kaynak_kimligi_olmayan_bolum_bagislanmiyor():
 
 
 def test_kaynak_adi_kayittaki_modul_adi():
-    assert govde(kaynak="TürkAnime")["kaynak"] == "animedepo"
-    assert govde(kaynak="AnimeDepo")["kaynak"] == "animedepo"      # eski ad
     assert govde(kaynak="TRAnimeİzle")["kaynak"] == "tranime"
+    assert govde(kaynak="Deokwave")["kaynak"] == "deokwave"
+
+
+@pytest.mark.parametrize("kaynak", ["TürkAnime", "AnimeDepo"])   # eski ad
+def test_sunucunun_kendi_arsivi_bagislanmiyor(kaynak):
+    """Arşiv sunucunun çıktısı; geri yollamak yalnızca kuyruğu doldurur."""
+    assert vb.anlik_al(kayit(kaynak=kaynak), Video()) is None
 
 
 def test_sinirlar_kirpiliyor():
