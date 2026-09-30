@@ -213,8 +213,12 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku, tmp_path_factory)
     animedepo.sifirla()
 
 
-@pytest.fixture(autouse=True)
-def _veri_koku_yalitimi(monkeypatch, tmp_path_factory):
+_VERI_KOKU = {"yol": None, "oturum": None}
+_VERI_KOKU_KILIDI = threading.Lock()   # arka plan işleri de çağırıyor
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _veri_koku_mandali(tmp_path_factory):
     """Veri kökü (ayarlar, geçmiş, kitaplık, önbellekler) yalnızca geçici kökte.
 
     `veri_koku()` depodan çalışınca DEPO KÖKÜ, worktree'den ve paketten
@@ -223,16 +227,21 @@ def _veri_koku_yalitimi(monkeypatch, tmp_path_factory):
     test de gerçek dosyaya yazar (`preserved_*` yalnızca YAZIMI geri alıyor).
     Ekran görüntüleri bu yüzden gerçek ayarlarla çekilmişti.
 
+    Mandal OTURUM boyu: test başına kurulan bir mandal testler arasındaki
+    boşlukta kalkıyor ve önceki testin açtığı web sayfasının arka plan çağrısı
+    (`istatistik` → `kutuphane.seri_sayisi` → `Dosyalar()`) tam o boşlukta
+    depoya `ayarlar.json` yazıyordu (ölçüldü). Test başına boş klasörü
+    `_veri_koku_yalitimi` veriyor; aradaki boşlukta oturum klasörü kullanılır.
+
     Kural öbür yalıtımlarla aynı: kök pytest'in geçici klasörü altındaysa
     (`izole_ev`, `.git`'li `tmp_path`'e `chdir`, `TURKANIME_VERI_DIZINI`)
-    dokunulmaz; değilse test başına boş bir klasör verilir.
+    dokunulmaz.
     """
     from turkanime_api.cli import dosyalar
 
     asil = dosyalar.veri_koku
     gecici_kok = tmp_path_factory.getbasetemp().resolve()
-    yedek = {}
-    kilit = threading.Lock()          # arka plan işleri de çağırıyor
+    _VERI_KOKU["oturum"] = tmp_path_factory.mktemp("veri_koku_oturum")
 
     def _yalniz_gecici():
         yol = asil()
@@ -240,12 +249,26 @@ def _veri_koku_yalitimi(monkeypatch, tmp_path_factory):
             Path(yol).resolve().relative_to(gecici_kok)
             return yol
         except ValueError:
-            with kilit:
-                if "yol" not in yedek:
-                    yedek["yol"] = tmp_path_factory.mktemp("veri_koku")
-                return yedek["yol"]
+            with _VERI_KOKU_KILIDI:
+                if _VERI_KOKU["yol"] is None:
+                    return _VERI_KOKU["oturum"]
+                if _VERI_KOKU["yol"] == "tembel":
+                    _VERI_KOKU["yol"] = tmp_path_factory.mktemp("veri_koku")
+                return _VERI_KOKU["yol"]
 
-    monkeypatch.setattr(dosyalar, "veri_koku", _yalniz_gecici)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(dosyalar, "veri_koku", _yalniz_gecici)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _veri_koku_yalitimi(_veri_koku_mandali):
+    """Her teste kendi boş veri kökü (ilk kullanımda yaratılır)."""
+    with _VERI_KOKU_KILIDI:
+        _VERI_KOKU["yol"] = "tembel"
+    yield
+    with _VERI_KOKU_KILIDI:
+        _VERI_KOKU["yol"] = None
 
 
 @pytest.fixture(autouse=True)
