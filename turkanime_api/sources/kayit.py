@@ -347,6 +347,14 @@ def _animeler() -> KaynakUclari:
     return KaynakUclari(search_animeler, get_anime_episodes, get_episode_streams)
 
 
+def _animom() -> KaynakUclari:
+    # Arama kartı ve film kartı kapak görselini taşıyor; `zengin_ara` aynı
+    # isteği kullanıyor, görsel için ek istek yok.
+    from .animom import get_anime_episodes, get_episode_streams, search_animom, zengin_ara
+    return KaynakUclari(search_animom, get_anime_episodes, get_episode_streams,
+                        zengin_ara=zengin_ara)
+
+
 def _onepacetr() -> KaynakUclari:
     # Kapak görseli ark listesi yanıtında geliyor; `zengin_ara` ek istek atmıyor.
     from .onepacetr import (
@@ -477,6 +485,21 @@ def _animeler_bolum_slugu(bolum_id: str) -> str:
     return str(bolum_id).strip("/").replace("/", "-")
 
 
+def _animom_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği sitedeki yol ("sousou-no-frieren-1-bolum",
+    # "blue-lock-2-sezon/sezon-2/bolum-1"); adres biçimi tek yerde kalsın diye
+    # modül kuruyor. Tembel: kayıt modülü hafif kalmalı.
+    from .animom import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
+def _animom_bolum_slugu(bolum_id: str) -> str:
+    # Sitenin SEO eklerini ("-izle-hd11") atan, kimlikten türetilen slug;
+    # gerekçe `animom.bolum_slugu`'nda.
+    from .animom import bolum_slugu
+    return bolum_slugu(bolum_id)
+
+
 # ── Tablo ───────────────────────────────────────────────────────────────────
 # Sıra önemli: arama sonuçları, CLI menüsü ve PROVIDERS önceliği bu sırayı
 # izler. TürkAnime en başta: CLI'ın varsayılanı ve ağsız çalışan tek kaynak.
@@ -529,6 +552,9 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("Animezer", "Animezer", "AM", "#e67e22", "ANIMEZER", _animezer,
            modul="animezer", cli_kodu="animezer", bolum_adresi=_animezer_adresi,
            taranabilir=True, deneysel=True),
+    Kaynak("AniMOM", "AniMOM", "MO", "#4ff461", "ANIMOM", _animom,
+           modul="animom", cli_kodu="animom", bolum_adresi=_animom_adresi,
+           bolum_slugu=_animom_bolum_slugu, taranabilir=True),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").
