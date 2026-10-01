@@ -199,6 +199,9 @@ class AyarlarUclari(QObject):
         self._ui = UiBridge(self)
         self.anilist = anilist
         self.discord = discord
+        if discord is not None and hasattr(discord, "state_changed"):
+            # Bağlanma artık arka planda: sonuç gelince sayfadaki metin tazelensin.
+            discord.state_changed.connect(self._discord_degisti)
         self.updates = updates
         self.requirements = requirements
         self._pencere = pencere
@@ -229,6 +232,10 @@ class AyarlarUclari(QObject):
         self._arsiv_kaynak_adi = ""
         self._arsiv_indirilen_var = False
         self._fs_iptal: Optional[threading.Event] = None
+        self._geri_cekme_kilidi = threading.Lock()
+        # "kimlik bagis id" listesinin oku-değiştir-yaz'ı (arka plandaki
+        # gönderimler ve geri çekme aynı anda bitebilir).
+        self._bagis_kayit_kilidi = threading.Lock()
         # Yerel FlareSolverr CF zincirinde kendiliğinden başlıyor/kapanıyor;
         # sayfa bunu olaydan öğreniyor (yönetici bu metodu zayıf tutuyor).
         self._fs().yonetici().dinle(self._flaresolverr_degisti)
@@ -283,7 +290,12 @@ class AyarlarUclari(QObject):
             return "pypresence kurulu değil — özellik kapalı (pip install pypresence)."
         if self.discord is not None and self.discord.bagli:
             return "Discord'a bağlı"
+        if self.discord is not None and getattr(self.discord, "baglaniyor", False):
+            return "Discord'a bağlanılıyor…"
         return "Discord açık değilse bağlantı kurulmaz; uygulama etkilenmez."
+
+    def _discord_degisti(self, _bagli: bool) -> None:
+        self._kopru.yay("discord_durum", {"metin": self._discord_metni()})
 
     # ── Okuma / kaydetme ────────────────────────────────────────────────────
     @uc()
@@ -474,6 +486,21 @@ class AyarlarUclari(QObject):
         if ayarlar is None:
             self._durum("Oturum kimliği bağışlanmadı: bağış ayarı kapalı ya da okunamadı.")
             return
+        # Gönderim ağa çıkıyor (sunucu yavaşsa zaman aşımına kadar). Bu geri
+        # çağrı onay penceresinin cevabıyla GUI thread'inde koşuyor; ağ isteği
+        # burada beklenseydi pencere o süre donardı.
+        self._durum("Oturum kimliği bağışlanıyor…")
+        self._arkada(self._bagis_gonder_is, netscape, ayarlar)
+
+    @staticmethod
+    def _arkada(fn, *args) -> None:
+        """Ağa çıkan işi arka plan havuzuna ver. Tek kapı: olay döngüsü
+        olmayan birim testleri bunu eşzamanlıya çevirebilsin."""
+        from ..qt.workers import run_bg
+        run_bg(fn, *args)
+
+    def _bagis_gonder_is(self, netscape: str, ayarlar: Dict[str, Any]) -> None:
+        """Arka plan: bağışı gönder, numarayı kaydet (olaylar thread güvenli)."""
         katki = self._katki()
         try:
             bagis_id = katki.bagis_gonder(netscape, katki.KAYNAK_TRANIME, ayarlar)
@@ -481,12 +508,19 @@ class AyarlarUclari(QObject):
             self._durum(f"Kimlik bağışı gönderilemedi: {exc}", "hata")
             return
         # Gönderim ile kaydetme AYRI: kaydetme düşerse numara ekrana yazılıyor.
-        kimlikler = bagis_kimlikleri(ayarlar)
-        if bagis_id not in kimlikler:
-            kimlikler.append(bagis_id)
+        # Liste YAZMA ANINDA ve kilit altında taze okunuyor: gönderimler arka
+        # planda, art arda iki bağış (ya da bir geri çekme) aynı anda bitince
+        # onaydaki eski kopyadan yazmak öbürünün numarasını silerdi.
         try:
-            self._dosya().set_ayar("kimlik bagis id", kimlikler)
+            with self._bagis_kayit_kilidi:
+                kimlikler = bagis_kimlikleri(self._dosya().ayarlar or ayarlar)
+                if bagis_id not in kimlikler:
+                    kimlikler.append(bagis_id)
+                self._dosya().set_ayar("kimlik bagis id", kimlikler)
         except Exception as exc:
+            kimlikler = bagis_kimlikleri(ayarlar)
+            if bagis_id not in kimlikler:
+                kimlikler.append(bagis_id)
             self._kopru.yay("ayar_bagis", self._bagis_durumu(kimlikler))
             self._durum(f"Bağış SUNUCUYA ULAŞTI ama numarası kaydedilemedi ({exc}). "
                         f"Geri çekebilmek için bu numarayı saklayın: {bagis_id}", "hata")
@@ -494,28 +528,49 @@ class AyarlarUclari(QObject):
         self._kopru.yay("ayar_bagis", self._bagis_durumu(kimlikler))
         self._durum("Oturum kimliği bağışlandı. Geri çekmek için “Bağışımı geri çek”.", "tamam")
 
-    @uc()
+    @uc(arka=True)
     def bagis_geri_cek(self) -> Dict[str, Any]:
-        """Önce sunucudan sil, sonra numarayı düş (sıra tersine dönemez)."""
+        """Önce sunucudan sil, sonra numarayı düş (sıra tersine dönemez).
+
+        Arka planda: numara başına bir HTTP isteği; sunucu yavaşsa ya da
+        ulaşılamıyorsa GUI thread'inde beklemek pencereyi zaman aşımı ×
+        numara sayısı kadar donduruyordu. Aynı anda ikinci çağrı reddedilir
+        (çift tık): ikisi aynı numaraları silip birbirinin kaydını ezerdi.
+        """
+        if not self._geri_cekme_kilidi.acquire(blocking=False):
+            raise UcHatasi("Geri çekme zaten sürüyor.")
+        try:
+            return self._bagis_geri_cek()
+        finally:
+            self._geri_cekme_kilidi.release()
+
+    def _bagis_geri_cek(self) -> Dict[str, Any]:
         ayarlar: Dict[str, Any] = self._dosya().ayarlar or {}
         kimlikler = bagis_kimlikleri(ayarlar)
         if not kimlikler:
             return dict(self._bagis_durumu([]), mesaj="Geri çekilecek bağış yok.", tur="bilgi")
-        kalan, hatalar = [], []
+        silinenler, hatalar = set(), []
         katki = self._katki()
         for bid in kimlikler:
             try:
                 katki.bagis_geri_cek(bid, ayarlar)
             except Exception as exc:
-                kalan.append(bid)
                 hatalar.append(f"{bid}: {exc}")
+            else:
+                silinenler.add(bid)
+        # Yalnızca GERÇEKTEN silinenleri düş, listeyi yazma anında taze oku:
+        # bu arada arka planda biten yeni bir bağışın numarası (başta okunan
+        # listede yoktu) ezilmesin.
         try:
-            self._dosya().set_ayar("kimlik bagis id", kalan)
+            with self._bagis_kayit_kilidi:
+                guncel = bagis_kimlikleri(self._dosya().ayarlar or {})
+                kalan = [k for k in guncel if k not in silinenler]
+                self._dosya().set_ayar("kimlik bagis id", kalan)
         except Exception as exc:
             return dict(self._bagis_durumu(kimlikler), tur="hata",
                         mesaj=f"Bağış(lar) sunucudan silindi ama numara yerelde kaldı: {exc}")
         if hatalar:
-            silinen = len(kimlikler) - len(kalan)
+            silinen = len(silinenler)
             bas = ("Bağış geri çekilemedi." if silinen == 0 else
                    f"{silinen}/{len(kimlikler)} bağış geri çekildi.")
             return dict(self._bagis_durumu(kalan), tur="hata",

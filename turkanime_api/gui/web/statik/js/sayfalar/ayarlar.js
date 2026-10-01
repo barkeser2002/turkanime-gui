@@ -73,6 +73,10 @@
       // olaydan geliyor, düğmeler ona göre.
       TA.dinle("flaresolverr_durum", function (v) { self.fsSon = v; self.fsGoster(v); });
       TA.dinle("flaresolverr_ilerleme", function (v) { self.fsIlerleme(v); });
+      // Discord'a bağlanma arka planda; el sıkışması bitince metin gelir.
+      TA.dinle("discord_durum", function (v) {
+        if (self.discordEl) self.discordEl.textContent = v.metin;
+      });
     },
 
     goster: function () {
@@ -376,10 +380,15 @@
 
     bagisGeriCek: function () {
       var self = this;
+      // Arka planda sunucuya gidiyor; bitene kadar düğme ikinci kez basılmasın.
+      var dugme = this.bagisDugme;
+      if (dugme) dugme.disabled = true;
+      self.durumYaz("Bağış geri çekiliyor…");
       TA.cagir("bagis_geri_cek").then(function (s) {
         self.bagisGoster(s);
         self.durumYaz(s.mesaj, s.tur);
-      }, function (e) { self.durumYaz(e.message, "hata"); });
+      }, function (e) { self.durumYaz(e.message, "hata"); })
+        .then(function () { if (dugme) dugme.disabled = false; });
     },
 
     // ── Veri bağışı ─────────────────────────────────────────────────────────

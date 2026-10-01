@@ -234,7 +234,7 @@ class SahteKatki:
         self.silinen.append(bid)
 
 
-def test_bagis_iki_kapili_ve_geri_cekme(ayar_uclari, monkeypatch):
+def test_bagis_iki_kapili_ve_geri_cekme(ayar_uclari, monkeypatch, qtbot):
     from turkanime_api.cli.dosyalar import Dosyalar
     katki = SahteKatki()
     monkeypatch.setattr(type(ayar_uclari), "_katki", staticmethod(lambda: katki))
@@ -249,7 +249,9 @@ def test_bagis_iki_kapili_ve_geri_cekme(ayar_uclari, monkeypatch):
     katki.onay = True
     ayar_uclari.kimlik_bagisi_teklif("cerez-1")
     ayar_uclari.kimlik_bagisi_teklif("cerez-2")
-    assert Dosyalar().ayarlar["kimlik bagis id"] == ["b1", "b2"]
+    # Gönderimler arka planda ve aynı anda bitebilir: ikisinin numarası da kalmalı.
+    qtbot.waitUntil(lambda: sorted(Dosyalar().ayarlar["kimlik bagis id"]) == ["b1", "b2"],
+                    timeout=3000)
     # Biri silinemezse numarası saklanır.
     katki.hata_ver = {"b2"}
     s = ayar_uclari.bagis_geri_cek()
