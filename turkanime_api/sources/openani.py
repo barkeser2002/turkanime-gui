@@ -20,6 +20,8 @@ from bs4 import BeautifulSoup
 # hem uyarıyı hem kırılganlığı bitiriyor (requests zaten zorunlu bağımlılık).
 import requests
 
+from ..common.hatalar import BotDogrulamasi, KaynakEngellendi, KaynakHatasi
+
 # `..objects` yt_dlp'yi (71 modül, ~0.5 sn) ve `..bypass` üzerinden Crypto'yu
 # çeker. `Anime`/`Bolum` bu modülde yalnızca `OpenAniAdapter`'ın iki fabrika
 # metodunda kullanılıyor; arama/bölüm/stream uçlarını çağıran sunucu tarayıcısı
@@ -157,6 +159,42 @@ def _extract_svelte_json(html: str) -> Optional[Dict]:
             pass
 
     return None
+
+# Cloudflare engel/doğrulama sayfalarının imzaları (küçük harf). İlk grup
+# KULLANICININ geçebileceği JS doğrulaması ("Just a moment") → `BotDogrulamasi`
+# ("Erişimi aç"). İkinci grup düz IP/WAF engeli ("Attention Required",
+# "Sorry, you have been blocked") → `KaynakEngellendi` (tarayıcıda açmak
+# değiştirmez). Liste `common.hatalar`'takiyle aynı aile.
+_CF_DOGRULAMA = ("just a moment", "challenge-platform", "cf-chl",
+                 "enable javascript and cookies")
+_CF_ENGEL = ("attention required", "sorry, you have been blocked", "cloudflare")
+
+
+def _blok_hatasi(resp: Any) -> Optional[KaynakHatasi]:
+    """Yanıt gerçek sayfa değil de Cloudflare kapısıysa uygun `KaynakHatasi`.
+
+    NEDEN: `search_anime` eskiden 403/CF yanıtını sessizce boş listeye
+    çeviriyordu — kullanıcı "0 sonuç" görüyordu, oysa site isteği geri
+    çevirmişti. Boş liste "aradım, bulamadım" demek; engel "soramadım" demek.
+    `None` = yanıt bir engel değil (gerçek içerik ya da düz 404/500).
+    """
+    if resp is None:
+        return None
+    status = getattr(resp, "status_code", None)
+    try:
+        govde = (getattr(resp, "text", "") or "")[:4000].lower()
+    except Exception:
+        govde = ""
+    if any(i in govde for i in _CF_DOGRULAMA):
+        return BotDogrulamasi(
+            "OpenAnime: Cloudflare doğrulaması istiyor; “Erişimi aç” ile "
+            "doğrulamayı kendiniz geçebilir ya da başka kaynak seçebilirsiniz")
+    if status in (403, 429, 503) or any(i in govde for i in _CF_ENGEL):
+        return KaynakEngellendi(
+            "OpenAnime: Cloudflare engeli: site isteği geri çevirdi; biraz "
+            "sonra yeniden deneyin ya da başka kaynak seçin")
+    return None
+
 
 class OpenAniAdapter:
     """OpenAnime provider implementation."""
@@ -313,6 +351,12 @@ class OpenAniAdapter:
         try:
             response = self._light_get(search_url, headers=headers)
             if response.status_code != 200:
+                # 403/429/503 veya CF kapısı: boş liste "aradım, bulamadım"
+                # diye yalan söylemesin. Elde sonuç yoksa engeli yükselt ki
+                # arayüz sebebi (ve gerekiyorsa "Erişimi aç") gösterebilsin.
+                hata = _blok_hatasi(response)
+                if hata is not None and not results:
+                    raise hata
                 return results
 
             html = response.text if hasattr(response, 'text') else response.content.decode('utf-8')
@@ -380,6 +424,9 @@ class OpenAniAdapter:
 
             return results
 
+        except KaynakHatasi:
+            # Engel/doğrulama: sessize alınmaz, çağırana (SearchEngine) gider.
+            raise
         except Exception as e:
             print(f"[OpenAni] Arama parse hatası: {e}")
             return results

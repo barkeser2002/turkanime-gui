@@ -4,7 +4,11 @@ Bu modül, AnimeciX API uçlarından arama ve bölüm/izleme verilerini çeker.
 Mevcut `objects.Anime/Bolum/Video` yapısına dokunmamak için, yalnızca
 harici arama/episode/watch listesi sağlar; indirme/oynatma yine yt-dlp/mpv ile.
 
-Cloudflare koruması için cf_bypass modülü entegre edilmiştir.
+Uçlar JSON API olduğu için istekler doğrudan curl_cffi ile (TLS parmak izi
+taklidi, varsa kullanıcının "Erişimi aç" oturumuyla) atılır; ağır CF zinciri
+(FlareSolverr/QtWebEngine) rendered HTML döndürdüğünden JSON'a yaramaz ve
+engelli sitede dakikalarca asılı kalıyordu. Engel `_blok_hatasi` ile hızlı ve
+tipli (`BotDogrulamasi`/`KaynakEngellendi`) bildirilir.
 """
 from __future__ import annotations
 
@@ -15,14 +19,20 @@ from urllib.parse import urlparse, parse_qs, quote, urlsplit, urlunsplit
 
 import urllib.request
 
-from ..common.hatalar import kaynak_hatasi
+from ..common.hatalar import (
+    BotDogrulamasi, KaynakEngellendi, KaynakHatasi, kaynak_hatasi,
+)
 
-# Cloudflare bypass entegrasyonu
+# curl_cffi: TLS parmak izi taklidi. AnimeciX uçları JSON API; ağır CF zinciri
+# (FlareSolverr/QtWebEngine) rendered HTML döndürür, JSON'a yaramaz ve engelli
+# sitede in-sandbox 60+ sn asılı kalıyordu (ölçüm: tek arama 69 sn). Doğrudan
+# curl_cffi hem hızlı hem bu JSON API için yeterli; kullanıcının "Erişimi aç"
+# oturumu (`oturumlar`) varsa çerezleri/kimliği eklenir.
 try:
-    from ..common.cf_bypass import CFSession, CFBypassError
-    HAS_CF_BYPASS = True
+    from curl_cffi import requests as _curl_requests
+    _HAS_CURL = True
 except ImportError:
-    HAS_CF_BYPASS = False
+    _HAS_CURL = False
 
 
 BASE_URL = "https://animecix.tv/"
@@ -34,36 +44,65 @@ HEADERS = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
 # izlenimi veriyordu.
 VIDEO_PLAYER = "tau-video.xyz"
 
-# Global CF session (lazy-load)
-_cf_session: Optional[CFSession] = None
+# Engel/doğrulama imzaları (küçük harf). İlk grup kullanıcının geçebileceği CF
+# JS doğrulaması → `BotDogrulamasi` ("Erişimi aç"); ikincisi düz IP/WAF engeli
+# → `KaynakEngellendi` (tarayıcıda açmak değiştirmez).
+_CF_DOGRULAMA = ("just a moment", "challenge-platform", "cf-chl",
+                 "enable javascript and cookies")
+_CF_ENGEL = ("attention required", "sorry, you have been blocked", "cloudflare")
 
 
-def _get_cf_session() -> Optional[CFSession]:
-    """CF session'ı lazy-load et."""
-    global _cf_session
-    if _cf_session is None and HAS_CF_BYPASS:
-        _cf_session = CFSession(impersonate="chrome110", timeout=15, max_retries=3)
-    return _cf_session
+def _blok_hatasi(status: Optional[int], govde: str) -> Optional[KaynakHatasi]:
+    """Yanıt bir Cloudflare kapısıysa uygun `KaynakHatasi`, değilse ``None``.
+
+    NEDEN: engel eskiden ham `HTTPError 403` olarak sızıyordu ve CF zinciri
+    60+ sn asılı kalıyordu. Artık hızlı ve tipli; arayüz sebebi ("Erişimi aç"
+    ya da "başka kaynak") gösterebiliyor.
+    """
+    g = (govde or "")[:4000].lower()
+    if any(i in g for i in _CF_DOGRULAMA):
+        return BotDogrulamasi(
+            "AnimeciX: Cloudflare doğrulaması istiyor; “Erişimi aç” ile "
+            "doğrulamayı kendiniz geçebilir ya da başka kaynak seçebilirsiniz")
+    if status in (403, 429, 503) or any(i in g for i in _CF_ENGEL):
+        return KaynakEngellendi(
+            "AnimeciX: Cloudflare engeli: site isteği geri çevirdi; biraz "
+            "sonra yeniden deneyin ya da başka kaynak seçin")
+    return None
 
 
 def _http_get(url: str, timeout: int = 10) -> bytes:
-    """HTTP GET isteği - önce CF bypass, sonra fallback urllib."""
+    """AnimeciX JSON API'sinden GET; engeli hızlı ve tipli bildirir.
+
+    Doğrudan curl_cffi (varsa kullanıcının "Erişimi aç" oturumuyla). `timeout`
+    artık GERÇEKTEN sokete gidiyor — eskiden CF session kendi 15 sn'sini × 3
+    deneme kullanıyor, `timeout` yalnızca urllib yedeğine geçiyordu.
+    """
     # Non-ASCII pathleri ASCII'ye uygun hale getirmek için yüzde-encode et
     sp = urlsplit(url)
     safe_path = quote(sp.path, safe="/:%@")
     safe_url = urlunsplit((sp.scheme, sp.netloc, safe_path, sp.query, sp.fragment))
-    
-    # Önce CF bypass ile dene
-    cf_session = _get_cf_session()
-    if cf_session is not None:
+
+    if _HAS_CURL:
+        from ..common import oturumlar
         try:
-            resp = cf_session.get(safe_url, headers=HEADERS)
-            if resp.status_code == 200:
-                return resp.content
-        except (CFBypassError, Exception) as e:
-            print(f"[AnimeCix] CF bypass başarısız, fallback kullanılıyor: {e}")
-    
-    # Fallback: Normal urllib
+            sess = oturumlar.oturumlu(_curl_requests.Session(impersonate="chrome131"))
+            resp = sess.get(safe_url, headers=HEADERS, timeout=timeout)
+        except Exception as e:
+            raise kaynak_hatasi(e, "AnimeciX", "istek başarısız") from e
+        hata = _blok_hatasi(getattr(resp, "status_code", None),
+                            getattr(resp, "text", "") or "")
+        if hata is not None:
+            raise hata
+        if resp.status_code != 200:
+            try:
+                resp.raise_for_status()
+            except Exception as e:
+                raise kaynak_hatasi(e, "AnimeciX", "istek başarısız") from e
+        return resp.content
+
+    # curl_cffi yoksa düz urllib (engel ham HTTPError olarak üst katmanda
+    # `kaynak_hatasi` ile sınıflanır).
     req = urllib.request.Request(safe_url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
