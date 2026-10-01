@@ -158,7 +158,7 @@ def onay_al(sorular: Any, kaynak: str, geri: Callable[[bool], Any]) -> Any:
 VARSAYILAN_SUNUCU_ADRESI = "https://turkanimeapi.bariskeser.com"
 # Depo sahibi ekler. Boşken yerleşik anahtar yok: kullanıcı kendi anahtarını
 # girmedikçe projenin sunucusuna hiçbir şey gönderilmez.
-VARSAYILAN_API_ANAHTARI = ""
+VARSAYILAN_API_ANAHTARI = "DFYPTntSGIkJnVstIUppU8yLvRMk7O26UmXOKMG_a0k"
 
 
 def sunucu_yapilandirmasi(ayarlar: Optional[Dict[str, Any]] = None
