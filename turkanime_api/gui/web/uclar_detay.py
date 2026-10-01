@@ -124,11 +124,16 @@ class DetayUclari:
 
     def __init__(self, kopru: Kopru, *, oynat: Callable[[Dict[str, Any]], Any],
                  indir: Callable[[Dict[str, Any]], Any],
-                 kuyrukta: Callable[[Dict[str, Any]], bool] = lambda _e: False):
+                 kuyrukta: Callable[[Dict[str, Any]], bool] = lambda _e: False,
+                 kuyrukta_toplu: Optional[Callable[[List[Dict[str, Any]]],
+                                                   List[bool]]] = None):
         self._kopru = kopru
         self._oynat = oynat
         self._indir = indir
         self._kuyrukta = kuyrukta
+        # Toplu kuyruk denetimi (indirme klasörünü bir kez çözer). Verilmezse
+        # (testler, sayfasız kurulum) satır başına `_kuyrukta`'ya düşülür.
+        self._kuyrukta_toplu = kuyrukta_toplu
         self._kilit = threading.RLock()
         self._sayac = 0
         self.oturum: Optional[Oturum] = None
@@ -205,17 +210,29 @@ class DetayUclari:
         (yönetici orada değişiyor); arka plandan çağrıda False.
         """
         from ..qt import prefs
+        entries = oturum.bolumler.get(kaynak, [])
+        # Kuyruk bayrakları: mümkünse TOPLU (indirme klasörü bir kez çözülür);
+        # yoksa satır başına `_kuyrukta`. İkisi de GUI thread'inde (indirme
+        # yöneticisi orada); fark, toplu olanın satır başına disk okumamasıdır.
+        if kuyruk and self._kuyrukta_toplu is not None:
+            kuyruk_bayraklari = list(self._kuyrukta_toplu(entries))
+        else:
+            kuyruk_bayraklari = None
         out = []
-        for entry in oturum.bolumler.get(kaynak, []):
+        for sira, entry in enumerate(entries):
             izlendi, indirildi = gecmis.durum(entry.get("obj"))
             k = prefs.kitaplik_kimligi(entry)
             konum = (kutuphane.konum_getir(k["kaynak"], k["kimlik"], k["bolum_slug"], veri)
                      if k["kaynak"] and k["kimlik"] and k["bolum_slug"] else None)
+            if kuyruk_bayraklari is not None:
+                kuyrukta = bool(kuyruk_bayraklari[sira])
+            else:
+                kuyrukta = bool(kuyruk and self._kuyrukta(entry))
             out.append({
                 "izlendi": bool(izlendi), "indirildi": bool(indirildi),
                 "rozet": rozet,
                 "konum": kutuphane.sure_metni(konum["konum"]) if konum else "",
-                "kuyrukta": bool(kuyruk and self._kuyrukta(entry)),
+                "kuyrukta": kuyrukta,
             })
         return out
 
@@ -355,6 +372,26 @@ class DetayUclari:
         return {"durumlar": {k: self._bolum_durumlari(oturum, k, gecmis, rozet, veri)
                              for k in list(oturum.bolumler)},
                 "devam": self._devam_hedefi(oturum, gecmis, veri)}
+
+    @uc("kuyruk_durumlari")
+    def kuyruk_durumlari(self, rid: int) -> Dict[str, Any]:
+        """Yalnızca "Kuyrukta" rozetleri (GUI thread'i; DİSKE HİÇ ÇIKMAZ).
+
+        `kuyruk_degisti` olayında geçmiş ve kitaplık DEĞİŞMEZ; yalnızca indirme
+        kuyruğu değişir. Bütün `bolum_durumlari`'nı çağırmak, değişmeyen ağır
+        geçmiş/kitaplık JSON'unu her indirme durum değişiminde yeniden okurdu
+        (ölçüldü: 2,3 MB geçmişte ~24 ms + 1000 bölümde ~110 ms, hepsi GUI
+        thread'inde). Burada yalnızca toplu kuyruk denetimi var (indirme klasörü
+        bir kez çözülür)."""
+        oturum = self._oturum(rid)
+        durumlar: Dict[str, List[bool]] = {}
+        for kaynak in list(oturum.bolumler):
+            entries = oturum.bolumler[kaynak]
+            if self._kuyrukta_toplu is not None:
+                durumlar[kaynak] = [bool(b) for b in self._kuyrukta_toplu(entries)]
+            else:
+                durumlar[kaynak] = [bool(self._kuyrukta(e)) for e in entries]
+        return {"durumlar": durumlar}
 
     @uc("eslestir", arka=True)
     def eslestir(self, rid: int, kaynaklar: Optional[List[str]] = None) -> Dict[str, Any]:
