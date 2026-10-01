@@ -362,6 +362,28 @@ siler. Oturumlar veri klasöründe `oturumlar.json` ve `erisim_profilleri/`
 altında durur ve bu bilgisayardan çıkmaz. Terminal sürümü GUI'nin kaydettiği
 oturumu kullanır ama pencereyi kendisi açamaz.
 
+**Erişim tarayıcısı (gömülü ya da gerçek tarayıcı).** Bazı siteler gömülü
+QtWebEngine'in parmak izini tanıyıp doğrulamayı hiç çözdürmüyor; makinedeki
+gerçek bir Chrome ailesi tarayıcısı (Chrome, Chromium, Brave, Edge, **Chrome
+Beta**, **ungoogled-chromium**) çözdürüyor. Ayarlar → Kaynak Oturumları →
+*Erişim tarayıcısı*'ndan motoru seçersin:
+
+- **Otomatik** (varsayılan): `undetected-chromedriver` ve makinede bir Chrome
+  ailesi tarayıcısı **varsa** onu görünür açar, yoksa gömülü QtWebEngine
+  penceresine düşer. `selenium`/`undetected-chromedriver` kurulu olmayan normal
+  pakette davranış eskisiyle aynıdır (hep gömülü).
+- **Her zaman gömülü**: hep QtWebEngine penceresi.
+- **Gerçek tarayıcı**: hazır değilse yine gömülüye düşer.
+
+Gerçek tarayıcı motoru **isteğe bağlıdır** ve bir tarayıcı **paketlenmez** (yer
+kazanmak için senin kurulu tarayıcın kullanılır): `pip install
+"turkanime-gui[tarayici]"` ile `selenium` + `undetected-chromedriver` kurulur.
+Belirli bir tarayıcıyı zorlamak için *Tarayıcı yolu* alanına yolunu yaz
+(ya da `TURKANIME_TARAYICI` ortam değişkenine); boşsa PATH ve bilinen kurulum
+yolları otomatik taranır. İlke değişmez: doğrulamayı yine **sen** çözersin,
+`undetected-chromedriver` yalnızca gerçek tarayıcının kendi parmak izini
+korur; uygulama otomatik tık/çözme yapmaz.
+
 ## 🤝 Bağış
 
 İki ayrı bağış var, ikisi de **varsayılan kapalı**. Açarken ne gönderildiğini
