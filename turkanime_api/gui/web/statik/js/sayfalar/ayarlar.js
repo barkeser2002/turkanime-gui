@@ -222,8 +222,8 @@
         ]),
         this.kart("bagis", "Oturum Kimliği Bağışı", "Kapalıyken hiçbir kimlik gönderilmez. Açarsan, çerez her alındığında ne bağışladığını anlatan bir onay penceresi çıkar; gönderim yalnızca onu onaylarsan yapılır.", [
           this.anahtar("kimlik_paylas", "Çerez aldığımda oturum kimliğimi bağışlamayı sor"),
-          this.satir("Sunucu adresi", this.girdi("sunucu_adresi", { yer: "https://sunucu.example (boş = kapalı)" })),
-          this.satir("API anahtarı", this.girdi("sunucu_anahtari", { tip: "password", yer: "Sunucu API anahtarı" })),
+          this.satir("Sunucu adresi", this.girdi("sunucu_adresi", { yer: "boş = projenin sunucusu (turkanimeapi.bariskeser.com)" })),
+          this.satir("API anahtarı", this.girdi("sunucu_anahtari", { tip: "password", yer: "boş = yerleşik anahtar (yalnızca projenin sunucusuna gider)" })),
           this.bagisEl,
           h("div.dugme-satiri", null, this.bagisDugme)
         ]),

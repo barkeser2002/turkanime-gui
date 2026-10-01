@@ -398,10 +398,42 @@ def test_bagis_yokken_geri_cekme_aga_cikmiyor(sayfa, casus):
     assert kayit["geri_cekme"] == []
 
 
-# ── Yapılandırma kapısı (gerçek HTTP yolu; istek hiç başlamıyor) ────────────
-def test_sunucu_adresi_yoksa_gonderim_baslamiyor():
+# ── Yapılandırma: boş ayar = projenin sunucusu ──────────────────────────────
+def test_bos_ayar_projenin_sunucusu_ve_yerlesik_anahtar(yerlesik_anahtar):
+    assert katki.sunucu_yapilandirmasi({}) == (
+        katki.VARSAYILAN_SUNUCU_ADRESI, yerlesik_anahtar)
+    assert katki.VARSAYILAN_SUNUCU_ADRESI.startswith("https://")
+
+
+def test_kullanici_anahtari_projenin_sunucusunda_kullaniliyor():
+    assert katki.sunucu_yapilandirmasi({"sunucu api anahtari": " k "}) == (
+        katki.VARSAYILAN_SUNUCU_ADRESI, "k")
+
+
+@pytest.mark.parametrize("adres", ["https://turkanimeapi.bariskeser.com/",
+                                   "HTTPS://TurkAnimeApi.bariskeser.com"])
+def test_varsayilan_adres_elle_yazilinca_da_yerlesik_anahtar(adres, yerlesik_anahtar):
+    assert katki.sunucu_yapilandirmasi({"sunucu adresi": adres})[1] == yerlesik_anahtar
+
+
+@pytest.mark.parametrize("adres", [
+    "https://baska.test",
+    "http://turkanimeapi.bariskeser.com",                    # şifresiz
+    "https://turkanimeapi.bariskeser.com.saldirgan.test",
+])
+def test_yerlesik_anahtar_baska_sunucuya_gitmiyor(adres, monkeypatch, yerlesik_anahtar):
+    """Projenin anahtarı, ayarlara yazılmış üçüncü bir sunucuya sızmamalı.
+
+    `bagis_gonder` ağ hatasını da `KatkiHatasi`ya çeviriyor; bu yüzden yalnızca
+    hatayı değil, isteğin hiç başlamadığını da ayrıca denetliyoruz.
+    """
+    import requests
+    istekler = []
+    monkeypatch.setattr(requests, "post", lambda *a, **k: istekler.append((a, k)))
+    assert katki.sunucu_yapilandirmasi({"sunucu adresi": adres})[1] == ""
     with pytest.raises(katki.KatkiHatasi):
-        katki.bagis_gonder(CEREZ, ayarlar={"sunucu api anahtari": "k"})
+        katki.bagis_gonder(CEREZ, ayarlar={"sunucu adresi": adres})
+    assert istekler == []
 
 
 def test_api_anahtari_yoksa_gonderim_baslamiyor():

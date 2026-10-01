@@ -784,3 +784,15 @@ def izole_ayarla(izole_ev):
         Dosyalar().set_ayar(ayar_list=degerler)
 
     return _ayarla
+
+
+@pytest.fixture
+def yerlesik_anahtar(monkeypatch):
+    """Projenin yerleşik API anahtarı yerine bir test değeri.
+
+    Testler gerçek anahtara bağlı olmamalı: anahtar döndürülünce ya da depoda
+    boşken de aynı sonucu vermeliler.
+    """
+    from turkanime_api.gui.web import katki
+    monkeypatch.setattr(katki, "VARSAYILAN_API_ANAHTARI", "test-yerlesik-anahtar")
+    return "test-yerlesik-anahtar"
