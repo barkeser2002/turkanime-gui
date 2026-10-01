@@ -13,6 +13,11 @@ bölümün anahtarları aynen; boyut için ilk 3 bölüm dışındakilerin içi
 `video_info-33D1627-s1e1.json` canlı kontrol sırasında alındı (site kendi
 Sibnet vekilini "main" yapmış). JSON yanıtları olduğu gibi.
 
+`cf-challenge.html` 2026-09-30'da `/api/v1/animes/search/?q=naruto`'nun
+döndürdüğü Cloudflare "Just a moment..." sayfası (403, `cf-mitigated:
+challenge`); yalnızca istek başına değişen uzun belirteçler ve gömülü SVG
+kısaltıldı.
+
 `--network` ile ayrıca canlı bir duman testi koşar (arama → bölümler → akış →
 videonun ilk KB'ı).
 """
@@ -42,10 +47,12 @@ def oku(ad: str) -> str:
 class Yanit:
     """curl_cffi yanıtının kullandığımız kadarı."""
 
-    def __init__(self, status_code: int = 200, text: str = "", url: str = ""):
+    def __init__(self, status_code: int = 200, text: str = "", url: str = "",
+                 headers: Optional[Dict[str, str]] = None):
         self.status_code = status_code
         self.text = text
         self.url = url
+        self.headers = headers or {}
 
     def json(self):
         return json.loads(self.text)
@@ -487,6 +494,97 @@ def test_bot_dogrulama_sayfasi_engel_sayiliyor():
     # Normal sayfa CF betiği ("challenge-platform") taşıyabilir: 200 engel değil.
     assert not dw._engellendi_mi(Yanit(200, "/cdn-cgi/challenge-platform/scripts/jsd/main.js"))
     assert not dw._engellendi_mi(Yanit(404, "Access to this resource on the server is denied"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloudflare doğrulaması (2026-09-30: bütün deokwave.com yolları)
+# ─────────────────────────────────────────────────────────────────────────────
+def _cf_sayfasi(basliksiz: bool = False) -> Yanit:
+    return Yanit(403, oku("cf-challenge.html"),
+                 headers={} if basliksiz else {"cf-mitigated": "challenge"})
+
+
+def test_arama_cf_dogrulamasinda_ilk_istekte_duruyor(site):
+    """ESKİ HATA: doğrulama sayfası LiteSpeed kısıtı sanılıyordu; arama 4 profil
+    × 2 uç = 8 istek atıp ~18 sn sonra "birkaç dakika sonra yeniden deneyin"
+    diyordu. Doğrulama profil değiştirerek geçilmiyor (geçilmeye de
+    çalışılmamalı), yedek uç da aynı doğrulamanın arkasında."""
+    site.tablo["/api/v1/animes/search/"] = _cf_sayfasi()
+    site.tablo["/search_api.php"] = _cf_sayfasi()
+
+    with pytest.raises(dw.DeokwaveDogrulamasi, match="Cloudflare") as hata:
+        dw.search_deokwave("naruto")
+
+    assert _yollar(site.cagrilar) == ["/api/v1/animes/search/"]
+    assert site.profiller == ["chrome131"], "doğrulamada profil değiştirilmemeli"
+    assert hata.value.status_code == 403
+    assert isinstance(hata.value, dw.DeokwaveHatasi)      # eski yakalayıcılar
+
+
+def test_arama_ikinci_sayfada_dogrulama_ilk_sayfayi_dusurmuyor(site):
+    veri = json.loads(oku("search_v1-naruto.json"))
+
+    def cevap(params, _p):
+        if params["page"] == 2:
+            return _cf_sayfasi()
+        return Yanit(200, json.dumps({"success": True, "animes": veri["animes"][:9],
+                                      "total": 17, "page": 1, "total_pages": 2}))
+    site.tablo["/api/v1/animes/search/"] = cevap
+
+    sonuc = dw.search_deokwave("naruto", limit=20)
+
+    assert len(sonuc) == 9
+    assert [c["params"]["page"] for c in site.cagrilar] == [1, 2]
+
+
+def test_bolumler_cf_dogrulamasi_engellenme_sayiliyor(site):
+    from turkanime_api.common.hatalar import KaynakEngellendi, kaynak_hatasi, sebep_metni
+    from turkanime_server.crawler.nezaket import ENGELLENME, hata_turu
+
+    site.tablo["/anime/0C61BB4/"] = _cf_sayfasi()
+
+    with pytest.raises(dw.DeokwaveDogrulamasi) as hata:
+        dw.get_anime_episodes("0C61BB4")
+
+    assert len(site.cagrilar) == 1
+    # Sunucu tarayıcısı kaynağı dinlendirsin; arayüz "Cloudflare engeli" desin.
+    assert hata_turu(hata.value) == ENGELLENME
+    assert isinstance(kaynak_hatasi(hata.value, "Deokwave"), KaynakEngellendi)
+    assert "Cloudflare" in sebep_metni(hata.value)
+
+
+def test_akislar_cf_dogrulamasinda_anahtar_ve_izleme_sayfasi_istenmiyor(site):
+    site.tablo["/watch/video-info/"] = _cf_sayfasi()
+    site.tablo["/api/v1/video/token/"] = sayfa("video_token.json")
+
+    with pytest.raises(dw.DeokwaveDogrulamasi):
+        dw.get_episode_streams("0C61BB4/1/1")
+    assert _yollar(site.cagrilar) == ["/watch/video-info/"]
+
+
+def test_anahtar_ucu_dogrulamadaysa_izleme_sayfasina_gidilmiyor(site):
+    site.tablo["/watch/video-info/"] = _video_info("video_info-33D1627-s2e5.json")
+    site.tablo["/api/v1/video/token/"] = _cf_sayfasi()
+    site.tablo["/watch/33D1627/season/2/episode/5"] = sayfa("watch-0C61BB4-s1e1.html")
+
+    with pytest.raises(dw.DeokwaveDogrulamasi):
+        dw.get_episode_streams("33D1627/2/5")
+    assert _yollar(site.cagrilar) == ["/watch/video-info/", "/api/v1/video/token/"]
+
+
+def test_cf_dogrulamasi_tanima():
+    # Asıl ölçüt başlık; başlığı düşüren bir ara katmanda gövde izi yetiyor.
+    assert dw._cf_dogrulamasi_mi(_cf_sayfasi())
+    assert dw._cf_dogrulamasi_mi(_cf_sayfasi(basliksiz=True))
+    assert dw._cf_dogrulamasi_mi(Yanit(503, "", headers={"cf-mitigated": "challenge"}))
+    # LiteSpeed kısıt 403'ü de CF'in /cdn-cgi/challenge-platform/ betiğini
+    # taşıyor: o doğrulama değil, profil değiştirerek geçen kısıt.
+    litespeed = Yanit(403, oku("403-litespeed.html"))
+    assert "challenge-platform" in litespeed.text
+    assert not dw._cf_dogrulamasi_mi(litespeed) and dw._engellendi_mi(litespeed)
+    # Normal sayfa: 200 ve başlık yok.
+    assert not dw._cf_dogrulamasi_mi(Yanit(200, oku("cf-challenge.html")))
+    assert not dw._cf_dogrulamasi_mi(Yanit(429, ""))
 
 
 def test_istekler_arasinda_en_az_bir_saniye(site, monkeypatch):

@@ -5,6 +5,11 @@
  *   arama_kaynak    → o kaynağın kartları (ya da hatası)
  *   arama_bitti     → yetişemeyenler ve son özet
  * İstek numarasını sayfa üretiyor; eski aramanın geç olayları atılıyor.
+ *
+ * Bot doğrulamasına takılan kaynağın sebebinin yanında "Erişimi aç" var
+ * (olaydaki `erisim`, bkz. js/erisim.js). Erişim açılınca YALNIZCA o kaynak
+ * yeniden aranıyor: ek istek numarası `ekIstekler`de, olayları mevcut aramanın
+ * üstüne işleniyor (sayfa sıfırlanmıyor, diğer kaynakların kartları kalıyor).
  */
 (function () {
   "use strict";
@@ -23,6 +28,8 @@
     durumlar: {},      // ad → {durum: "bekliyor"|"tamam"|"hata", kartlar, hata}
     filtre: "",
     suruyor: false,
+    ekIstekler: {},    // tek kaynağın yeniden araması: istek → kaynak adı
+    yenilenen: {},     // yeniden aranmış kaynaklar (ana aramanın sonucu artık onların değil)
 
     kur: function (kap) {
       var self = this;
@@ -85,6 +92,8 @@
       this.istek = TA.yeniIstek();
       this.kaynaklar = [];
       this.durumlar = {};
+      this.ekIstekler = {};
+      this.yenilenen = {};
       this.filtre = "";
       this.suruyor = true;
       this.dugme.disabled = true;
@@ -105,7 +114,7 @@
 
     // ── Olaylar ─────────────────────────────────────────────────────────────
     kaynaklarGeldi: function (v) {
-      if (v.istek !== this.istek) return;
+      if (v.istek !== this.istek) return;      // ek istekler listeyi değiştirmez
       this.kaynaklar = v.kaynaklar;
       v.kaynaklar.forEach(function (k) {
         if (!this.durumlar[k.ad]) this.durumlar[k.ad] = { durum: "bekliyor", kartlar: [], hata: "" };
@@ -115,32 +124,79 @@
     },
 
     kaynakGeldi: function (v) {
-      if (v.istek !== this.istek) return;
       var ad = v.kaynak.ad;
+      if (v.istek === this.istek ? this.yenilenen[ad] : this.ekIstekler[v.istek] !== ad) return;
       if (!this.kaynaklar.some(function (k) { return k.ad === ad; })) this.kaynaklar.push(v.kaynak);
-      this.durumlar[ad] = { durum: v.hata ? "hata" : "tamam", kartlar: v.kartlar, hata: v.hata };
+      this.durumlar[ad] = { durum: v.hata ? "hata" : "tamam", kartlar: v.kartlar, hata: v.hata,
+                            erisim: !!(v.hata && v.erisim) };
       this.cipleriCiz();
       this.gruplariCiz();
       this.ozetYaz();
     },
 
     bitti: function (v) {
+      if (this.ekIstekler[v.istek]) return this.ekBitti(v);
       if (v.istek !== this.istek) return;
       this.suruyor = false;
       this.dugme.disabled = false;
       Object.keys(v.hatalar || {}).forEach(function (ad) {
+        if (this.yenilenen[ad]) return;
         var d = this.durumlar[ad] || (this.durumlar[ad] = { kartlar: [] });
         if (!d.kartlar.length) {
           d.durum = "hata";
           d.hata = v.hatalar[ad];
+          d.erisim = (v.erisim || []).indexOf(ad) >= 0;
         }
       }, this);
       Object.keys(this.durumlar).forEach(function (ad) {
+        if (this.yenilenen[ad]) return;
         if (this.durumlar[ad].durum === "bekliyor") this.durumlar[ad].durum = "tamam";
       }, this);
       this.cipleriCiz();
       this.gruplariCiz();
       this.ozetYaz(v.hata);
+    },
+
+    // Tek kaynağın yeniden araması bitti ("Erişimi aç"tan sonra).
+    ekBitti: function (v) {
+      var ad = this.ekIstekler[v.istek];
+      delete this.ekIstekler[v.istek];
+      var d = this.durumlar[ad] || (this.durumlar[ad] = { kartlar: [] });
+      var hata = (v.hatalar || {})[ad] || v.hata;
+      if (hata && !d.kartlar.length) {
+        d.durum = "hata";
+        d.hata = hata;
+        d.erisim = (v.erisim || []).indexOf(ad) >= 0;
+      } else if (d.durum === "bekliyor") {
+        d.durum = "tamam";
+      }
+      this.cipleriCiz();
+      this.gruplariCiz();
+      this.ozetYaz();
+    },
+
+    // "Erişimi aç" başarılı: yalnızca o kaynakta aynı sorguyu yeniden ara.
+    kaynakYenidenAra: function (ad) {
+      var self = this;
+      if (!this.sorgu) return;
+      var istek = TA.yeniIstek();
+      this.ekIstekler[istek] = ad;
+      this.yenilenen[ad] = true;
+      this.durumlar[ad] = { durum: "bekliyor", kartlar: [], hata: "", erisim: false };
+      this.cipleriCiz();
+      this.ozetYaz();
+      TA.cagir("ara", { sorgu: this.sorgu, istek: istek, kaynak: ad }).catch(function (e) {
+        if (self.ekIstekler[istek] !== ad) return;
+        self.ekBitti({ istek: istek, hata: e.message, hatalar: {} });
+      });
+    },
+
+    // Hatanın yanındaki düğme (yalnızca bot doğrulamasında).
+    erisimDugmesi: function (ad) {
+      var self = this;
+      var d = this.durumlar[ad];
+      if (!d || !d.erisim) return null;
+      return TA.erisimDugmesi(ad, function () { self.kaynakYenidenAra(ad); });
     },
 
     // ── Çizim ───────────────────────────────────────────────────────────────
@@ -193,7 +249,8 @@
       }, this);
       if (!hatalilar.length) return;
       TA.ekle(this.uyari, [TA.ikon("uyari"), "Aranamayan: "].concat(hatalilar.map(function (k, i) {
-        return [i ? " · " : "", h("b", null, k.etiket), " — " + this.durumlar[k.ad].hata];
+        return [i ? " · " : "", h("b", null, k.etiket), " — " + this.durumlar[k.ad].hata,
+          this.erisimDugmesi(k.ad)];
       }, this)));
     },
 
@@ -202,7 +259,8 @@
         return this.durumlar[k.ad] && this.durumlar[k.ad].durum === "hata";
       }, this);
       var liste = hatalilar.length ? h("ul.hata-listesi", null, hatalilar.map(function (k) {
-        return h("li", null, h("b", null, k.etiket), " — ", this.durumlar[k.ad].hata);
+        return h("li", { dataset: { kaynak: k.ad } }, h("b", null, k.etiket), " — ",
+          this.durumlar[k.ad].hata, this.erisimDugmesi(k.ad));
       }, this)) : null;
       var kutu = TA.bosDurum({
         ikon: "ara",

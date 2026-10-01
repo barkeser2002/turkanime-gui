@@ -305,8 +305,19 @@ class DetayUclari:
             # "AniList yalnızca metadata kaynağı", "AnimeciX sayısal kimlik
             # bekliyor": kullanıcıya yazılmış cümleler, olduğu gibi gitsin.
             raise UcHatasi(str(exc)) from None
+        except Exception as exc:
+            # Bot doğrulamasıysa sayfa akordiyonda "Erişimi aç" göstersin.
+            from ...common import oturumlar
+            oturumlar.erisim_isaretle(exc, kaynak)
+            raise
         bolumler = [e for e in (ham or []) if isinstance(e, dict)]
         kapak = cover_url(oturum.anime) or ""
+        # Kaynağın bölüm listesi (kendi kimliği + adı): veri bağışı açıksa
+        # arşive bununla gidiyor (bkz. `gui.web.veri_bagisi`). Bir kez kuruluyor,
+        # bütün kayıtlar aynı listeyi paylaşıyor; ağ isteği yok.
+        liste = [(str(getattr(e.get("obj"), "kimlik", "") or ""), str(e.get("title") or ""))
+                 for e in bolumler]
+        liste = [cift for cift in liste if cift[0]]
         for entry in bolumler:
             # Kitaplık anahtarı (bkz. `prefs.kitaplik_kimligi`): kaynak ve
             # kaynağın KENDİ kimliği; bölüm nesnesinden türetilemiyor.
@@ -314,6 +325,7 @@ class DetayUclari:
             entry["kimlik"] = kimlik
             entry["seri_adi"] = oturum.baslik
             entry["kapak"] = kapak
+            entry["bolum_listesi"] = liste
         with self._kilit:
             self._oturum(rid).bolumler[kaynak] = bolumler
         gecmis, rozet = self._gecmis()

@@ -773,4 +773,203 @@
 .onay-penceresi p {
   line-height: 1.6;
   word-break: break-word;
+  /* Kapanış sorusu gibi paragraflı metinler (\n\n). */
+  white-space: pre-line;
+}
+
+/* ── Python'un soru pencereleri (js/pencereler.js) ─────────────────────── */
+.soru-penceresi {
+  width: min(540px, 100%);
+}
+
+.soru-penceresi.dar {
+  width: min(440px, 100%);
+}
+
+.soru-penceresi.bagis-penceresi {
+  width: min(660px, 100%);
+}
+
+.soru-penceresi .modal-baslik h3 {
+  font-size: 18px;
+}
+
+.cok-satir {
+  white-space: pre-line;
+}
+
+.modal-not {
+  font-size: 13px;
+  color: var(--kirmizi);
+  line-height: 1.5;
+}
+
+.modal-not:empty {
+  display: none;
+}
+
+/* Tek seçimlik liste (fansub): eşleşme penceresindeki satırlarla aynı dil. */
+.secenek-listesi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.secenek {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background var(--gecis), border-color var(--gecis);
+}
+
+.secenek:hover {
+  background: var(--yuzey-2);
+}
+
+.secenek:has(input:checked) {
+  background: var(--mavi-yumusak);
+  border-color: rgba(76, 141, 255, 0.45);
+}
+
+.secenek input,
+.onay-kutusu input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--mavi);
+  cursor: pointer;
+}
+
+.onay-kutusu {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--metin-2);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.onay-kutusu input {
+  margin-top: 2px;
+}
+
+.soru-formu {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.soru-etiket {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--metin-2);
+}
+
+.sayi-girdisi {
+  width: 140px;
+}
+
+/* Bağış onayı: uzun metin kaydırılır, düğmeler hep görünür kalır. */
+.bagis-metni {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--yuzey-2);
+  border: 1px solid var(--kenar);
+  color: var(--metin-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.soru-bilgi {
+  grid-template-columns: 110px minmax(0, 1fr);
+}
+
+.degisiklikler {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--yuzey-2);
+  border: 1px solid var(--kenar);
+  color: var(--metin-2);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.arac-listesi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.arac-listesi .hap svg {
+  color: var(--vurgu-2);
+}
+
+/* Gereksinim sihirbazındaki isteğe bağlı FlareSolverr satırı */
+.fs-satiri {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.fs-satiri .soluk {
+  margin: 0;
+}
+
+.soru-cubuk {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--yuzey-3);
+  overflow: hidden;
+}
+
+.soru-cubuk i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--mavi);
+  transition: width 200ms ease;
+}
+
+.soru-durum {
+  font-size: 13px;
+  color: var(--soluk);
+  line-height: 1.55;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.soru-durum:empty {
+  display: none;
+}
+
+.soru-durum.hata {
+  color: var(--kirmizi);
+}
+
+.soru-durum.tamam {
+  color: var(--yesil);
 }

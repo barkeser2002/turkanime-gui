@@ -4,6 +4,10 @@ ESKİ HATA: ayar kaydediliyordu ama yalnızca CLI soruyordu; arayüz her bölüm
 oynatıcı önceliğiyle seçilen akışı açıyor, seri içinde çeviri grubu bölümden
 bölüme değişebiliyordu. Ağ yok, mpv yok: sahte bölümün `best_video`'su video
 döndürmüyor (oynatma/indirme "video yok" ile biter, diske bir şey yazılmaz).
+
+Soru eskiden Qt diyaloğuydu (`FansubDialog`); artık web arayüzünde bir pencere
+(tür ``fansub``). Akış testleri `FansubSecici.sor`'u sahteliyor; pencerenin
+kendisi gerçek QtWebEngine sayfasında sınanıyor.
 """
 from __future__ import annotations
 
@@ -11,7 +15,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from turkanime_api.gui.qt.fansub import FansubDialog, FansubSecici, fansub_ozeti
+from turkanime_api.gui.qt.fansub import (
+    OTOMATIK_ETIKETI, FansubSecici, fansub_ozeti, fansub_secenekleri,
+)
 from turkanime_api.gui.qt.indirme import BITMIS_DURUMLAR
 
 
@@ -47,9 +53,9 @@ def _entry(bolum, no=1):
 def sorulan(main_window, monkeypatch):
     kayit: list = []
 
-    def sor(baslik, fansubs, ozet):
+    def sor(baslik, fansubs, ozet, geri):
         kayit.append((baslik, list(fansubs), ozet))
-        return ("B", True)
+        geri(("B", True))
 
     monkeypatch.setattr(main_window.fansub, "sor", sor)
     return kayit
@@ -94,7 +100,7 @@ def test_tek_fansubda_ve_ayar_kapaliyken_sorulmuyor(main_window, qtbot, ayarla,
 
 def test_iptal_oynatmayi_baslatmiyor(main_window, qtbot, ayarla, tmp_path, monkeypatch):
     ayarla(**{"manuel fansub": True, "indirilenler": str(tmp_path)})
-    monkeypatch.setattr(main_window.fansub, "sor", lambda *a: None)
+    monkeypatch.setattr(main_window.fansub, "sor", lambda *a: a[-1](None))
     bolum = FansubluBolum()
     main_window._on_play(_entry(bolum))
     qtbot.waitUntil(lambda: not main_window._playing, timeout=10000)
@@ -117,22 +123,121 @@ def test_toplu_indirme_tek_soru_hepsine_ayni_fansub(main_window, qtbot, ayarla,
     assert sum(b.fansub_okuma for b in bolumler) == 1
 
 
-def test_diyalog_ozetle_listeliyor(qtbot):
+def test_secenekler_ozetle_listeleniyor():
     ozet = fansub_ozeti(FansubluBolum())
     assert ozet == {"A": ["SIBNET 1080p"], "B": ["SIBNET 1080p"]}
-    dialog = FansubDialog("Seri", ["A", "B"], ozet)
-    qtbot.addWidget(dialog)
-    metinler = [dialog.liste.item(i).text() for i in range(dialog.liste.count())]
-    assert metinler[0].startswith("Otomatik")
-    assert metinler[1] == "A — SIBNET 1080p"
-    assert dialog.secim == "A"
-    dialog.liste.setCurrentRow(0)
-    assert dialog.secim == "", "Otomatik = fansub süzülmez"
+    secenekler = fansub_secenekleri(["A", "B"], ozet)
+    assert [x["etiket"] for x in secenekler] == [OTOMATIK_ETIKETI, "A — SIBNET 1080p", "B — SIBNET 1080p"]
+    assert secenekler[0]["deger"] == "", "Otomatik = fansub süzülmez"
+    # Özet en fazla dört oynatıcı/kalite; özetsiz ad yalın.
+    uzun = fansub_secenekleri(["C", "D"], {"C": ["p1", "p2", "p3", "p4", "p5"]})
+    assert uzun[1]["etiket"] == "C — p1, p2, p3, p4" and uzun[2]["etiket"] == "D"
+
+
+# ── Pencere (sayfa) ──────────────────────────────────────────────────────────
+FANSUB = "document.querySelector('[data-soru=fansub]')"
+
+
+@pytest.fixture
+def pencere(main_window, web):
+    """Sayfada açılmış fansub penceresi; ``sonuc`` `sor`'un cevapları."""
+    sonuc: list = []
+    main_window.fansub.sor("Seri", ["A", "B"], fansub_ozeti(FansubluBolum()), sonuc.append)
+    web.bekle("!!" + FANSUB)
+    web.sonuc = sonuc
+    return web
+
+
+def _satirlar(web):
+    return web.js("[..." + FANSUB + ".querySelectorAll('.secenek')].map(s => s.innerText)")
+
+
+def test_pencere_ozetle_listeliyor_ilk_fansub_secili(pencere):
+    satirlar = _satirlar(pencere)
+    assert satirlar[0].startswith("Otomatik")
+    assert satirlar[1] == "A — SIBNET 1080p"
+    assert "“Seri” birden çok çeviri grubuyla var" in pencere.js(FANSUB + ".innerText")
+    assert pencere.js(FANSUB + ".querySelectorAll('input[type=radio]')[1].checked") is True
+    assert pencere.js(FANSUB + ".querySelector('input[type=checkbox]').checked") is True, \
+        "hatırla varsayılan açık"
+
+
+def test_pencere_otomatik_ve_hatirlamadan_seciliyor(pencere):
+    pencere.js(FANSUB + ".querySelectorAll('input[type=radio]')[0].click();"
+               + FANSUB + ".querySelector('input[type=checkbox]').click();"
+               "[..." + FANSUB + ".querySelectorAll('button')].find(b => b.textContent === 'Tamam').click()")
+    pencere.qtbot.waitUntil(lambda: bool(pencere.sonuc), timeout=5000)
+    assert pencere.sonuc == [("", False)]
+    pencere.bekle("!" + FANSUB)
+
+
+def test_pencere_cift_tik_ve_enter_seciyor(main_window, pencere):
+    pencere.js(FANSUB + ".querySelectorAll('.secenek')[2].dispatchEvent("
+               "new MouseEvent('dblclick', {bubbles: true}))")
+    pencere.qtbot.waitUntil(lambda: bool(pencere.sonuc), timeout=5000)
+    assert pencere.sonuc == [("B", True)]
+    pencere.bekle("!" + FANSUB)
+
+    ikinci: list = []
+    main_window.fansub.sor("Seri", ["A", "B"], {}, ikinci.append)
+    pencere.bekle("!!" + FANSUB)
+    pencere.js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', "
+               "{key: 'Enter', bubbles: true}))")
+    pencere.qtbot.waitUntil(lambda: bool(ikinci), timeout=5000)
+    assert ikinci == [("A", True)]
+
+
+@pytest.mark.parametrize("vazgec", [
+    "[...{p}.querySelectorAll('button')].find(b => b.textContent === 'Vazgeç').click()",
+    "document.dispatchEvent(new KeyboardEvent('keydown', {{key: 'Escape'}}))",
+    "{p}.parentElement.click()",
+], ids=["vazgec", "esc", "dis-tik"])
+def test_pencere_vazgecince_iptal(pencere, vazgec):
+    pencere.js(vazgec.format(p=FANSUB))
+    pencere.qtbot.waitUntil(lambda: bool(pencere.sonuc), timeout=5000)
+    assert pencere.sonuc == [None]
+    pencere.bekle("!" + FANSUB)
+
+
+def test_listede_olmayan_secim_reddediliyor(soru_merkezi):
+    from turkanime_api.gui.web.kopru import UcHatasi
+    secici = FansubSecici(sorular=soru_merkezi)
+    sonuc: list = []
+    secici.sor("Seri", ["A", "B"], {}, sonuc.append)
+    (soru,) = soru_merkezi.bekleyenler("fansub")
+    with pytest.raises(UcHatasi):
+        soru_merkezi.cevapla(soru.kimlik, {"secim": "Uydurma", "hatirla": True})
+    assert soru.acik and sonuc == []
+    soru_merkezi.cevapla(soru.kimlik, {"secim": "B", "hatirla": 1})
+    assert sonuc == [("B", False)], "hatırla yalnızca gerçek true"
+
+
+def test_soru_merkezi_yoksa_iptal():
+    sonuc: list = []
+    FansubSecici().sor("Seri", ["A", "B"], {}, sonuc.append)
+    assert sonuc == [None]
+
+
+def test_soru_acikken_gelen_istek_ayni_cevabi_aliyor(qtbot, monkeypatch):
+    """Cevap sonradan geliyor: pencere açıkken gelen bölüm ikinci soru açmamalı."""
+    secici = FansubSecici()
+    sorular: list = []
+    monkeypatch.setattr(secici, "sor", lambda b, f, o, geri: sorular.append(geri))
+    sonuclar: list = []
+    ilk, ikinci = FansubluBolum(), FansubluBolum(no=2)
+    secici.iste(_entry(ilk), lambda t, f: sonuclar.append((1, t, f)))
+    qtbot.waitUntil(lambda: bool(sorular), timeout=5000)
+    secici.iste(_entry(ikinci, 2), lambda t, f: sonuclar.append((2, t, f)))
+    qtbot.wait(100)
+    assert len(sorular) == 1 and ikinci.fansub_okuma == 0
+    sorular[0](("A", False))
+    assert sonuclar == [(1, True, "A"), (2, True, "A")]
+    assert secici.tercih == {}, "hatırla kapalıyken seri tercihi yazılmaz"
 
 
 def test_otomatik_secimi_de_hatirlaniyor(qtbot, monkeypatch):
     secici = FansubSecici()
-    monkeypatch.setattr(secici, "sor", lambda *a: ("", True))
+    monkeypatch.setattr(secici, "sor", lambda *a: a[-1](("", True)))
     sonuclar: list = []
     secici.iste(_entry(FansubluBolum()), lambda t, f: sonuclar.append((t, f)))
     qtbot.waitUntil(lambda: bool(sonuclar), timeout=5000)

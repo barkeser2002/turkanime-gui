@@ -98,6 +98,8 @@ def get_episode_streams(episode_id: str) -> List[Dict[str, str]]:
         "type": "direct",          # ya da "hls"
         "referer": BASE_URL + "/", # CDN referer istiyorsa ŞART
         "fansub": "Grup Adı",      # varsa: kullanıcı fansub seçebilir
+        # "user_agent": "...",     # isteğe bağlı: adres isteyen tarayıcıya
+                                   # bağlıysa (ör. ok.ru); yt-dlp ve mpv bunu kullanır
     }]
 ```
 

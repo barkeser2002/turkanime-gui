@@ -19,7 +19,11 @@ yeni kaynak eklemek = kaynak modülü (`sources/<modul>.py`, üç uç) + aşağ�
 Üç uç sözleşmesi (sunucu tarayıcısının kullandığıyla aynı):
     ara(sorgu, limit=...)  -> [(kaynak_id, başlık), ...]
     bolumler(kaynak_id)    -> [(bolum_id, başlık), ...]
-    akislar(bolum_id)      -> [{"url", "label", "type"?, "referer"?, "fansub"?}, ...]
+    akislar(bolum_id)      -> [{"url", "label", "type"?, "referer"?, "fansub"?,
+                                "user_agent"?}, ...]
+
+``user_agent`` yalnızca adresi belirli bir tarayıcıya bağlayan barındırıcılarda
+(SeiCode'un ok.ru adresleri: `srcAg=`) dolu; yt-dlp ve mpv o UA ile ister.
 
 TÜRKANİME = ARŞİV: turkanime.tv kapandı (görselleri bile 503 dönüyor). Sitenin
 anime/bölüm/video kayıtları AnimeDepo'nun statik JSON arşivinde yaşıyor
@@ -314,6 +318,26 @@ def _deokwave() -> KaynakUclari:
     return KaynakUclari(search_deokwave, get_anime_episodes, get_episode_streams)
 
 
+def _animezer() -> KaynakUclari:
+    # Arama yanıtı kapak görselini de taşıyor; `zengin_ara` aynı isteği
+    # kullanıyor, görsel için ek istek yok.
+    from .animezer import (
+        get_anime_episodes, get_episode_streams, search_animezer, search_animezer_zengin,
+    )
+    return KaynakUclari(search_animezer, get_anime_episodes, get_episode_streams,
+                        zengin_ara=search_animezer_zengin)
+
+
+def _seicode() -> KaynakUclari:
+    # Arama yanıtı TMDB kapak adresini de taşıyor; `zengin_ara` aynı isteği
+    # kullanıyor, görsel için ek istek yok.
+    from .seicode import (
+        get_anime_episodes, get_episode_streams, search_seicode, search_seicode_zengin,
+    )
+    return KaynakUclari(search_seicode, get_anime_episodes, get_episode_streams,
+                        zengin_ara=search_seicode_zengin)
+
+
 def _asyaanimeleri() -> KaynakUclari:
     # Arama kartı kapak görselini de taşıyor; `zengin_ara` aynı isteği
     # kullanıyor, görsel için ek istek yok.
@@ -337,6 +361,14 @@ def _animeler() -> KaynakUclari:
     return KaynakUclari(search_animeler, get_anime_episodes, get_episode_streams)
 
 
+def _animom() -> KaynakUclari:
+    # Arama kartı ve film kartı kapak görselini taşıyor; `zengin_ara` aynı
+    # isteği kullanıyor, görsel için ek istek yok.
+    from .animom import get_anime_episodes, get_episode_streams, search_animom, zengin_ara
+    return KaynakUclari(search_animom, get_anime_episodes, get_episode_streams,
+                        zengin_ara=zengin_ara)
+
+
 def _onepacetr() -> KaynakUclari:
     # Kapak görseli ark listesi yanıtında geliyor; `zengin_ara` ek istek atmıyor.
     from .onepacetr import (
@@ -344,6 +376,19 @@ def _onepacetr() -> KaynakUclari:
     )
     return KaynakUclari(search_onepacetr, get_anime_episodes, get_episode_streams,
                         zengin_ara=zengin_ara)
+
+
+def _buguitr() -> KaynakUclari:
+    from .buguitr import get_anime_episodes, get_episode_streams, search_buguitr
+    return KaynakUclari(search_buguitr, get_anime_episodes, get_episode_streams)
+
+
+def _buguitr_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği yazının slug'ı; iki bölümü birlikte taşıyan yazıda
+    # "#<bölüm>" parçası da var (adresler ayrık kalsın). Biçim tek yerde
+    # (`buguitr.bolum_adresi`); tembel import: kayıt modülü hafif kalmalı.
+    from .buguitr import bolum_adresi
+    return bolum_adresi(bolum_id)
 
 
 def _onepacetr_adresi(bolum_id: str) -> str:
@@ -375,6 +420,33 @@ def _arsiv_bolum_slugu(bolum_id: str) -> str:
     indirdiği dosyaların adlarını korur.
     """
     return str(bolum_id).rsplit("/", 1)[-1]
+
+
+def _animetr() -> KaynakUclari:
+    # Arama kartı ve JSON kaydı kapak görselini taşıyor; `zengin_ara` aynı
+    # istekleri kullanıyor, görsel için ek istek yok.
+    from .animetr import get_anime_episodes, get_episode_streams, search_animetr, zengin_ara
+    return KaynakUclari(search_animetr, get_anime_episodes, get_episode_streams,
+                        zengin_ara=zengin_ara)
+
+
+def _animetr_adresi(bolum_id: str) -> str:
+    # "one-piece/bolum-1162" → /izle/ sayfası. Adresi modül kuruyor çünkü alan
+    # adı ortam değişkeniyle değiştirilebiliyor (`animetr.ORTAM_ANAHTARI`; site
+    # DMCA baskısı altında). Tembel import: kayıt modülü hafif kalmalı.
+    from .animetr import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
+def _animetr_bolum_slugu(bolum_id: str) -> str:
+    """"one-piece/bolum-1162" → "one-piece-bolum-1162".
+
+    Sitenin kimliğinden türüyor, başlıktan değil: aynı dizi AniList
+    eşleşmesiyle başka adla açıldığında da izleme geçmişinin anahtarı ve
+    indirilen dosyanın adı aynı kalır. Yalnızca "bolum-1162" almak farklı
+    serilerin bölümlerini tek dosya adına düşürürdü.
+    """
+    return str(bolum_id).strip("/").replace("/", "-")
 
 
 def _openani_adresi(bolum_id: str) -> str:
@@ -413,6 +485,38 @@ def _deokwave_adresi(bolum_id: str) -> str:
     return watch_url(bolum_id)
 
 
+def _animezer_adresi(bolum_id: str) -> str:
+    """"<tür>/<slug>/<sezon>/<bölüm>/<ara>" → sitenin izleme sayfası.
+
+    Tembel import (bkz. `_deokwave_adresi`): kimlik biçimi tek yerde
+    (`animezer.watch_url`) kalsın; ara bölümün "5a" yazımı ve filmin
+    /izle adresi orada.
+    """
+    from .animezer import watch_url
+    return watch_url(bolum_id)
+
+
+def _seicode_adresi(bolum_id: str) -> str:
+    """"<slug>/<sezon>/<bölüm>" → sitenin izleme sayfası (/anime/<slug>/<s>/<e>).
+
+    Tembel import: bölüm nesneleri kurulurken modül `bolumler` için zaten
+    yüklenmiş oluyor; kimlik biçimi tek yerde (`seicode.izleme_adresi`) kalsın.
+    """
+    from .seicode import izleme_adresi
+    return izleme_adresi(bolum_id)
+
+
+def _seicode_bolum_slugu(bolum_id: str) -> str:
+    """"jujutsu-kaisen/3/1" → "seicode-jujutsu-kaisen-3-1".
+
+    Başlıktan üretilen slug arama sonucunun/eşleşmenin adını içerir; aynı
+    bölüm AniList eşleşmesiyle başka adla açılınca izleme geçmişinin anahtarı
+    ve indirme dosyasının adı değişirdi. Sitenin slug'ı her açılışta aynı;
+    önek, başka kaynağın aynı slug'lı bölümüyle çakışmasın diye.
+    """
+    return "seicode-" + str(bolum_id).strip("/").replace("/", "-")
+
+
 def _animeler_adresi(bolum_id: str) -> str:
     # Bölüm kimliği sitedeki yol ("one-piece/bolum-1161"). Adres burada elle
     # kuruluyor: kayıt modülü kaynak modülünü import etmiyor (bkz. üst not).
@@ -427,6 +531,21 @@ def _animeler_bolum_slugu(bolum_id: str) -> str:
     indirme dosyasının adı değişirdi. Sitenin kimliği her açılışta aynı.
     """
     return str(bolum_id).strip("/").replace("/", "-")
+
+
+def _animom_adresi(bolum_id: str) -> str:
+    # Bölüm kimliği sitedeki yol ("sousou-no-frieren-1-bolum",
+    # "blue-lock-2-sezon/sezon-2/bolum-1"); adres biçimi tek yerde kalsın diye
+    # modül kuruyor. Tembel: kayıt modülü hafif kalmalı.
+    from .animom import bolum_adresi
+    return bolum_adresi(bolum_id)
+
+
+def _animom_bolum_slugu(bolum_id: str) -> str:
+    # Sitenin SEO eklerini ("-izle-hd11") atan, kimlikten türetilen slug;
+    # gerekçe `animom.bolum_slugu`'nda.
+    from .animom import bolum_slugu
+    return bolum_slugu(bolum_id)
 
 
 # ── Tablo ───────────────────────────────────────────────────────────────────
@@ -473,6 +592,34 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
     Kaynak("One Pace TR", "One Pace TR", "OP", "#fdcb6e", "ONEPACETR", _onepacetr,
            modul="onepacetr", cli_kodu="onepacetr", bolum_adresi=_onepacetr_adresi,
            bolum_slugu=_onepacetr_bolum_slugu, taranabilir=True),
+    Kaynak("AnimeTR", "AnimeTR", "AT", "#d63031", "ANIMETR", _animetr,
+           modul="animetr", cli_kodu="animetr", bolum_adresi=_animetr_adresi,
+           bolum_slugu=_animetr_bolum_slugu, taranabilir=True),
+    # Deneysel: çoğu gömme anizmplayer'ın istemciye bağlı imzalı HLS'i;
+    # doğrudan adres bazı ağlarda 403 veriyor, o zaman sitenin vekiline düşülüyor.
+    Kaynak("Animezer", "Animezer", "AM", "#e67e22", "ANIMEZER", _animezer,
+           modul="animezer", cli_kodu="animezer", bolum_adresi=_animezer_adresi,
+           taranabilir=True, deneysel=True),
+    Kaynak("AniMOM", "AniMOM", "MO", "#4ff461", "ANIMOM", _animom,
+           modul="animom", cli_kodu="animom", bolum_adresi=_animom_adresi,
+           bolum_slugu=_animom_bolum_slugu, taranabilir=True),
+    # Fansub grubunun kendi blogu: ~20 animasyon (çoğu BL anime ve donghua);
+    # sitenin canlı çekim dizileri bilerek dışarıda (bkz. modül başlığı).
+    Kaynak("BuguiTR", "BuguiTR", "BG", "#b33771", "BUGUITR", _buguitr,
+           modul="buguitr", cli_kodu="buguitr", bolum_adresi=_buguitr_adresi,
+           taranabilir=True),
+    # Deneysel: bölümlerin %63'ünün yt-dlp'nin açabildiği tek kopyası
+    # tau-video ve o veri merkezi IP'lerini Cloudflare ile engelliyor (ev
+    # bağlantısından doğrulanmadı); kalan %37'de Sibnet/ok.ru/SendVid çalışıyor.
+    Kaynak("SeiCode", "SeiCode", "SC", "#badc58", "SEICODE", _seicode,
+           modul="seicode", cli_kodu="seicode", bolum_adresi=_seicode_adresi,
+           bolum_slugu=_seicode_bolum_slugu, taranabilir=True, deneysel=True,
+           # Boş liste kesin: site/ağ hatası `SeiCodeHatasi` olarak yükseliyor.
+           # Geriye iki sebep kalıyor, ikisi de kullanıcının seçimiyle çözülür.
+           bos_akis_mesaji="bu bölümün desteklenen bir kopyası yok ya da tek "
+                           "kopyası tau-video'da ve tau-video bu ağı engelliyor "
+                           "(VPN/veri merkezi IP'lerinde olur); başka bir kaynak "
+                           "deneyin"),
 )
 
 # CLI'ın ve eski ayarların varsayılanı (`cli/dosyalar.py`: "kaynak": "turkanime").

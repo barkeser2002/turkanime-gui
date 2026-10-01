@@ -1,4 +1,4 @@
-"""Gereksinim sihirbazı (mpv / ffmpeg / aria2c / yt-dlp).
+"""Gereksinim sihirbazı (mpv / ffmpeg / aria2c / yt-dlp + önerilen FlareSolverr).
 
 Eski GUI'de `check_requirements_on_startup` kontrolü tamamen atlıyordu ("Embed
 edilmiş araçlar kullanılıyor" yazıp geçiyordu), yani sihirbaz hiç açılmıyordu.
@@ -8,20 +8,23 @@ Burada kontrol gerçekten yapılır; ama:
 - kullanıcı "Atla" derse tercih `ayarlar.json`'a yazılır ve bir daha açılmaz
   (Ayarlar sayfasındaki "Gereksinimleri Denetle" bu tercihi geri alır).
 
+FlareSolverr isteğe bağlı: eksikse listeye "flaresolverr" adıyla ekleniyor,
+pencere onu ayrı (seçilebilir) satırda gösteriyor. Kurulumu
+`gereksinimler.json`'dan değil `common.flaresolverr`'dan (sabit sürüm +
+SHA-256).
+
 Tespit ve kurulum `common.requirements`'ta; burası thread → sinyal köprüsü.
+Sihirbaz penceresi web arayüzünde (`gui.web.pencereler.GereksinimPenceresi`).
 """
 from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout,
-    QWidget,
-)
 
 from . import prefs
 from .workers import run_bg
+from ...common import flaresolverr
 from ...common import requirements as core
 
 
@@ -53,7 +56,7 @@ class RequirementsService(QObject):
         return True
 
     def _denetle(self) -> None:
-        eksikler = core.eksik_araclar()
+        eksikler = core.eksik_araclar() + core.onerilen_eksikler()
         if eksikler:
             self.missing_found.emit(eksikler)
         else:
@@ -71,26 +74,41 @@ class RequirementsService(QObject):
     def _kur(self, eksikler: List[str]) -> None:
         sonuclar: List[Tuple[str, bool, str]] = []
         try:
-            try:
-                liste = core.gereksinim_listesi_getir()
-            except Exception as exc:
-                self.install_done.emit([(ad, False, f"liste alınamadı: {exc}")
-                                        for ad in eksikler])
-                return
+            araclar = [ad for ad in eksikler if ad != flaresolverr.AD]
+            liste: list = []
+            liste_hatasi = ""
+            if araclar:
+                # Liste yalnızca `gereksinimler.json` araçları için gerekli;
+                # alınamaması FlareSolverr kurulumunu (kendi sabit adresi var)
+                # engellememeli.
+                try:
+                    liste = core.gereksinim_listesi_getir()
+                except Exception as exc:
+                    liste_hatasi = f"liste alınamadı: {exc}"
 
             hedef = self._hedef_dizin()
             toplam = len(eksikler)
             for sira, ad in enumerate(eksikler, start=1):
                 taban = int((sira - 1) * 100 / toplam)
-                self.progress.emit(taban, f"{ad} indiriliyor…")
+                gorunen = "FlareSolverr" if ad == flaresolverr.AD else ad
+                self.progress.emit(taban, f"{gorunen} indiriliyor…")
 
-                def ilerleme(inen: int, boyut: int, _t=taban, _n=toplam) -> None:
+                def ilerleme(inen: int, boyut: int, _t=taban, _n=toplam,
+                             _ad=gorunen) -> None:
                     pay = int(inen * 100 / boyut) if boyut else 0
-                    self.progress.emit(_t + pay // _n, f"{inen // 1048576} MB")
+                    self.progress.emit(_t + pay // _n, f"{_ad}: {inen // 1048576}"
+                                       + (f" / {boyut // 1048576} MB" if boyut else " MB"))
 
                 try:
-                    core.indir_ve_kur(ad, core.paket_url(liste, ad), hedef,
-                                      ilerleme)
+                    if ad == flaresolverr.AD:
+                        # Yönetici üzerinden: veri kökündeki kopya çalışıyorsa
+                        # önce durdurulur, Ayarlar sayfası da ilerlemeyi görür.
+                        flaresolverr.yonetici().kur(ilerleme=ilerleme)
+                    elif liste_hatasi:
+                        raise RuntimeError(liste_hatasi)
+                    else:
+                        core.indir_ve_kur(ad, core.paket_url(liste, ad), hedef,
+                                          ilerleme)
                 except Exception as exc:
                     sonuclar.append((ad, False, str(exc)))
                     continue
@@ -119,92 +137,4 @@ class RequirementsService(QObject):
         return prefs.ayar_yaz(gereksinim_atlandi=bool(atlandi))
 
 
-class RequirementsDialog(QDialog):
-    """Eksik araçları listeler, indirip kurar, "Atla"yı hatırlar."""
-
-    def __init__(self, servis: RequirementsService, eksikler: Sequence[str],
-                 parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.setWindowTitle("Eksik Gereksinimler")
-        self.setModal(True)
-        self.setMinimumWidth(440)
-
-        self.servis = servis
-        self.eksikler = list(eksikler)
-        self.atlandi = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(10)
-
-        head = QLabel("Bazı araçlar bulunamadı")
-        head.setObjectName("Subtitle")
-        layout.addWidget(head)
-
-        self.lblList = QLabel("\n".join(f"• {ad}" for ad in self.eksikler))
-        layout.addWidget(self.lblList)
-
-        note = QLabel("Bunlar olmadan oynatma, birleştirme veya indirme "
-                      "çalışmayabilir. Otomatik kurulumu şimdi yapabilirsiniz.")
-        note.setObjectName("Muted")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setVisible(False)
-        layout.addWidget(self.bar)
-
-        self.lblStatus = QLabel("")
-        self.lblStatus.setObjectName("Muted")
-        self.lblStatus.setWordWrap(True)
-        layout.addWidget(self.lblStatus)
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        self.btnInstall = QPushButton("İndir ve Kur")
-        self.btnInstall.setObjectName("Primary")
-        self.btnInstall.clicked.connect(self._kur)
-        row.addWidget(self.btnInstall)
-        self.btnSkip = QPushButton("Atla")
-        self.btnSkip.clicked.connect(self._atla)
-        row.addWidget(self.btnSkip)
-        layout.addLayout(row)
-
-        servis.progress.connect(self._on_progress)
-        servis.install_done.connect(self._on_done)
-
-    # ── Davranış ────────────────────────────────────────────────────────────
-    def _kur(self) -> None:
-        if not self.servis.kur(self.eksikler):
-            return
-        self.btnInstall.setEnabled(False)
-        self.btnInstall.setText("Kuruluyor…")
-        self.bar.setVisible(True)
-        self.lblStatus.setText("Gereksinimler indiriliyor…")
-
-    def _atla(self) -> None:
-        """Bir daha sorma tercihini yaz ve kapat."""
-        self.atlandi = self.servis.atlandi_yaz(True)
-        self.reject()
-
-    def _on_progress(self, yuzde: int, ayrinti: str) -> None:
-        self.bar.setValue(max(0, min(100, yuzde)))
-        self.lblStatus.setText(ayrinti)
-
-    def _on_done(self, sonuclar) -> None:
-        basarisiz = [(ad, hata) for ad, ok, hata in (sonuclar or []) if not ok]
-        if not basarisiz:
-            self.lblStatus.setText("Tüm gereksinimler kuruldu.")
-            self.btnInstall.setText("Tamamlandı")
-            self.btnSkip.setText("Kapat")
-            return
-        self.lblStatus.setText("Kurulamayanlar:\n" + "\n".join(
-            f"• {ad}: {hata}" for ad, hata in basarisiz))
-        self.lblStatus.setStyleSheet("color: #d63031;")
-        self.btnInstall.setEnabled(True)
-        self.btnInstall.setText("Tekrar Dene")
-
-
-__all__ = ["RequirementsService", "RequirementsDialog"]
+__all__ = ["RequirementsService"]

@@ -44,6 +44,10 @@ except ImportError:  # pragma: no cover - curl_cffi requirements.txt'te var
     import requests as _http  # type: ignore[no-redef]
     _HAS_CURL = False
 
+# Kullanıcının "Erişimi aç"la geçtiği bot doğrulaması (çerez + tarayıcı
+# kimliği); kayıt yoksa sarmalayıcı istekleri olduğu gibi geçirir.
+from ..common import oturumlar
+
 # Engel tespiti tek kaynaktan: iki liste ayrışırsa "Just a moment" bir yerde
 # engel, başka yerde boş sonuç sayılır (bkz. ANIME_PROVIDER_GUIDE.md).
 try:
@@ -122,10 +126,10 @@ _paylasilan_oturum = None
 def _yeni_oturum():
     """Yeni HTTP oturumu. Testler ağa çıkmamak için bunu sahteler."""
     if _HAS_CURL:
-        return _http.Session(impersonate=IMPERSONATE)
+        return oturumlar.oturumlu(_http.Session(impersonate=IMPERSONATE))
     oturum = _http.Session()
     oturum.headers.update({"User-Agent": USER_AGENTS[0]})
-    return oturum
+    return oturumlar.oturumlu(oturum, curl=False)
 
 
 def _oturum():

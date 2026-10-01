@@ -92,6 +92,10 @@ class AdapterAnime:
 class AdapterVideo:
     """TürkAnime Video arayüzüne minimum uyumlu basit video nesnesi."""
 
+    # Sınıf düzeyinde varsayılan: `__init__`'i atlayıp kurulan nesneler
+    # (`__new__` ile kuran testler, eski pickle'lar) da UA'sız sayılsın.
+    user_agent: Optional[str] = None
+
     def __init__(
         self,
         bolum: 'AdapterBolum',
@@ -99,12 +103,17 @@ class AdapterVideo:
         label: Optional[str] = None,
         player: str = "ANIMECIX",
         referer: Optional[str] = None,
+        user_agent: Optional[str] = None,
     ):
         self.bolum = bolum
         self._url = url or ""
         self.label = label
         self.player = player or "ANIMECIX"
         self.referer = referer
+        # Kaynak adresi belirli bir tarayıcıya bağladıysa (ok.ru: `srcAg=`)
+        # yt-dlp da mpv de AYNI UA ile istemeli; yoksa None ve herkes kendi
+        # varsayılanını kullanır (eski davranış). Bkz. `mpv_oynatici.video_oynat`.
+        self.user_agent = user_agent or None
         self._info: Optional[Dict[str, Any]] = None
         self.is_supported = True
         self._is_working: Optional[bool] = None
@@ -118,6 +127,11 @@ class AdapterVideo:
             self.ydl_opts["http_headers"] = {
                 **(self.ydl_opts.get("http_headers") or {}),
                 "Referer": self.referer,
+            }
+        if self.user_agent:
+            self.ydl_opts["http_headers"] = {
+                **(self.ydl_opts.get("http_headers") or {}),
+                "User-Agent": self.user_agent,
             }
 
     @property
@@ -219,6 +233,8 @@ class AdapterVideo:
             return self.player
         elif key == 'referer':
             return self.referer
+        elif key == 'user_agent':
+            return self.user_agent
         return default
 
     def oynat(self, dakika_hatirla: bool = False):
@@ -247,8 +263,10 @@ class AdapterVideo:
         
         cmd = [mpv_path, self.url]
 
-        # User-agent ekle (HLS için gerekli olabilir)
-        cmd.extend(["--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"])
+        # User-agent ekle (HLS için gerekli olabilir); kaynak kendi UA'sını
+        # verdiyse o (adres o UA'ya bağlı, bkz. `__init__`).
+        ua = self.user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        cmd.extend([f"--user-agent={ua}"])
 
         # Referer, user-agent ile aynı gerekçeyle: CDN'ler kaynak sayfayı
         # görmezse 403 döner ve mpv boş ekranla kapanır.
@@ -341,12 +359,18 @@ class AdapterBolum:
         stream_provider: Optional[Callable[[str], List[Dict[str, str]]]] = None,
         player_name: str = "ANIMECIX",
         slug: Optional[str] = None,
+        kimlik: Optional[str] = None,
     ):
         self.url = url
         self._title = title
         self.anime = anime
         self._stream_provider = stream_provider
         self._player_name = player_name or "ANIMECIX"
+        # Kaynağın KENDİ bölüm kimliği (`bolumler` ucunun verdiği, `akislar`'ın
+        # beklediği). `url` ondan türetiliyor ama her kaynakta geri
+        # çevrilemiyor (AnimPow "core:1:2" → ".../watch/core/s1e2"); veri
+        # bağışı sunucuya bu kimliği yolluyor (bkz. `gui.web.veri_bagisi`).
+        self.kimlik: Optional[str] = kimlik or None
         # TürkAnime ile uyumlu: animeadı-bolumadı (klasör: anime.slug, dosya adı: animeadı-bolumadı).
         # Kaynak kendi bölüm slug'ını veriyorsa (TürkAnime arşivi: sitenin
         # "naruto-1-bolum"u) o kullanılır: izleme geçmişi ve eski indirmelerin
@@ -365,6 +389,11 @@ class AdapterBolum:
         # bölüm nesnesiyle saatler sonra yapılan oynatma taze liste almalı.
         self._bekleyen_akislar: Optional[List[Dict[str, Any]]] = None
         self._fansub_listesi: Optional[List[str]] = None
+        # Son `best_video` çağrısının gördüğü akışların kopyası (elenmeden
+        # önceki TAM aday listesi). Oynayan akış ile diğer adaylar ancak
+        # buradan ayrılabiliyor; `best_video` yalnızca seçileni döndürüyor.
+        # Sağlayıcıyı ikinci kez çağırmak ağ isteği olurdu.
+        self.son_akislar: List[Dict[str, Any]] = []
 
     @property
     def title(self):
@@ -446,6 +475,7 @@ class AdapterBolum:
                           "status": "kaynak okunamadı"})
                 raise
             self._fansublari_not_et(streams or [])
+        self.son_akislar = [dict(s) for s in (streams or []) if isinstance(s, dict)]
         if not streams:
             # "sebep": denenecek aday HİÇ yoktu; `common.oynatma` bunu
             # "N aday denendi" özetinden ayırıp kullanıcıya söylüyor.
@@ -515,7 +545,8 @@ class AdapterBolum:
             callback({"current": sira, "total": toplam, "player": oynatici,
                       "status": "üstbilgi çekiliyor"})
             vid = AdapterVideo(self, aday.get("url"), aday.get("label"),
-                               player=oynatici, referer=aday.get("referer"))
+                               player=oynatici, referer=aday.get("referer"),
+                               user_agent=aday.get("user_agent"))
             if vid.is_working:
                 callback({"current": sira, "total": toplam,
                           "player": oynatici, "status": "çalışıyor"})
@@ -571,5 +602,6 @@ def kayittan_bolumler(kaynak: Any, slug: str, title: str) -> List[AdapterBolum]:
                                            bos_mesaji=kaynak.bos_akis_mesaji),
             player_name=kaynak.oynatici,
             slug=kaynak.bolum_slugu(bolum_id) if kaynak.bolum_slugu else None,
+            kimlik=bolum_id,
         ))
     return bolumler

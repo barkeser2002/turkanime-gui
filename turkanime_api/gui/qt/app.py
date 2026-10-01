@@ -1,10 +1,14 @@
 """PySide6 GUI giriş noktası: pencere, servisler ve web arayüzünün kablolaması.
 
 Arayüzün tamamı web'de (`gui/web`): pencerenin merkezinde tek bir
-`WebGorunum`; üst çubuk, menü, sayfalar ve alt durum çubuğu HTML/CSS/JS.
-Bu modülde kalanlar pencere düzeyindeki işler: oynatma (mpv), indirme
-kuyruğu, AniList/Discord/güncelleme servisleri, kapanış ve sayfaların
-köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak.
+`WebGorunum`; üst çubuk, menü, sayfalar, alt durum çubuğu ve küçük pencereler
+(fansub, ilerleme, güncelleme, gereksinim, bağış onayları, kapanış sorusu)
+HTML/CSS/JS. Bu modülde kalanlar pencere düzeyindeki işler: oynatma (mpv),
+indirme kuyruğu, AniList/Discord/güncelleme/veri bağışı servisleri, kapanış ve
+sayfaların köprü uçlarını (`gui/web/uclar_*`) pencerenin yollarına bağlamak. Qt'de
+kalan tek ayrı pencere "Erişimi aç" tarayıcısı (`erisim_penceresi`; TRAnimeİzle
+çerez penceresi `cookie_browser` onun yapılandırması): dış sitenin bot doğrulaması
+için gerçek bir tarayıcı penceresi olmak zorunda.
 
 Akış:  prepare_qt_env() -> QApplication -> MainWindow(QMainWindow) -> exec()
 """
@@ -12,13 +16,12 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from typing import Dict, Optional
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QSystemTrayIcon, QWidget,
-)
+from PySide6.QtWidgets import QApplication, QMainWindow, QSystemTrayIcon, QWidget
 
 from ...common import kutuphane, mpv_oynatici
 from ...common.episode_parser import extract_episode_info
@@ -29,21 +32,27 @@ from .anilist import AniListService
 from .discord import DiscordService
 from .fansub import FansubSecici
 from .indirme import DURUM_IPTAL, DownloadManager
-from .progress_dialog import ProgressDialog, anime_adi
-from .requirements import RequirementsDialog, RequirementsService
+from .prefs import anime_adi
+from .requirements import RequirementsService
 from .theme import apply_theme
-from .updates import UpdateDialog, UpdateService
+from .updates import UpdateService
 from .workers import UiBridge, run_bg
 from ..web.gorunum import WebGorunum
 from ..web.kopru import Kopru
+from ..web.pencereler import (
+    GereksinimPenceresi, GuncellemePenceresi, ilerleme_sor, kapanis_sor,
+)
+from ..web.sorular import Soru, SoruMerkezi
 from ..web.uclar_arama import AramaUclari
 from ..web.uclar_ayarlar import AyarlarUclari
 from ..web.uclar_detay import DetayUclari
+from ..web.uclar_erisim import ErisimUclari
 from ..web.uclar_genel import GenelUclar
 from ..web.uclar_kesif import KesifUclari
 from ..web.uclar_indirme import IndirmeUclari
 from ..web.uclar_izleme import IzlemeUclari
 from ..web.uclar_kitaplik import KitaplikUclari
+from ..web.veri_bagisi import VeriBagisi
 
 APP_TITLE = "TürkAnime İndirici"
 
@@ -128,10 +137,26 @@ class MainWindow(QMainWindow):
 
         # Arka plan işlerinden UI'ya güvenli geçiş köprüsü (eski `after(0, ...)`)
         self.ui = UiBridge(self)
+        # Köprü ve soru merkezi servislerden ÖNCE: fansub seçici ve ayar uçları
+        # küçük pencerelerini sayfada soruyor (bkz. `gui.web.sorular`).
+        #
+        # Köprünün Qt EBEVEYNİ YOK (bilerek): arka plan uçları bitince köprüden
+        # sinyal yayıyor. Ebeveyni pencere olsaydı, pencere yıkılırken süren
+        # bir iş yıkılmakta olan nesneden `emit` edip süreci segfault'la
+        # düşürüyordu (test paketinde 12 koşuda bir yakalandı). Ebeveynsiz
+        # nesneyi Python referansı yaşatıyor; iş sürdükçe `self` referansı da
+        # sürüyor, yani yayıcı işten önce ölemiyor. Alıcı (web kanalı)
+        # silinirse Qt bağlantıyı güvenle koparıyor.
+        self.kopru = Kopru()
+        self.sorular = SoruMerkezi(self.kopru, self)
         self.downloads = DownloadManager(self)
         # "Fansub'u kendim seçeyim": seri başına tek soru (bkz. `fansub`).
-        self.fansub = FansubSecici(self)
+        self.fansub = FansubSecici(self, sorular=self.sorular)
         self.downloads.finished.connect(self._on_download_finished)
+        # Veri bağışı: oynayan/inen bölümün kaydı (varsayılan KAPALI; kapalıyken
+        # kancalar hiçbir şey yapmaz). Ayar sayfası aynı örneği kullanıyor.
+        self.veri_bagisi = VeriBagisi()
+        self.downloads.indirildi.connect(self._on_indirildi)
 
         # AniList tek bir servisten yürür: ayar sayfası girişi yapar, izleme
         # listesi ve ilerleme yazımı aynı jetonu/oturumu paylaşır.
@@ -147,8 +172,13 @@ class MainWindow(QMainWindow):
         self.requirements = RequirementsService(self)
         self.requirements.missing_found.connect(self._on_requirements_missing)
         self.discord = DiscordService(self)
-        self._update_dialog: QWidget | None = None
-        self._req_dialog: QWidget | None = None
+        # Açık güncelleme/gereksinim penceresi (aynısı iki kez açılmasın).
+        self._guncelleme_penceresi: Optional[GuncellemePenceresi] = None
+        self._gereksinim_penceresi: Optional[GereksinimPenceresi] = None
+        # Kapanış sorusu açıkken pencereyi yeniden kapatmak ikinci soru açmaz;
+        # "Evet" gelince `_kapanis_onayli` ile ikinci `close()` soru sormaz.
+        self._kapanis_sorusu: Optional[Soru] = None
+        self._kapanis_onayli = False
         self._dl_titles: Dict[str, str] = {}
         # Kuyruk boşalana kadar biten işlerin sayımı (bkz. `_toplu_indirme_bitti`).
         self._toplu_indirme = {"ok": 0, "hata": 0}
@@ -180,9 +210,9 @@ class MainWindow(QMainWindow):
 
     # ── Kurulum ─────────────────────────────────────────────────────────────
     def _build_ui(self) -> None:
-        """Pencerenin tamamı web arayüzü: üst çubuk, menü, sayfalar ve alt
-        durum çubuğu HTML'de (bkz. `gui/web`). Qt'de yalnızca pencere,
-        küçük diyaloglar ve durum mesajlarının kaynağı olan `statusBar` kaldı.
+        """Pencerenin tamamı web arayüzü: üst çubuk, menü, sayfalar, alt
+        durum çubuğu ve küçük pencereler HTML'de (bkz. `gui/web`). Qt'de
+        yalnızca pencere ve durum mesajlarının kaynağı olan `statusBar` kaldı.
         """
         self._build_web()
         self.setCentralWidget(self.web)
@@ -202,15 +232,8 @@ class MainWindow(QMainWindow):
         self.kopru.yay("durum_mesaji", {"mesaj": mesaj, "tur": self._durum_turu})
 
     def _build_web(self) -> None:
-        """Web arayüzü: köprü + sayfaların uçları + tek görünüm."""
-        # Köprünün Qt EBEVEYNİ YOK (bilerek): arka plan uçları bitince köprüden
-        # sinyal yayıyor. Ebeveyni pencere olsaydı, pencere yıkılırken süren
-        # bir iş yıkılmakta olan nesneden `emit` edip süreci segfault'la
-        # düşürüyordu (test paketinde 12 koşuda bir yakalandı). Ebeveynsiz
-        # nesneyi Python referansı yaşatıyor; iş sürdükçe `self` referansı da
-        # sürüyor, yani yayıcı işten önce ölemiyor. Alıcı (web kanalı)
-        # silinirse Qt bağlantıyı güvenle koparıyor.
-        self.kopru = Kopru()
+        """Web arayüzü: köprü uçları (sayfalar + sorular) + tek görünüm."""
+        self.kopru.bagla(self.sorular)
         self.kopru.bagla(GenelUclar(ac=self._web_ac, kabuk=self._kabuk_durumu))
         self.kopru.bagla(KesifUclari())
         self.kopru.bagla(KitaplikUclari())
@@ -223,12 +246,21 @@ class MainWindow(QMainWindow):
         # (eskiden ayar sayfasının kurucusu yapıyordu; açılışta şart).
         self.ayarlar_uclari = self.kopru.bagla(AyarlarUclari(
             self.kopru, anilist=self.anilist, discord=self.discord,
-            updates=self.updates, requirements=self.requirements, pencere=self))
+            updates=self.updates, requirements=self.requirements, pencere=self,
+            sorular=self.sorular, veri_bagisi=self.veri_bagisi))
+        # "Erişimi aç": bot doğrulamasını kullanıcının çözdüğü pencere. TRAnimeİzle
+        # çerezi Ayarlar'ın yolundan kaydediliyor ("Tarayıcıdan Al" ile aynı sonuç).
+        self.erisim = self.kopru.bagla(ErisimUclari(
+            self.kopru, pencere=self,
+            tranime_cerez=self.ayarlar_uclari._cerez_geldi))  # pylint: disable=protected-access
         self.arama = self.kopru.bagla(AramaUclari(self.kopru))
         self.detay = self.kopru.bagla(DetayUclari(
             self.kopru, oynat=self._on_play, indir=self._on_download,
             kuyrukta=self._web_kuyrukta))
         self.web = WebGorunum(self.kopru, kabuk="web")
+        # Render süreci öldüyse sayfadaki pencereler de gitti: açık sorular
+        # varsayılanla bitsin (ör. fansub sorusu `_playing`'i açık bırakmasın).
+        self.web.page().renderProcessTerminated.connect(self.sorular.sayfa_gitti)
         # Detay sayfasındaki "Kuyrukta" rozetleri: iş eklendi/bitti/durdu.
         self.downloads.state.connect(lambda *_a: self.kopru.yay("kuyruk_degisti"))
 
@@ -449,6 +481,10 @@ class MainWindow(QMainWindow):
             # Buraya gelindiyse mpv düzgün kapandı. Kitaplık: "izlemeye devam
             # et" + bölüm geçmişi (kaynaksız kayıt yazılmaz, bkz. prefs).
             prefs.kitapliga_yaz(kayit, title)
+            # Veri bağışı: oynayan akış + diğer adaylar, yalnızca konum raporu
+            # gerçek oynatma gösteriyorsa; yerel dosya ve kapalı ayar hiçbir şey
+            # göndermez. Fırlatmaz, beklemez (kuyruk/gönderim arka planda).
+            self.veri_bagisi.oynatildi(kayit, sonuc.video, rapor)
             if rapor is None:
                 # mpv rapor vermedi (Lua'sız derleme, eski `oynat`): bölümün
                 # bitip bitmediği bilinmiyor — eski davranış, izlendi + soru.
@@ -481,6 +517,10 @@ class MainWindow(QMainWindow):
             kisa, ayrinti = insanlastir(exc)
             print(f"[Oynatma] {title}: {ayrinti}")
             self._hata_durumu(f"{title} — oynatılamadı: {kisa}")
+            # Bot doğrulamasıysa sayfa "Erişimi aç" teklif etsin; erişim
+            # açılınca aynı bölüm yeniden oynatılır.
+            self.erisim.engel_bildir(exc, str((entry or {}).get("kaynak") or ""),
+                                     baslik=title, yeniden=lambda: self._on_play(entry))
         finally:
             self._playing = False
 
@@ -515,15 +555,14 @@ class MainWindow(QMainWindow):
         if prefs.ilerleme_kaydet(seri, no):
             self._on_progress_saved(seri, no, ad)
 
-    def _ask_progress(self, bolum, title: str) -> None:
-        """İzleme ilerlemesi diyaloğunu aç (eski `show_progress_dialog`)."""
-        dialog = ProgressDialog(bolum, title, self)
-        # Okunabilir seri adını sinyale iliştiriyoruz: `progress_saved` yalnızca
-        # slug taşıyor, AniList'te "naruto-test" diye aramak eşleşmez.
-        ad = getattr(dialog, "anime_adi", "")
-        dialog.progress_saved.connect(
-            lambda seri, no, _ad=ad: self._on_progress_saved(seri, no, _ad))
-        dialog.exec()
+    def _ask_progress(self, bolum, title: str) -> Soru:
+        """İzleme ilerlemesi penceresini aç (eski `show_progress_dialog`).
+
+        Pencere sayfada; "Kaydet" yerel ilerlemeyi yazınca `_on_progress_saved`
+        okunabilir seri adıyla çağrılır: slug ("naruto-test") ile AniList'te
+        aramak eşleşmez.
+        """
+        return ilerleme_sor(self.sorular, bolum, title, self._on_progress_saved)
 
     def _on_progress_saved(self, seri: str, bolum_no: int,
                            anime_adi: str = "") -> None:
@@ -630,6 +669,7 @@ class MainWindow(QMainWindow):
             self._status("İndirme: " + mesaj)
         else:
             self._hata_durumu("İndirme başarısız: " + mesaj)
+            self._indirme_engeli(task_id, mesaj)
         self._dl_titles.pop(task_id, None)
         # Toplu indirmenin özeti: iptal hata sayılmaz, kullanıcı kendisi kesti.
         if ok:
@@ -642,6 +682,23 @@ class MainWindow(QMainWindow):
         if ok:
             # Bölüm satırındaki ⬇ rozeti geçmişten okunuyor; liste açıksa tazele.
             self._refresh_episode_history()
+
+    def _on_indirildi(self, entry, video) -> None:
+        """Dosyası doğrulanmış indirme (GUI thread'i): veri bağışına bildir.
+
+        Kanca yalnızca anlık görüntü alıyor; kuyruğa yazma ve gönderim
+        servisin kendi thread'inde (bkz. `gui.web.veri_bagisi`).
+        """
+        self.veri_bagisi.indirildi(entry, video)
+
+    def _indirme_engeli(self, task_id: str, mesaj: str) -> None:
+        """Bot doğrulamasına takılan indirme: sayfa "Erişimi aç" teklif etsin;
+        erişim açılınca iş aynı satırda yeniden kuyruğa girer."""
+        entry = self.downloads.kayit(task_id) or {}
+        self.erisim.engel_bildir(self.downloads.ayrinti(task_id) or mesaj,
+                                 str(entry.get("kaynak") or ""),
+                                 baslik=str(entry.get("title") or ""),
+                                 yeniden=lambda: self.downloads.retry(task_id))
 
     def _toplu_indirme_bitti(self) -> None:
         """Kuyruk boşaldı: pencere arka plandaysa masaüstü bildirimi.
@@ -685,52 +742,58 @@ class MainWindow(QMainWindow):
         self.discord.baslat()
         self.updates.kontrol_et(sessiz=True)
         self.requirements.denetle()
+        # Önceki oturumdan gönderilemeyen veri bağışı kaydı varsa (ve özellik
+        # hâlâ açıksa) gönderici yeniden dener; yoksa hiçbir şey başlamaz.
+        self.veri_bagisi.ayar_degisti()
 
     def _on_update_available(self, version_data) -> None:
-        """Yeni sürüm bulundu: diyaloğu aç (GUI thread'i).
+        """Yeni sürüm bulundu: pencereyi aç (GUI thread'i).
 
-        `exec()` yerine `open()`: açılış denetimi kullanıcının önüne iç içe bir
-        olay döngüsü koymamalı, pencereyi kullanmaya devam edebilmeli.
+        Sayfadaki pencere hiçbir şeyi beklemiyor: açılış denetimi kullanıcının
+        önüne iç içe bir olay döngüsü koymamalı (eski diyalog da `open()`
+        ile açılıyordu).
         """
-        if self._update_dialog is not None:
+        if self._guncelleme_penceresi is not None:
             return
         self._status(f"Yeni sürüm mevcut: {(version_data or {}).get('version', '')}")
-        dialog = UpdateDialog(self.updates, version_data, self)
-        dialog.finished.connect(lambda _=0: self._dialog_kapandi("_update_dialog"))
-        self._update_dialog = dialog
-        dialog.open()
+        self._guncelleme_penceresi = GuncellemePenceresi(
+            self.sorular, self.updates, version_data,
+            kapandi=lambda: self._pencere_kapandi("_guncelleme_penceresi"), parent=self)
 
     def _on_requirements_missing(self, eksikler) -> None:
         """Eksik araç sihirbazını aç."""
-        if self._req_dialog is not None or not eksikler:
+        if self._gereksinim_penceresi is not None or not eksikler:
             return
         self._status("Eksik araçlar bulundu: " + ", ".join(eksikler))
-        dialog = RequirementsDialog(self.requirements, eksikler, self)
-        dialog.finished.connect(lambda _=0: self._dialog_kapandi("_req_dialog"))
-        self._req_dialog = dialog
-        dialog.open()
+        self._gereksinim_penceresi = GereksinimPenceresi(
+            self.sorular, self.requirements, eksikler,
+            kapandi=lambda: self._pencere_kapandi("_gereksinim_penceresi"), parent=self)
 
-    def _dialog_kapandi(self, alan: str) -> None:
-        """Diyalog referansını bırak; `deleteLater` olmadan pencere sızar."""
-        dialog = getattr(self, alan, None)
+    def _pencere_kapandi(self, alan: str) -> None:
+        """Pencere referansını bırak; `deleteLater` olmadan denetleyici sızar."""
+        pencere = getattr(self, alan, None)
         setattr(self, alan, None)
-        if dialog is not None:
-            dialog.deleteLater()
+        if pencere is not None:
+            pencere.deleteLater()
 
-    def _kapanis_onayi(self, adet: int) -> bool:
+    def _kapanis_onayi(self, adet: int, geri) -> None:
         """Süren indirmeler varken kapanış sorusu (testler bunu sahteler).
+
+        ``geri(True)`` → duraklat ve çık, ``geri(False)`` → pencere açık kalır.
+        Soru sayfada; cevap `closeEvent` döndükten SONRA da gelebilir (bkz.
+        `closeEvent`). Sayfa bağlı değilse `kapanis_sor` hemen "Evet" der.
 
         Eskiden kapatmak sormadan her şeyi iptal ediyordu ve kuyruk yalnızca
         bellekteydi: 40 bölümlük toplu indirme yanlış bir tıkla kayboluyordu.
         """
-        cevap = QMessageBox.question(
-            self, "İndirmeler sürüyor",
-            f"{adet} indirme sürüyor. Duraklatılıp çıkılsın mı?\n\n"
-            "Kuyruk kaydedilir; uygulamayı yeniden açınca İndirilenler'den "
-            "“Devam et” ile kaldığı yerden sürdürebilirsiniz.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes)
-        return cevap == QMessageBox.StandardButton.Yes
+        if self._kapanis_sorusu is not None and self._kapanis_sorusu.acik:
+            return                      # soru zaten ekranda; cevap bekleniyor
+
+        def cevap(evet: bool) -> None:
+            self._kapanis_sorusu = None
+            geri(evet)
+
+        self._kapanis_sorusu = kapanis_sor(self.sorular, adet, cevap)
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt imzası)
         """Kapanışta arka plan işlerini durdur.
@@ -743,6 +806,12 @@ class MainWindow(QMainWindow):
         Süren indirme varsa ÖNCE sorulur ("Hayır": pencere açık kalır, hiçbir
         şeye dokunulmaz). İşler iptal değil DURAKLATILIR ve kuyruk diske
         yazılır; bir sonraki açılışta geri gelirler (`geri_yukle`).
+
+        Soru sayfadaki bir pencere, cevabı bu metot dönmeden gelmiyor: olay
+        şimdilik REDDEDİLİR, "Evet" gelince `_kapanis_onayli` işaretlenip
+        pencere yeniden kapatılır (ikinci turda soru yok). Cevap eşzamanlı
+        gelirse (sahte, ya da sayfa bağlı değil → varsayılan "Evet") aynı
+        turda karar verilir.
         """
         # closeEvent ASLA fırlatmamalı: C++ sanal metodundan kaçan istisna
         # (ör. yıkılmakta olan yönetici) süreci segfault'la düşürüyor.
@@ -750,9 +819,35 @@ class MainWindow(QMainWindow):
             calisan = self.downloads.active_ids()
         except Exception:
             calisan = []
-        if calisan and not self._kapanis_onayi(len(calisan)):
-            event.ignore()
-            return
+        if calisan and not self._kapanis_onayli:
+            tur = {"bu_turda": True, "cevap": None}
+
+            def cevap(evet: bool) -> None:
+                if tur["bu_turda"]:
+                    tur["cevap"] = bool(evet)
+                elif evet and self.isVisible():
+                    # (Görünmüyorsa pencere başka yoldan zaten kapandı; soru
+                    # `hepsini_bitir`le varsayılan "Evet"i aldı.)
+                    self._kapanis_onayli = True
+                    QTimer.singleShot(0, self.close)
+
+            try:
+                self._kapanis_onayi(len(calisan), cevap)
+            except Exception:
+                # Soru sorulamadıysa pencere kapatılamaz hâle gelmesin:
+                # duraklatıp kaydetmek güvenli taraf, kuyruk kaybolmuyor.
+                traceback.print_exc()
+                tur["cevap"] = True
+            tur["bu_turda"] = False
+            if not tur["cevap"]:        # None: cevap sonra gelecek; False: Hayır
+                event.ignore()
+                return
+        try:
+            # Açık pencereler (fansub, güncelleme, bağış onayı…) varsayılan
+            # cevapla kapanır: bağış onayında "onay yok", fansubda iptal.
+            self.sorular.hepsini_bitir()
+        except Exception:
+            pass
         try:
             self.discord.durdur()
         except Exception:
@@ -771,6 +866,19 @@ class MainWindow(QMainWindow):
             # Aynı sebeple süren tam arşiv indirmesi (~230 MB) de iptal edilir;
             # yarım paket geçici klasörle birlikte silinir, eski arşiv yerinde.
             self.ayarlar_uclari.arsiv_indirmeyi_durdur()
+        except Exception:
+            pass
+        try:
+            # Veri bağışı göndericisi durur; kuyruk diskte, yarım kalan kayıt
+            # bir sonraki açılışta yeniden denenir.
+            self.veri_bagisi.durdur()
+        except Exception:
+            pass
+        try:
+            # Yerel FlareSolverr (ve açtığı Chrome'lar) pencereyle birlikte
+            # gider; çöküş yolunu `common.flaresolverr`'ın bekçisi karşılıyor.
+            from ...common import flaresolverr
+            flaresolverr.kapat()
         except Exception:
             pass
         try:
@@ -815,6 +923,14 @@ def run() -> int:
     # beklenecek bir şey kalmamıştır.
     from .workers import shutdown_pools
     if not shutdown_pools(0):
+        # `os._exit` atexit'i atlıyor: yerel FlareSolverr burada açıkça
+        # durdurulmalı (normalde `closeEvent` çoktan durdurdu; bu, pencere
+        # başka yoldan kapandıysa diye).
+        try:
+            from ...common import flaresolverr
+            flaresolverr.kapat()
+        except Exception:
+            pass
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(kod)

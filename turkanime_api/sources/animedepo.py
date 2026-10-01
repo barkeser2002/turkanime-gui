@@ -229,12 +229,13 @@ _YOK = object()
 def veri_koku() -> Path:
     """Kullanıcı verisinin kökü — `Dosyalar` ile aynı kural, ama salt okunur.
 
-    `Dosyalar()` örneklemiyoruz: yapıcısı dosya yaratıyor, eksik ayarları
-    yazıyor ve gerekirse `user_id` üretiyor. Bir yol çözmek için kullanıcının
-    ayar dosyasına yazmak yanlış olurdu (sunucu/CI ortamında da istenmez).
+    `Dosyalar()` örneklemiyoruz: yapıcısı dosya yaratıyor ve eksik ayarları
+    yazıyor. Bir yol çözmek için kullanıcının ayar dosyasına yazmak yanlış
+    olurdu (sunucu/CI ortamında da istenmez). Kural tek yerde:
+    `cli.dosyalar.veri_koku`.
     """
-    cwd = Path.cwd()
-    return cwd if (cwd / ".git").is_dir() else Path.home() / "Turkanime"
+    from ..cli.dosyalar import veri_koku as _veri_koku
+    return _veri_koku()
 
 
 def indirilen_arsiv_dizini() -> Path:

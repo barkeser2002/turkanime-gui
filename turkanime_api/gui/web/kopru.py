@@ -16,7 +16,9 @@ thread'inde, bağlantı kuyruklu).
 
 Hata sözleşmesi: uç fırlatırsa JS'e ``{"mesaj": ...}`` gider — metin
 `common.hatalar.insanlastir`'dan, yani kullanıcıya gösterilecek Türkçe cümle.
-Ham metin konsolda kalır.
+Ham metin konsolda kalır. Hata bir kaynağın bot doğrulamasıysa (istisnada
+``erisim_kaynagi``) yükte ``"erisim": <kaynak>`` da var: sayfa "Erişimi aç"
+düğmesini gösteriyor (bkz. `uclar_erisim`).
 """
 from __future__ import annotations
 
@@ -136,7 +138,13 @@ class Kopru(QObject):
             print(f"[Web] {kayit.ad}: {ayrinti}")
             if isinstance(exc, (TypeError, AttributeError, KeyError)):
                 traceback.print_exc()     # büyük ihtimalle hata bizde
-            self._yanitla(istek, False, {"mesaj": kisa})
+            veri: Dict[str, Any] = {"mesaj": kisa}
+            # Uç hatayı bir kaynağın bot doğrulamasına bağladıysa
+            # (`oturumlar.erisim_isaretle`) sayfa "Erişimi aç" gösterir.
+            erisim = getattr(exc, "erisim_kaynagi", "")
+            if erisim:
+                veri["erisim"] = str(erisim)
+            self._yanitla(istek, False, veri)
             return
         self._yanitla(istek, True, sonuc)
 

@@ -108,6 +108,7 @@ class AramaUclari:
         """Arka plan: bütün kaynaklarda paralel ara, bittikçe olay yay."""
         from ...common.adapters import SearchEngine, arama_motoru
         from ...common.hatalar import sebep_metni
+        from ...common.oturumlar import erisim_engeli_mi
 
         yay = self._kopru.yay
         gelen = set()
@@ -118,6 +119,8 @@ class AramaUclari:
                 "istek": istek, "kaynak": kaynak_bilgisi(ad),
                 "kartlar": sonuc_kartlari(ad, kayitlar),
                 "hata": kisalt(hata) if hata else "",
+                # Bot doğrulaması: sayfa sebebin yanında "Erişimi aç" gösterir.
+                "erisim": bool(hata) and erisim_engeli_mi(hata, ad),
             })
 
         try:
@@ -134,13 +137,16 @@ class AramaUclari:
             for ad, kayitlar in (sonuc or {}).items():
                 if ad not in gelen:
                     kaynak_bitti(ad, kayitlar, None)
-            hatalar = {ad: kisalt(sebep) for ad, sebep
-                       in (getattr(sonuc, "hatalar", None) or {}).items()}
+            ham_hatalar = dict(getattr(sonuc, "hatalar", None) or {})
+            hatalar = {ad: kisalt(sebep) for ad, sebep in ham_hatalar.items()}
+            erisim = sorted(ad for ad, sebep in ham_hatalar.items()
+                            if erisim_engeli_mi(sebep, ad))
         except Exception as exc:
             yay("arama_bitti", {"istek": istek, "hata": sebep_metni(exc),
-                                "hatalar": {}})
+                                "hatalar": {}, "erisim": []})
             return
-        yay("arama_bitti", {"istek": istek, "hata": "", "hatalar": hatalar})
+        yay("arama_bitti", {"istek": istek, "hata": "", "hatalar": hatalar,
+                            "erisim": erisim})
 
 
 __all__ = ["AramaUclari", "sonuc_kartlari", "kaynak_sirasi", "kaynak_bilgisi",

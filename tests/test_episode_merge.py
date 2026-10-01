@@ -109,6 +109,21 @@ def test_ara_bolum_parse_ediliyor():
     assert parse_episode("5. Bölüm").sub is None
 
 
+@pytest.mark.parametrize("baslik, beklenen", [
+    ("2. Sezon 5.1. Bölüm", (2, 5, 1)),
+    ("2. Sezon 5.5. Bölüm", (2, 5, 5)),
+    ("2nd Season 12.5. Bölüm", (2, 12, 5)),
+    ("Sezon 3 - 7.5. Bölüm", (3, 7, 5)),
+    ("2. Sezon 5. Bölüm", (2, 5, None)),
+])
+def test_sezonlu_ara_bolum(baslik, beklenen):
+    """ESKİ HATA: sezonlu kalıp "5.1. Bölüm"ün yalnız "1. Bölüm"ünü görüp ara
+    bölümü 1. bölüm sanıyordu; "5.5"te kesir düşüp 5. bölümün yerine
+    geçiyordu (Animezer çok sezonlu dizilerde böyle başlık üretiyor)."""
+    bilgi = parse_episode(baslik)
+    assert (bilgi.season, bilgi.episode, bilgi.sub) == beklenen
+
+
 def test_sezonsuz_basliklar_birinci_sezona_dusuyor():
     """Sezon bilgisi yoksa 1 varsayılır; aksi hâlde anahtar hiç oluşmazdı."""
     assert extract_episode_info("Bölüm 3")[0] == 1

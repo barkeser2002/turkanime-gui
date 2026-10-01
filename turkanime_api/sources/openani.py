@@ -218,9 +218,11 @@ class OpenAniAdapter:
         """
         try:
             from curl_cffi import requests as _curl
+            from ..common import oturumlar
             sess = getattr(self, "_light_session", None)
             if sess is None:
-                sess = _curl.Session(impersonate="chrome110")
+                # Erişim oturumu ("Erişimi aç") varsa çerez + tarayıcı kimliği.
+                sess = oturumlar.oturumlu(_curl.Session(impersonate="chrome110"))
                 self._light_session = sess
             return sess.get(url, headers=headers, timeout=self.timeout,
                             allow_redirects=False, cookies=_token_cerezleri())

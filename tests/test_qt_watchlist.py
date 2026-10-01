@@ -19,7 +19,6 @@ from turkanime_api.gui.qt.anilist import (
     DURUMLAR, AniListService, baslik_skoru, deslug, en_iyi_eslesme,
     geri_donus_portu, girisleri_duzlestir, senkron_guncellemeleri,
 )
-from turkanime_api.gui.qt.progress_dialog import ProgressDialog
 from turkanime_api.gui.web.uclar_izleme import izleme_karti
 
 DURUM_KODLARI = [kod for kod, _ in DURUMLAR]
@@ -486,20 +485,14 @@ def test_ana_pencere_ilerlemeyi_anilist_e_gonderiyor(qtbot, main_window,
 
 
 def test_dialog_seri_adini_anilist_aramasina_tasiyor(qtbot, main_window,
-                                                     sahte_anilist, monkeypatch,
+                                                     sahte_anilist,
                                                      preserved_gecmis):
-    """Sinyal slug taşıyor; AniList'te "naruto-test" diye aramak eşleşmezdi."""
+    """Pencere slug'la kaydediyor; AniList'te "naruto-test" diye aramak eşleşmezdi."""
     ist = sahte_anilist()
     ist.arama_sonucu = [media("Naruto Test", anime_id=99)]
 
-    acilan: list = []
-    monkeypatch.setattr(ProgressDialog, "exec",
-                        lambda self: acilan.append(self) or 0)
-
-    main_window._ask_progress(SahteBolum(), "Naruto Test 5. Bölüm")
-    dialog = acilan[0]
-    dialog.spnEpisode.setValue(5)
-    dialog.save()
+    soru = main_window._ask_progress(SahteBolum(), "Naruto Test 5. Bölüm")
+    main_window.sorular.cevapla(soru.kimlik, {"no": 5})     # "Kaydet"
 
     qtbot.waitUntil(lambda: any(c[0] == "progress" for c in ist.cagrilar),
                     timeout=5000)

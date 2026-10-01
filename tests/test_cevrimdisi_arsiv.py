@@ -1510,7 +1510,8 @@ def test_gelistiricinin_ayarlari_testlere_sizmiyor(monkeypatch, tmp_path_factory
     `animedepo_url`'yi yalıtmıyordu. pytest depodan çalışınca veri kökü depo
     kökü; geliştirici "Klasör seç…"e bastıysa kendi arşivi ve aynası bütün
     teste sızıyordu (31 test düşüyordu). Bu test "depo kökü"nü pytest'in
-    geçici kökü DIŞINDA kurup oradan koşuyor."""
+    geçici kökü DIŞINDA kurup oradan koşuyor. Artık veri kökünün TAMAMI
+    yalıtılıyor (conftest `_veri_koku_yalitimi`): kök oraya hiç düşmemeli."""
     taban = tmp_path_factory.getbasetemp().resolve()
     with tempfile.TemporaryDirectory(prefix="gelistirici-") as ham:
         dev = Path(ham).resolve()
@@ -1522,7 +1523,7 @@ def test_gelistiricinin_ayarlari_testlere_sizmiyor(monkeypatch, tmp_path_factory
         monkeypatch.chdir(dev)
         animedepo.sifirla()
         try:
-            assert animedepo.veri_koku() == dev
+            assert animedepo.veri_koku() != dev, "veri kökü geliştiricinin klasörüne düştü"
             assert animedepo.arsiv_konumu().kaynak == "uzak", "seçilen klasör sızdı"
             assert animedepo.uzak_aynalar()[0] == GITLAB, "özel ayna sızdı"
             assert animedepo.arsiv_durumu().ayar_dizini == ""

@@ -1,0 +1,338 @@
+{
+  "alanlar": {
+    "anime.baslik": "Kaynaktaki baslik; anime arsivde yoksa slug buradan uretilir.",
+    "anime.kapak": "Kapak adresi; saklanir, arsive yazilmaz.",
+    "anime.kimlik": "Kaynagin KENDI anime kimligi (adaptorun arama sonucundaki id). Arsiv slug'ini sunucu tarayicinin yontemiyle bulur.",
+    "bolum.baslik": "Kaynaktaki bolum basligi; bos olabilir.",
+    "bolum.kimlik": "Kaynagin KENDI bolum kimligi (adaptorun bolum listesindeki id); tekillestirme anahtarinin parcasi.",
+    "bolum.sezon/no/ara": "Istemcinin ayristirmasi. Yalnizca basliktan bolum numarasi cikmazsa ipucu olarak kullanilir.",
+    "bolum_listesi": "Animenin kaynaktaki bolum listesi [[bolum_kimlik, baslik], ...]; numarasiz bolumu yerlestirmek icin. Govde 'azami_govde_bayt'i asarsa null gonderin.",
+    "istemci": "Istemci surumu (or. '10.2.0'). Kullanici kimligi DEGIL; oyle bir sey koymayin.",
+    "kaynak": "Istemcinin kaynak kayit defterindeki 'modul' adi ('kaynaklar' listesinden; sunucunun taramadigi kaynaklar da dahil). Buyuk/kucuk harf ve kenar boslugu onemsiz. Listede yoksa 400. 'animedepo' (arsivin kendisi) bilerek yok.",
+    "videolar[].calisti": "Istemcide oynadi mi. IPUCU, kanit degil: yalnizca 'calismadi' denen adres yeni anime acamaz ve arsive girmez; tarayicinin kayitlarini hic etkilemez.",
+    "videolar[].etiket": "Kaynagin akis etiketi (adaptorun 'label' alani).",
+    "videolar[].fansub": "Ceviri grubu.",
+    "videolar[].oynatici": "Videoyu oynatan servis (or. SIBNET); bilgi amacli.",
+    "videolar[].url": "Oynatilan adres, http(s). Gecici imzali ('gecici_url'), yerel aga isaret eden ve kimlik tasiyan adresler atilir; hicbiri kalmazsa 400."
+  },
+  "azami_govde_bayt": 1048576,
+  "gecici_url": {
+    "not": "Sorgu parametresi ADI (kucuk harfle) bu listede ya da oneklerden biriyle basliyorsa adres gecici/kisisel sayilir ve atilir; gondermeden once ayiklayin.",
+    "onekler": [
+      "x-amz-",
+      "x-goog-"
+    ],
+    "parametreler": [
+      "__token__",
+      "access_token",
+      "api_key",
+      "apikey",
+      "auth",
+      "authorization",
+      "exp",
+      "expire",
+      "expires",
+      "expiry",
+      "googleaccessid",
+      "hdnea",
+      "hdnts",
+      "jwt",
+      "key-pair-id",
+      "md5",
+      "policy",
+      "session_id",
+      "sessionid",
+      "sig",
+      "signature",
+      "token",
+      "vt"
+    ]
+  },
+  "govde_semasi": {
+    "$defs": {
+      "KatkiAnime": {
+        "properties": {
+          "baslik": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Baslik",
+            "type": "string"
+          },
+          "kapak": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kapak"
+          },
+          "kimlik": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Kimlik",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kimlik",
+          "baslik"
+        ],
+        "title": "KatkiAnime",
+        "type": "object"
+      },
+      "KatkiBolum": {
+        "properties": {
+          "ara": {
+            "anyOf": [
+              {
+                "maximum": 99,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ara"
+          },
+          "baslik": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Baslik",
+            "type": "string"
+          },
+          "kimlik": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Kimlik",
+            "type": "string"
+          },
+          "no": {
+            "anyOf": [
+              {
+                "maximum": 99999,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "No"
+          },
+          "sezon": {
+            "anyOf": [
+              {
+                "maximum": 999,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sezon"
+          }
+        },
+        "required": [
+          "kimlik"
+        ],
+        "title": "KatkiBolum",
+        "type": "object"
+      },
+      "KatkiVideo": {
+        "properties": {
+          "calisti": {
+            "title": "Calisti",
+            "type": "boolean"
+          },
+          "etiket": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Etiket"
+          },
+          "fansub": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fansub"
+          },
+          "oynatici": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Oynatici"
+          },
+          "url": {
+            "maxLength": 2048,
+            "minLength": 8,
+            "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "calisti"
+        ],
+        "title": "KatkiVideo",
+        "type": "object"
+      }
+    },
+    "properties": {
+      "anime": {
+        "$ref": "#/$defs/KatkiAnime"
+      },
+      "bolum": {
+        "$ref": "#/$defs/KatkiBolum"
+      },
+      "bolum_listesi": {
+        "anyOf": [
+          {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 5000,
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Bolum Listesi"
+      },
+      "istemci": {
+        "anyOf": [
+          {
+            "maxLength": 30,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Istemci"
+      },
+      "kaynak": {
+        "maxLength": 50,
+        "minLength": 1,
+        "title": "Kaynak",
+        "type": "string"
+      },
+      "videolar": {
+        "items": {
+          "$ref": "#/$defs/KatkiVideo"
+        },
+        "maxItems": 40,
+        "minItems": 1,
+        "title": "Videolar",
+        "type": "array"
+      }
+    },
+    "required": [
+      "kaynak",
+      "anime",
+      "bolum",
+      "videolar"
+    ],
+    "title": "KatkiVeriGiris",
+    "type": "object"
+  },
+  "hatalar": {
+    "400": "Bilinmeyen kaynak (mesaj kabul edilenleri listeler) ya da arsive alinabilecek adres kalmadi. Ayni govdeyle tekrar denemeyin.",
+    "401": "X-API-Key eksik ya da yanlis.",
+    "413": "Govde 'azami_govde_bayt' degerini asiyor.",
+    "422": "Govde 'govde_semasi'na uymuyor.",
+    "429": "Hiz siniri ya da kaynagin bekleyen kuyrugu dolu; 'Retry-After' basligindaki sure kadar bekleyip tekrar deneyin.",
+    "503": "Veri bagisi bu sunucuda kapali ya da veritabani gecici olarak yok."
+  },
+  "hiz_siniri": {
+    "anlik": 30,
+    "dolum_saniye": 60.0,
+    "kapsam": "API anahtari + istemci IP'si, sunucu isci basina"
+  },
+  "kaynaklar": [
+    "animecix",
+    "animeler",
+    "animetr",
+    "animexe",
+    "animezer",
+    "animom",
+    "animpow",
+    "anizle",
+    "asyaanimeleri",
+    "buguitr",
+    "deokwave",
+    "onepacetr",
+    "openani",
+    "seicode",
+    "tranimaci",
+    "tranime"
+  ],
+  "not": "Veri bagisi ucunun tel uzerindeki sozlesmesi. TEK KAYNAK burasi: sunucu tarafinda 'turkanime_server.api.KatkiVeriGiris' ile, istemci tarafinda gonderilen govde ile karsilastirilir. Istemci basariyla oynattigi bolumun videolarini ve kunyesini birakir; kayit once bekler, katki birlestiricisi onu tarayicinin durumuna isler (tarayicinin verisini asla ezmeden) ve arsivi yeniden uretir. Ucun acik olup olmadigi ve kabul edilen kaynaklar: GET /katki/durum -> 'veri' ('acik', 'kaynaklar'). Yanit yalnizca 'alindi' der; arsive girip girmedigi ayni ucun sayimlarindan izlenir. Dosya elle duzenlenmez: 'python -m turkanime_server.sozlesme' ile uretilir, istemci deposundaki kopya birebir ayni olmak zorundadir.",
+  "surum": 1,
+  "uc": "POST /katki/veri",
+  "yanit_semasi": {
+    "properties": {
+      "durum": {
+        "const": "alindi",
+        "title": "Durum",
+        "type": "string"
+      },
+      "katki_id": {
+        "title": "Katki Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "katki_id",
+      "durum"
+    ],
+    "title": "VeriKatkiFisi",
+    "type": "object"
+  }
+}

@@ -1700,10 +1700,38 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   user-select: text;
 }
 
-.arsiv-paneli {
+/* Yerel FlareSolverr paneli arşivin görünümünü paylaşıyor ama sınıfı
+   ayrı: arşiv testleri/seçicileri `.arsiv-paneli` altındaki düğmeleri sayıyor. */
+.arsiv-paneli,
+.fs-paneli {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* Veri bağışı kartı: anahtar, açıklama (düz yazı), durum ve sayaçlar. */
+.veri-paneli {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.veri-paneli > .anahtar-satiri {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.bilgi-tablosu.metinli {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+
+/* Açıklama düz yazı: `bilgi-tablosu`nun adresler için verdiği `break-all`
+   kelimeleri ortasından bölerdi. */
+.bilgi-tablosu.metinli dd {
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  color: var(--metin-2);
 }
 
 .arsiv-uyarilari:empty {
@@ -1732,7 +1760,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   margin-top: 1px;
 }
 
-.arsiv-cubuk {
+.arsiv-cubuk,
+.fs-cubuk {
   position: relative;
   height: 6px;
   border-radius: 999px;
@@ -1740,7 +1769,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   overflow: hidden;
 }
 
-.arsiv-cubuk i {
+.arsiv-cubuk i,
+.fs-cubuk i {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -1748,7 +1778,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   transition: width 200ms ease;
 }
 
-.arsiv-cubuk.belirsiz i {
+.arsiv-cubuk.belirsiz i,
+.fs-cubuk.belirsiz i {
   width: 30% !important;
   animation: belirsiz 1.2s ease-in-out infinite;
 }
@@ -1758,7 +1789,8 @@ html:not([data-kabuk="qt"]) .ayar-menu {
   to { transform: translateX(360%); }
 }
 
-.arsiv-ilerleme-satir {
+.arsiv-ilerleme-satir,
+.fs-ilerleme-satir {
   display: flex;
   align-items: center;
   justify-content: space-between;

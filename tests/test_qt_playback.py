@@ -11,7 +11,10 @@ from __future__ import annotations
 import pytest
 
 from turkanime_api.gui.qt import prefs
-from turkanime_api.gui.qt.progress_dialog import ProgressDialog
+from turkanime_api.gui.web.kopru import UcHatasi
+from turkanime_api.gui.web.pencereler import (
+    KIMLIKSIZ_NOTU, ilerleme_bilgisi, ilerleme_sor,
+)
 
 
 class SahteAnime:
@@ -105,23 +108,19 @@ def test_mpv_opts_varsayilani_birikmiyor(monkeypatch):
 
 
 # ── Ana pencere akışı ────────────────────────────────────────────────────────
-def test_oynatma_ayarlari_ve_gecmis(main_window, qtbot, monkeypatch, ayarla,
+def test_oynatma_ayarlari_ve_gecmis(main_window, qtbot, ayarla, sorulanlar,
                                     preserved_gecmis):
-    """Oynatma bitince geçmişe yazılmalı ve ilerleme diyaloğu açılmalı."""
+    """Oynatma bitince geçmişe yazılmalı ve ilerleme penceresi açılmalı."""
     from turkanime_api.cli.dosyalar import Dosyalar
 
     ayarla(**{"max resolution": False, "1080p aday sayısı": 4,
               "dakika hatirla": True, "izlerken kaydet": False})
 
-    acilan = []
-    monkeypatch.setattr(ProgressDialog, "exec",
-                        lambda self: acilan.append(self) or 0)
-
     video = TamVideo()
     bolum = SahteBolum(video=video, slug="naruto-test-3-bolum")
     main_window._on_play({"title": "Naruto Test 3. Bölüm", "obj": bolum})
 
-    qtbot.waitUntil(lambda: bool(acilan), timeout=10000)
+    qtbot.waitUntil(lambda: bool(sorulanlar("ilerleme")), timeout=10000)
 
     # Alt küme: yedekli döngü `callback` ve `atla` da geçiyor (bkz.
     # `common.oynatma`); ayarların gittiği yer değişmedi.
@@ -131,39 +130,39 @@ def test_oynatma_ayarlari_ve_gecmis(main_window, qtbot, monkeypatch, ayarla,
     assert video.kwargs == {"dakika_hatirla": True, "izlerken_kaydet": False}
     izlendi = Dosyalar().gecmis["izlendi"]
     assert "naruto-test-3-bolum" in izlendi.get("naruto-test", [])
-    assert acilan[0].spnEpisode.value() == 3, "bölüm numarası başlıktan gelmeli"
+    assert sorulanlar("ilerleme")[0].veri["bolum_no"] == 3, \
+        "bölüm numarası başlıktan gelmeli"
 
 
-def test_oynatilamayan_bolum_dialog_acmiyor(main_window, qtbot, monkeypatch, ayarla):
+def test_oynatilamayan_bolum_dialog_acmiyor(main_window, qtbot, ayarla, sorulanlar):
     """Video bulunamadıysa ilerleme sorulmamalı."""
     ayarla(**{"dakika hatirla": True})
-    acilan = []
-    monkeypatch.setattr(ProgressDialog, "exec",
-                        lambda self: acilan.append(self) or 0)
 
     bolum = SahteBolum(video=None)
     main_window._on_play({"title": "Naruto Test 4. Bölüm", "obj": bolum})
 
     qtbot.waitUntil(lambda: main_window._playing is False, timeout=10000)
     qtbot.wait(150)
-    assert acilan == []
+    assert sorulanlar("ilerleme") == []
 
 
-# ── İlerleme diyaloğu ────────────────────────────────────────────────────────
-def test_ilerleme_dialogu_yerel_ilerlemeye_yaziyor(qtbot, preserved_gecmis):
+# ── İlerleme penceresi ───────────────────────────────────────────────────────
+def test_ilerleme_penceresi_yerel_ilerlemeye_yaziyor(soru_merkezi, izole_ev):
     from turkanime_api.cli.dosyalar import Dosyalar
 
-    dialog = ProgressDialog(SahteBolum(), "Naruto Test 12. Bölüm")
-    qtbot.addWidget(dialog)
-    assert dialog.spnEpisode.value() == 12
-
     yayilan = []
-    dialog.progress_saved.connect(lambda seri, no: yayilan.append((seri, no)))
-    dialog.spnEpisode.setValue(13)
-    dialog.save()
+    soru = ilerleme_sor(soru_merkezi, SahteBolum(), "Naruto Test 12. Bölüm",
+                        lambda seri, no, ad: yayilan.append((seri, no, ad)))
+    assert soru.veri["bolum_no"] == 12
+    assert soru.veri["anime_adi"] == "Naruto Test"
+    assert soru.veri["kaydedilebilir"] is True
 
-    assert yayilan == [("naruto-test", 13)]
+    soru_merkezi.cevapla(soru.kimlik, {"no": 13})
+
+    # Okunabilir ad da gidiyor: AniList'te slug ("naruto-test") eşleşmez.
+    assert yayilan == [("naruto-test", 13, "Naruto Test")]
     assert Dosyalar().gecmis["ilerleme"]["naruto-test"] == 13
+    assert not soru.acik
 
 
 @pytest.mark.parametrize("anime_baslik, anime_slug, bolum_adi, beklenen", [
@@ -171,8 +170,8 @@ def test_ilerleme_dialogu_yerel_ilerlemeye_yaziyor(qtbot, preserved_gecmis):
     ("3x3 Eyes", "3x3-eyes", "3x3 Eyes 1. Bölüm", 1),
     ("5-toubun no Hanayome", "5-toubun-no-hanayome", "5-toubun no Hanayome 3. Bölüm", 3),
 ])
-def test_ilerleme_dialogu_addaki_rakami_bolum_sanmiyor(
-        qtbot, anime_baslik, anime_slug, bolum_adi, beklenen):
+def test_ilerleme_penceresi_addaki_rakami_bolum_sanmiyor(
+        anime_baslik, anime_slug, bolum_adi, beklenen):
     """Başlık anime adını da taşıyor; addaki rakam AniList'e ilerleme yazılıyordu.
 
     12 bölümlük "86 2nd Season"da diyalog 86 öneriyordu; kullanıcı "Kaydet"e
@@ -180,21 +179,105 @@ def test_ilerleme_dialogu_addaki_rakami_bolum_sanmiyor(
     """
     bolum = SahteBolum(slug=f"{anime_slug}-bolum")
     bolum.anime = SahteAnime(slug=anime_slug, title=anime_baslik)
-
-    dialog = ProgressDialog(bolum, bolum_adi)
-    qtbot.addWidget(dialog)
-    assert dialog.spnEpisode.value() == beklenen
+    assert ilerleme_bilgisi(bolum, bolum_adi)["bolum_no"] == beklenen
 
 
-def test_ilerleme_dialogu_seri_kimligi_yoksa_kaydetmiyor(qtbot):
+def test_ilerleme_penceresi_seri_kimligi_yoksa_kaydetmiyor(soru_merkezi, izole_ev):
     class KimliksizBolum:
         slug = "bilinmeyen-1-bolum"
         anime = None
 
-    dialog = ProgressDialog(KimliksizBolum(), "Bilinmeyen 1. Bölüm")
-    qtbot.addWidget(dialog)
-    assert not dialog.btnSave.isEnabled()
-    assert dialog.lblNote.text()
+    yayilan = []
+    soru = ilerleme_sor(soru_merkezi, KimliksizBolum(), "Bilinmeyen 1. Bölüm",
+                        lambda *a: yayilan.append(a))
+    assert soru.veri["kaydedilebilir"] is False
+    assert soru.veri["not"] == KIMLIKSIZ_NOTU
+    with pytest.raises(UcHatasi):
+        soru_merkezi.cevapla(soru.kimlik, {"no": 1})
+    assert soru.acik and yayilan == []
+
+
+def test_ilerleme_yazilamazsa_pencere_acik_kaliyor(soru_merkezi, monkeypatch):
+    """Qt diyaloğu da `accept` etmeden "İlerleme kaydedilemedi." gösteriyordu."""
+    monkeypatch.setattr(prefs, "ilerleme_kaydet", lambda seri, no: False)
+    yayilan = []
+    soru = ilerleme_sor(soru_merkezi, SahteBolum(), "Naruto Test 2. Bölüm",
+                        lambda *a: yayilan.append(a))
+    with pytest.raises(UcHatasi, match="kaydedilemedi"):
+        soru_merkezi.cevapla(soru.kimlik, {"no": 2})
+    assert soru.acik and yayilan == []
+
+
+@pytest.mark.parametrize("cevap", [{"no": 0}, {"no": 10000}, {"no": 2.5}, {"no": "3"},
+                                   {"no": True}, {}, [3]])
+def test_ilerleme_gecersiz_numarayi_reddediyor(soru_merkezi, monkeypatch, cevap):
+    """Qt sayı kutusu 1-9999 tam sayı dışını kabul etmiyordu."""
+    yazilan = []
+    monkeypatch.setattr(prefs, "ilerleme_kaydet", lambda seri, no: yazilan.append(no) or True)
+    soru = ilerleme_sor(soru_merkezi, SahteBolum(), "Naruto Test 2. Bölüm", lambda *a: None)
+    with pytest.raises(UcHatasi):
+        soru_merkezi.cevapla(soru.kimlik, cevap)
+    assert soru.acik and yazilan == []
+
+
+def test_ilerleme_atla_hicbir_sey_yazmiyor(soru_merkezi, monkeypatch):
+    yazilan, yayilan = [], []
+    monkeypatch.setattr(prefs, "ilerleme_kaydet", lambda seri, no: yazilan.append(no) or True)
+    soru = ilerleme_sor(soru_merkezi, SahteBolum(), "Naruto Test 2. Bölüm",
+                        lambda *a: yayilan.append(a))
+    soru_merkezi.cevapla(soru.kimlik, None)
+    assert not soru.acik and yazilan == [] and yayilan == []
+
+
+# ── İlerleme penceresi (sayfa) ───────────────────────────────────────────────
+ILERLEME = "document.querySelector('[data-soru=ilerleme]')"
+
+
+def test_ilerleme_penceresi_sayfada_kaydediyor(izole_ev, main_window, web, monkeypatch):
+    from turkanime_api.cli.dosyalar import Dosyalar
+
+    kaydedilen = []
+    monkeypatch.setattr(main_window, "_on_progress_saved",
+                        lambda seri, no, ad="": kaydedilen.append((seri, no, ad)))
+    main_window._ask_progress(SahteBolum(), "Naruto Test 12. Bölüm")
+    web.bekle("!!" + ILERLEME)
+    metin = web.js(ILERLEME + ".innerText")
+    assert "Naruto Test" in metin and "Naruto Test 12. Bölüm" in metin
+    assert "Kaçıncı bölümü tamamladınız?" in metin
+    assert web.js(ILERLEME + ".querySelector('input').value") == "12"
+    assert web.js("document.activeElement === " + ILERLEME + ".querySelector('input')")
+
+    web.js(ILERLEME + ".querySelector('input').value = '13';"
+           + ILERLEME + ".querySelector('button[type=submit]').click()")
+    web.bekle("!" + ILERLEME)
+    assert kaydedilen == [("naruto-test", 13, "Naruto Test")]
+    assert Dosyalar().gecmis["ilerleme"]["naruto-test"] == 13
+
+
+def test_ilerleme_penceresi_hatada_acik_kaliyor_atla_kapatiyor(main_window, web,
+                                                              monkeypatch):
+    monkeypatch.setattr(prefs, "ilerleme_kaydet", lambda seri, no: False)
+    main_window._ask_progress(SahteBolum(), "Naruto Test 4. Bölüm")
+    web.bekle("!!" + ILERLEME)
+    web.js(ILERLEME + ".querySelector('button[type=submit]').click()")
+    web.bekle(ILERLEME + ".querySelector('.modal-not').textContent === 'İlerleme kaydedilemedi.'")
+    assert web.js("!!" + ILERLEME)
+    assert web.js(ILERLEME + ".querySelector('button[type=submit]').disabled") is False
+
+    web.js("[..." + ILERLEME + ".querySelectorAll('button')].find(b => b.textContent === 'Atla').click()")
+    web.bekle("!" + ILERLEME)
+    assert main_window.sorular.bekleyenler("ilerleme") == []
+
+
+def test_ilerleme_penceresi_kimliksizde_kaydet_pasif(main_window, web):
+    class KimliksizBolum:
+        slug = "bilinmeyen-1-bolum"
+        anime = None
+
+    main_window._ask_progress(KimliksizBolum(), "Bilinmeyen 1. Bölüm")
+    web.bekle("!!" + ILERLEME)
+    assert web.js(ILERLEME + ".querySelector('button[type=submit]').disabled") is True
+    assert web.js(ILERLEME + ".querySelector('.modal-not').textContent") == KIMLIKSIZ_NOTU
 
 
 def test_ilerleme_kaydet_bos_seriyi_reddediyor(preserved_gecmis):
@@ -327,11 +410,9 @@ def _oynat_ve_bekle(main_window, qtbot, bolum, beklenen_metin=None):
 
 
 @pytest.fixture
-def diyaloglar(monkeypatch):
-    acilan = []
-    monkeypatch.setattr(ProgressDialog, "exec",
-                        lambda self: acilan.append(self) or 0)
-    return acilan
+def diyaloglar(sorulanlar):
+    """Açılan pencereler; ``diyaloglar("ilerleme")`` ilerleme soruları."""
+    return sorulanlar
 
 
 def test_oynatilamayan_aday_sonrasi_siradaki_deneniyor(
@@ -342,13 +423,13 @@ def test_oynatilamayan_aday_sonrasi_siradaki_deneniyor(
     bolum = SiraliBolum([a, b])
 
     main_window._on_play({"title": "Naruto Test 1. Bölüm", "obj": bolum})
-    qtbot.waitUntil(lambda: bool(diyaloglar), timeout=10000)
+    qtbot.waitUntil(lambda: bool(diyaloglar("ilerleme")), timeout=10000)
 
     assert len(bolum.cagrilar) == 2
     assert "u1" in bolum.cagrilar[1]["atla"]
     assert (a.oynatildi, b.oynatildi) == (1, 1)
     assert _izlendi().count("naruto-test-1-bolum") == 1
-    assert len(diyaloglar) == 1
+    assert len(diyaloglar("ilerleme")) == 1
 
 
 def test_hic_aday_oynatilamazsa_izlendi_yazilmiyor(
@@ -359,7 +440,7 @@ def test_hic_aday_oynatilamazsa_izlendi_yazilmiyor(
 
     assert len(bolum.cagrilar) == 3
     assert _izlendi() == []
-    assert diyaloglar == []
+    assert diyaloglar("ilerleme") == []
     assert main_window._playing is False
 
 
@@ -374,7 +455,7 @@ def test_kullanici_kesmesi_ve_secenek_hatasi_yeniden_denenmiyor(
 
     assert len(bolum.cagrilar) == 1
     assert _izlendi() == []
-    assert diyaloglar == []
+    assert diyaloglar("ilerleme") == []
 
 
 def test_calisan_video_yoksa_sebep_oynaticilari_sayiyor(
@@ -388,7 +469,7 @@ def test_calisan_video_yoksa_sebep_oynaticilari_sayiyor(
     _oynat_ve_bekle(main_window, qtbot, bolum, ("SIBNET", "MAIL"))
 
     assert "bulunamadı" in main_window.statusBar().currentMessage()
-    assert diyaloglar == []
+    assert diyaloglar("ilerleme") == []
 
 
 def test_mpv_yoksa_mesaj_ayni_ve_yeniden_denenmiyor(
@@ -399,4 +480,4 @@ def test_mpv_yoksa_mesaj_ayni_ve_yeniden_denenmiyor(
 
     assert len(bolum.cagrilar) == 1
     assert _izlendi() == []
-    assert diyaloglar == []
+    assert diyaloglar("ilerleme") == []

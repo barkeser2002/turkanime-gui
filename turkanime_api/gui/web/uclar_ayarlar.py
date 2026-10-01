@@ -9,20 +9,32 @@ Ayarlar `cli.dosyalar.Dosyalar` üzerinden okunup yazılıyor (CLI ile ortak
   `prefs.kaynak_kimliklerini_uygula()` çağrılıyor; çağrılmazsa TRAnimeİzle
   her açılışta 0 bölüm döndürür.
 * **Kimlik bağışı** iki kapılı: "kimlik paylas" ayarı açık VE onay penceresi
-  onaylanmış. Çerez ÖNCE diske yazılır, bağış SONRA sorulur. Bağış numarası
-  geri çekmenin tek anahtarı; liste olarak saklanır, silinemeyen numara
-  ayarda kalır.
+  onaylanmış. Çerez ÖNCE diske yazılır, bağış SONRA sorulur. Onay sayfadaki
+  pencereden sonradan geldiği için (`gui.web.sorular`) ayar kapısı gönderim
+  anında bir kez daha denetlenir. Bağış numarası geri çekmenin tek anahtarı;
+  liste olarak saklanır, silinemeyen numara ayarda kalır.
+* **Veri bağışı** "Kaydet" formunun DIŞINDA: form her alanı yazıyor, bu ayar
+  formda olsaydı "Kaydet" onaysız açabilirdi. Açmak `veri_bagisi_ayarla` →
+  onay penceresi → yalnızca açık onayda ayar yazılır; kapatmak anında ve
+  bekleyen kuyruğu siler (`gui.web.veri_bagisi`).
 * **Çevrimdışı arşiv**: durum sayfa AÇILINCA arka planda okunur (kurulumda
   değil: megabaytlık dizin.json). İndirme/silme/klasör denetimi arka planda;
   aynı anda tek arşiv işi. Silme yalnızca `<veri kökü>/cevrimdisi_arsiv`.
 
+* **Yerel FlareSolverr** (`common.flaresolverr`): durum yönetici
+  dinleyicisinden olayla gelir (CF zinciri onu kendiliğinden başlatabiliyor);
+  kurulum/başlatma/durdurma arka planda. "Durdur" bu oturumda kendiliğinden
+  başlatmayı da kapatır.
+
 Olaylar: ``ayar_durum`` (sayfanın üst satırı), ``ayar_cerez``,
-``ayar_anilist``, ``arsiv_ilerleme``, ``arsiv_sonuc``.
+``ayar_anilist``, ``ayar_veri_bagisi``, ``arsiv_ilerleme``, ``arsiv_sonuc``,
+``flaresolverr_durum``, ``flaresolverr_ilerleme``.
 """
 from __future__ import annotations
 
 import threading
 import time
+import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -63,6 +75,7 @@ ALANLAR = {
     "izlendi_ikonu": "izlendi ikonu",
     "manuel_fansub": "manuel fansub",
     "flaresolverr": "flaresolverr_url",
+    "flaresolverr_yerel": "flaresolverr_yerel",
     "openani_token": "openani_token",
     "openani_refresh": "openani_refresh_token",
     "kimlik_paylas": "kimlik paylas",
@@ -72,7 +85,8 @@ ALANLAR = {
 _METIN = ("indirilenler", "flaresolverr", "openani_token", "openani_refresh",
           "sunucu_adresi", "sunucu_anahtari")
 _MANTIKSAL = ("max_res", "dakika_hatirla", "izlerken_kaydet", "ilerlemeyi_sor",
-              "aria2c", "izlendi_ikonu", "manuel_fansub", "kimlik_paylas")
+              "aria2c", "izlendi_ikonu", "manuel_fansub", "kimlik_paylas",
+              "flaresolverr_yerel")
 _SAYI = {"paralel": (1, 10), "aday": (1, 30)}
 
 
@@ -172,9 +186,10 @@ class AyarlarUclari(QObject):
     """Ayarlar sayfasının Python tarafı (GUI thread'inde yaşar)."""
 
     def __init__(self, kopru: Kopru, *, anilist, discord=None, updates=None,
-                 requirements=None, pencere=None):
+                 requirements=None, pencere=None, sorular=None, veri_bagisi=None):
         super().__init__()
         from ..qt.workers import UiBridge
+        from .veri_bagisi import VeriBagisi
         self._kopru = kopru
         self._ui = UiBridge(self)
         self.anilist = anilist
@@ -182,11 +197,36 @@ class AyarlarUclari(QObject):
         self.updates = updates
         self.requirements = requirements
         self._pencere = pencere
+        # Bağış onay penceresi buradan soruluyor (`gui.web.sorular`). Yoksa
+        # (sayfasız kurulum) onay alınamaz, yani bağış da yapılamaz.
+        self._sorular = sorular
+        # Veri bağışı servisi pencereyle ORTAK (oynatma/indirme kancaları onu
+        # besliyor); verilmezse sayaçları okuyabilmek için kendi örneği — ona
+        # kanca bağlı olmadığı için hiçbir şey toplamaz. Sayaç değişince sayfa
+        # tazelensin diye durum olayı servise bağlanıyor (gönderici thread'inden
+        # gelir; `Kopru.yay` thread güvenli). Bağ ZAYIF: servis → bu QObject
+        # döngüsünü Python'un döngü toplayıcısı herhangi bir thread'de
+        # yıkabilirdi (bkz. `sorular.Soru._son`).
+        self._veri_bagisi = veri_bagisi if veri_bagisi is not None else VeriBagisi()
+        zayif = weakref.ref(self)
+
+        def _veri_bildir() -> None:
+            uclar = zayif()
+            if uclar is not None:
+                uclar._kopru.yay("ayar_veri_bagisi", uclar._veri_durumu())
+        self._veri_bagisi.bildir = _veri_bildir
+        # Onay penceresi açık mı: aynı anda tek pencere, sayfadaki anahtar da
+        # cevap gelene kadar "bekliyor" gösterir.
+        self._veri_onay_bekliyor = False
         self._cerez_isci = None
         self._arsiv_mesgul: Optional[str] = None        # None | "indirme" | "islem"
         self._arsiv_iptal: Optional[threading.Event] = None
         self._arsiv_kaynak_adi = ""
         self._arsiv_indirilen_var = False
+        self._fs_iptal: Optional[threading.Event] = None
+        # Yerel FlareSolverr CF zincirinde kendiliğinden başlıyor/kapanıyor;
+        # sayfa bunu olaydan öğreniyor (yönetici bu metodu zayıf tutuyor).
+        self._fs().yonetici().dinle(self._flaresolverr_degisti)
 
         anilist.auth_changed.connect(
             lambda user: kopru.yay("ayar_anilist", self._anilist_durumu(user)))
@@ -248,7 +288,10 @@ class AyarlarUclari(QObject):
         deger = {alan: ayarlar.get(anahtar) for alan, anahtar in ALANLAR.items()}
         for alan in _METIN:
             deger[alan] = str(deger[alan] or "")
-        varsayilan = {"max_res": True, "dakika_hatirla": True, "izlendi_ikonu": True}
+        # "flaresolverr_yerel" varsayılanlara yazılmıyor; yoksa AÇIK sayılır
+        # (bkz. `cf_bypass.yerel_flaresolverr_ayari`).
+        varsayilan = {"max_res": True, "dakika_hatirla": True, "izlendi_ikonu": True,
+                      "flaresolverr_yerel": True}
         for alan in _MANTIKSAL:
             ham = ayarlar.get(ALANLAR[alan], varsayilan.get(alan, False))
             deger[alan] = bool(ham)
@@ -261,6 +304,7 @@ class AyarlarUclari(QObject):
             "degerler": deger,
             "cerez": cerez_durumu(str(ayarlar.get("tranime_cookie") or "")),
             "bagis": self._bagis_durumu(bagis_kimlikleri(ayarlar)),
+            "veri_bagisi": self._veri_durumu(),
             "discord_metni": self._discord_metni(),
             "anilist": dict(self._anilist_durumu(),
                             client_id=anilist.client_id,
@@ -269,6 +313,7 @@ class AyarlarUclari(QObject):
                             sizan_uyari=SIZAN_SECRET_UYARISI if anilist.sizan_secret_temizlendi else ""),
             "servisler": {"guncelleme": self.updates is not None,
                           "gereksinim": self.requirements is not None},
+            "flaresolverr": self._fs().yonetici().durum_ozeti(),
         }
 
     @staticmethod
@@ -302,12 +347,19 @@ class AyarlarUclari(QObject):
             reset_cf_session()
         except Exception:
             pass
+        if yazilacak.get(ALANLAR["flaresolverr_yerel"]) is False:
+            # Kullanılmayacak örnek bellekte durmasın (Chrome + ~100 MB).
+            from ..qt.workers import run_bg
+            run_bg(self._fs().yonetici().durdur)
         if anilist is not None:
             from ..qt import prefs
             if not prefs.anilist_yaz(anilist.get("client_id", ""),
                                      anilist.get("client_secret", ""),
                                      anilist.get("redirect_uri", "")):
                 raise UcHatasi("Ayarlar kaydedildi ama AniList yapılandırması yazılamadı")
+        # Sunucu adresi/anahtarı değişmiş olabilir: bekleyen veri bağışı varsa
+        # gönderici yeni yapılandırmayla (ve sıfırlanmış beklemeyle) denesin.
+        self._veri_bagisi.ayar_degisti()
         if not self._kimlikleri_uygula():
             raise UcHatasi("Ayarlar kaydedildi ama kaynak çerez/jetonları uygulanamadı")
         return {"mesaj": "Ayarlar kaydedildi."}
@@ -358,23 +410,43 @@ class AyarlarUclari(QObject):
     # ── Oturum kimliği bağışı ───────────────────────────────────────────────
     @staticmethod
     def _katki():
-        from ..qt import katki_dialog
-        return katki_dialog
+        from . import katki
+        return katki
 
-    def kimlik_bagisi_teklif(self, netscape: str) -> None:
-        """Ayar açıksa onay penceresi; onay yoksa HİÇBİR ŞEY gönderilmez."""
-        if not netscape:
-            return
+    def _paylasim_ayarlari(self) -> Optional[Dict[str, Any]]:
+        """Ayarlar — yalnızca "kimlik paylas" AÇIKSA (kapı 1), yoksa None."""
         try:
             ayarlar: Dict[str, Any] = self._dosya().ayarlar or {}
         except Exception:
-            return
-        if not bool(ayarlar.get("kimlik paylas", False)):
+            return None
+        return ayarlar if bool(ayarlar.get("kimlik paylas", False)) else None
+
+    def kimlik_bagisi_teklif(self, netscape: str) -> None:
+        """Ayar açıksa onay penceresi; onay yoksa HİÇBİR ŞEY gönderilmez.
+
+        Onay sayfadaki pencereden SONRADAN gelir; gönderim `_bagis_cevabi`'nda.
+        """
+        if not netscape or self._paylasim_ayarlari() is None:
             return
         katki = self._katki()
-        if not katki.onay_al(katki.KAYNAK_TRANIME, self._pencere):
+        katki.onay_al(self._sorular, katki.KAYNAK_TRANIME,
+                      lambda onay: self._bagis_cevabi(netscape, onay))
+
+    def _bagis_cevabi(self, netscape: str, onay: Any) -> None:
+        """Onay penceresi kapandı. ``onay`` gerçek ``True`` değilse gönderim yok.
+
+        Kapı 1 burada YENİDEN denetleniyor: pencere açıkken ayar kapatıldıysa
+        (ya da ayar okunamıyorsa) kullanıcının son sözü "gönderme"dir.
+        Ayarlar da taze okunuyor: numara listesi arada değişmiş olabilir.
+        """
+        if onay is not True:
             self._durum("Oturum kimliği bağışlanmadı.")
             return
+        ayarlar = self._paylasim_ayarlari()
+        if ayarlar is None:
+            self._durum("Oturum kimliği bağışlanmadı: bağış ayarı kapalı ya da okunamadı.")
+            return
+        katki = self._katki()
         try:
             bagis_id = katki.bagis_gonder(netscape, katki.KAYNAK_TRANIME, ayarlar)
         except Exception as exc:
@@ -425,6 +497,80 @@ class AyarlarUclari(QObject):
                     mesaj="Bağışınız geri çekildi ve sunucudan silindi." if len(kimlikler) == 1
                     else f"{len(kimlikler)} bağış geri çekildi ve sunucudan silindi.")
 
+    # ── Veri bağışı ─────────────────────────────────────────────────────────
+    @staticmethod
+    def _vb():
+        from . import veri_bagisi
+        return veri_bagisi
+
+    def _veri_durumu(self, **ek: Any) -> Dict[str, Any]:
+        """Kartın gösterdiği her şey: açık mı, sayaçlar, son hata, açıklama."""
+        vb = self._vb()
+        durum = self._veri_bagisi.durum()
+        durum["bekliyor"] = self._veri_onay_bekliyor
+        durum["aciklama"] = [{"baslik": b, "metin": m} for b, m in vb.ACIKLAMA]
+        durum.update(ek)
+        return durum
+
+    @uc()
+    def veri_bagisi_durumu(self) -> Dict[str, Any]:
+        return self._veri_durumu()
+
+    @uc()
+    def veri_bagisi_ayarla(self, acik: bool) -> Dict[str, Any]:
+        """Anahtar. Kapatmak anında; açmak YALNIZCA onay penceresinden.
+
+        Açarken hiçbir şey yazılmıyor: onay sonradan, `_veri_onay_cevabi`'na
+        geliyor. Sayfa o arada anahtarı "bekliyor" gösterir.
+        """
+        vb = self._vb()
+        if not acik:
+            try:
+                self._dosya().set_ayar(ayar_list={vb.AYAR_ACIK: False, vb.AYAR_ONAY: 0})
+            except Exception as exc:
+                raise UcHatasi(f"Veri bağışı kapatılamadı: ayar yazılamadı ({exc})") from exc
+            silinen = self._veri_bagisi.kapat()
+            return self._veri_durumu(
+                tur="tamam", mesaj="Veri bağışı kapatıldı; artık hiçbir şey gönderilmiyor."
+                + (f" Gönderilmemiş {silinen} kayıt silindi." if silinen else ""))
+        if vb.acik_mi(self._dosya().ayarlar or {}):
+            return self._veri_durumu(tur="bilgi", mesaj="Veri bağışı zaten açık.")
+        if not self._veri_onay_bekliyor:
+            self._veri_onay_bekliyor = True
+            vb.onay_al(self._sorular, self._veri_onay_cevabi)
+        return self._veri_durumu()
+
+    def _veri_onay_cevabi(self, onay: Any) -> None:
+        """Onay penceresi kapandı; ``onay`` gerçek ``True`` değilse ayar yazılmaz."""
+        self._veri_onay_bekliyor = False
+        vb = self._vb()
+        if onay is not True:
+            self._kopru.yay("ayar_veri_bagisi", self._veri_durumu(
+                tur="bilgi", mesaj="Veri bağışı açılmadı; hiçbir şey gönderilmeyecek."))
+            return
+        try:
+            self._dosya().set_ayar(ayar_list={vb.AYAR_ACIK: True,
+                                              vb.AYAR_ONAY: vb.ONAY_SURUMU})
+        except Exception as exc:
+            self._kopru.yay("ayar_veri_bagisi", self._veri_durumu(
+                tur="hata", mesaj=f"Veri bağışı açılamadı: ayar yazılamadı ({exc})."))
+            return
+        self._veri_bagisi.ayar_degisti()
+        durum = self._veri_durumu()
+        mesaj = ("Veri bağışı açıldı." if not durum["sebep"]
+                 else f"Veri bağışı açıldı, ama gönderim yok: {durum['sebep']}")
+        self._kopru.yay("ayar_veri_bagisi", dict(
+            durum, tur="bilgi" if durum["sebep"] else "tamam", mesaj=mesaj))
+
+    @uc("veri_bagisi_temizle", arka=True)
+    def veri_bagisi_temizle(self) -> Dict[str, Any]:
+        """"Kuyruğu temizle": gönderilmemiş kayıtlar silinir, özellik açık kalır."""
+        silinen = self._veri_bagisi.temizle()
+        return self._veri_durumu(
+            tur="tamam" if silinen else "bilgi",
+            mesaj=f"Gönderilmemiş {silinen} kayıt silindi." if silinen
+            else "Kuyrukta gönderilmemiş kayıt yok.")
+
     # ── Discord / bakım ─────────────────────────────────────────────────────
     @uc()
     def discord_ayarla(self, acik: bool) -> Dict[str, Any]:
@@ -453,6 +599,98 @@ class AyarlarUclari(QObject):
         self.requirements.atlandi_yaz(False)
         self._durum("Gereksinimler denetleniyor…")
         self.requirements.denetle(kullanici_istegi=True)
+        return True
+
+    # ── Yerel FlareSolverr ──────────────────────────────────────────────────
+    # Kurulum, başlatma ve durdurma arka planda (indirme ~260-380 MB, açılış
+    # Chrome'u deniyor); sonuç ``flaresolverr_durum`` olayıyla gelir,
+    # indirme ilerlemesi ``flaresolverr_ilerleme`` ile.
+    @staticmethod
+    def _fs():
+        from ...common import flaresolverr
+        return flaresolverr
+
+    def _flaresolverr_degisti(self, ozet: Dict[str, Any]) -> None:
+        """Yönetici her thread'den çağırıyor; köprü yayımı thread güvenli."""
+        self._kopru.yay("flaresolverr_durum", ozet)
+
+    @uc()
+    def flaresolverr_durumu(self) -> Dict[str, Any]:
+        """Ağa çıkmaz (dosya ve süreç denetimi): arayüz thread'inde güvenli."""
+        return self._fs().yonetici().durum_ozeti()
+
+    @uc()
+    def flaresolverr_kur(self) -> bool:
+        ozet = self._fs().yonetici().durum_ozeti()
+        if not ozet["kurulabilir"]:
+            raise UcHatasi(ozet["metin"] or "FlareSolverr bu kurulumda indirilemez.")
+        if ozet["durum"] == "kuruluyor" or self._fs_iptal is not None:
+            raise UcHatasi("FlareSolverr kurulumu zaten sürüyor.")
+        iptal = threading.Event()
+        self._fs_iptal = iptal
+        self._kopru.yay("flaresolverr_ilerleme", {"oran": None, "metin": "Bağlanılıyor…"})
+        from ..qt.workers import run_bg
+        # Genel havuz (arşiv indirmesiyle aynı gerekçe): uzun iş havuzu bölüm
+        # indirmeleriyle dolu olabilir.
+        run_bg(self._flaresolverr_kur_is, iptal)
+        return True
+
+    def _flaresolverr_kur_is(self, iptal: threading.Event) -> None:
+        fs = self._fs()
+        son = [0.0]
+
+        def ilerleme(inen: int, toplam: int) -> None:
+            simdi = time.monotonic()
+            if inen < toplam and simdi - son[0] < ILERLEME_ARALIGI:
+                return
+            son[0] = simdi
+            self._kopru.yay("flaresolverr_ilerleme", {
+                "oran": min(1.0, inen / toplam) if toplam else None,
+                "metin": f"{mb(inen)} / {mb(toplam)} MB indirildi"
+                         + (" — doğrulanıp açılıyor…" if toplam and inen >= toplam else "")})
+
+        try:
+            kurulum = fs.yonetici().kur(ilerleme=ilerleme, iptal=iptal)
+        except fs.IptalEdildi:
+            self._durum("FlareSolverr indirmesi iptal edildi.")
+        except Exception as exc:
+            self._durum(f"FlareSolverr kurulamadı: {exc}", "hata")
+        else:
+            self._durum(f"FlareSolverr {kurulum.surum or fs.SURUM} kuruldu "
+                        "(SHA-256 doğrulandı).", "tamam")
+        finally:
+            self._fs_iptal = None
+            self._kopru.yay("flaresolverr_ilerleme", {"bitti": True})
+
+    @uc()
+    def flaresolverr_iptal(self) -> bool:
+        if self._fs_iptal is None:
+            return False
+        self._fs_iptal.set()
+        self._kopru.yay("flaresolverr_ilerleme", {"oran": None, "metin": "İptal ediliyor…"})
+        return True
+
+    @uc()
+    def flaresolverr_baslat(self) -> bool:
+        """Elle başlat: "Durdur" tercihini ve hata bekleme süresini sıfırlar."""
+        from ..qt.workers import run_bg
+        run_bg(self._flaresolverr_baslat_is)
+        return True
+
+    def _flaresolverr_baslat_is(self) -> None:
+        yonetici = self._fs().yonetici()
+        adres = yonetici.baslat(bekle=True, elle=True)
+        if adres:
+            self._durum(f"Yerel FlareSolverr çalışıyor: {adres}", "tamam")
+        else:
+            ozet = yonetici.durum_ozeti()
+            self._durum("FlareSolverr başlatılamadı: " + (ozet["hata"] or ozet["metin"]), "hata")
+
+    @uc()
+    def flaresolverr_durdur(self) -> bool:
+        """Elle durdur: bu oturumda CF zinciri onu kendiliğinden açmaz."""
+        from ..qt.workers import run_bg
+        run_bg(lambda: self._fs().yonetici().durdur(elle=True))
         return True
 
     # ── AniList ─────────────────────────────────────────────────────────────
@@ -579,9 +817,15 @@ class AyarlarUclari(QObject):
         return True
 
     def arsiv_indirmeyi_durdur(self) -> None:
-        """Pencere kapanırken: süren arşiv indirmesini iptal et."""
+        """Pencere kapanırken: süren arşiv (ve FlareSolverr) indirmesini iptal et.
+
+        FlareSolverr de burada: kapanış bu tek kancayı çağırıyor; yarım
+        indirme geçici klasörüyle silinir, önceki kurulum yerinde kalır.
+        """
         if self._arsiv_iptal is not None:
             self._arsiv_iptal.set()
+        if self._fs_iptal is not None:
+            self._fs_iptal.set()
 
     @uc()
     def arsiv_klasor_sec(self) -> bool:

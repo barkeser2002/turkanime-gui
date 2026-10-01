@@ -1,8 +1,10 @@
 /* Ayarlar: oynatma/indirme, bölüm listesi, çevrimdışı arşiv, kaynak
- * oturumları, kimlik bağışı, bağlantı, AniList, Discord ve bakım.
+ * oturumları, kimlik bağışı, veri bağışı, bağlantı, AniList, Discord ve bakım.
  *
  * Form alanları "Kaydet" ile yazılıyor (değişiklik olunca alttaki çubuk
- * beliriyor). Discord anahtarı ve arşiv/çerez/bağış eylemleri anlık.
+ * beliriyor). Discord anahtarı ve arşiv/çerez/bağış eylemleri anlık. Veri
+ * bağışı anahtarı bilerek formda DEĞİL: "Kaydet" onu onaysız açamasın; açmak
+ * Python'un onay penceresinden geçer (gui/web/veri_bagisi.py).
  */
 (function () {
   "use strict";
@@ -16,6 +18,7 @@
     ["arsiv", "Çevrimdışı Arşiv", "kutuphane"],
     ["oturum", "Kaynak Oturumları", "tamam"],
     ["bagis", "Kimlik Bağışı", "kalp"],
+    ["veri", "Veri Bağışı", "kivilcim"],
     ["baglanti", "Bağlantı", "dis"],
     ["anilist", "AniList", "yildiz"],
     ["bakim", "Discord ve Bakım", "ayar"]
@@ -54,6 +57,11 @@
       TA.dinle("ayar_durum", function (v) { self.durumYaz(v.mesaj, v.tur); });
       TA.dinle("ayar_cerez", function (v) { self.cerezGoster(v); });
       TA.dinle("ayar_bagis", function (v) { self.bagisGoster(v); });
+      // Onay cevabı ve göndericinin sayaçları (arka plandan) bu olayla gelir.
+      TA.dinle("ayar_veri_bagisi", function (v) {
+        self.veriGoster(v);
+        if (v.mesaj) self.durumYaz(v.mesaj, v.tur);
+      });
       TA.dinle("ayar_anilist", function (v) { self.anilistGoster(v); });
       TA.dinle("arsiv_ilerleme", function (v) { self.arsivIlerleme(v); });
       TA.dinle("arsiv_sonuc", function (v) {
@@ -61,6 +69,10 @@
         self.arsivSonucYaz(v.mesaj, v.tur);
         self.arsivTazele();
       });
+      // Yerel FlareSolverr CF zincirinde kendiliğinden de başlıyor: durum
+      // olaydan geliyor, düğmeler ona göre.
+      TA.dinle("flaresolverr_durum", function (v) { self.fsSon = v; self.fsGoster(v); });
+      TA.dinle("flaresolverr_ilerleme", function (v) { self.fsIlerleme(v); });
     },
 
     goster: function () {
@@ -156,12 +168,16 @@
       var aday = this.girdi("aday", { tip: "number", min: 1, max: 30 });
 
       this.cerezEl = h("div.oturum-durumu");
+      // "Erişimi aç" oturumları; liste js/erisim.js'te çiziliyor.
+      this.erisimEl = h("div.erisim-oturumlari");
       this.bagisEl = h("p.ipucu");
       this.bagisDugme = this.dugme("Bağışımı geri çek", "kapat", function () { self.bagisGeriCek(); });
       this.anilistEl = h("div.oturum-durumu");
       this.secretIpucu = h("p.ipucu");
       this.discordEl = h("p.ipucu");
       this.arsivKur();
+      this.veriKur(v.veri_bagisi || {});
+      this.fsKur();
 
       TA.bosalt(this.govde);
       TA.ekle(this.govde, [
@@ -196,6 +212,9 @@
               TA.cagir("cerez_temizle").then(function (c) { self.cerezGoster(c); self.durumYaz("Çerez temizlendi."); },
                 function (e) { self.durumYaz("Temizlenemedi: " + e.message, "hata"); });
             })),
+          h("div.alt-baslik", null, "Erişim oturumları (bot doğrulaması)"),
+          h("p.ipucu", null, "“Erişimi aç” ile bot doğrulamasını uygulamanın içindeki tarayıcıda geçtiğin kaynaklar. Oturum (çerezler + o tarayıcının kimliği) kaynağın istekleri doğrulamaya takılmasın diye saklanır; süresi dolunca site yeniden doğrulama isteyebilir."),
+          this.erisimEl,
           h("div.alt-baslik", null, "OpenAnime oturumu"),
           this.satir("Token", this.girdi("openani_token", { tip: "password", yer: "token çerezi (opsiyonel)" })),
           this.satir("Refresh Token", this.girdi("openani_refresh", { tip: "password", yer: "refreshToken çerezi (opsiyonel)" }),
@@ -208,9 +227,14 @@
           this.bagisEl,
           h("div.dugme-satiri", null, this.bagisDugme)
         ]),
+        this.kart("veri", "Veri Bağışı", "Oynattığın bölümlerin kaydını projenin sunucusuna bağışla; arşiv, kullanıcıların ulaşabildiği kaynaklardan büyür. Kapalıyken hiçbir şey toplanmaz ya da gönderilmez. Açarken ne gönderildiğini anlatan bir onay penceresi çıkar; özellik yalnızca onu onaylarsan açılır.", [this.veriEl]),
         this.kart("baglanti", "Bağlantı", "Cloudflare korumalı siteler için.", [
-          this.satir("FlareSolverr", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
-            "Boş bırakılırsa yalnızca yerel QtWebEngine çözücü kullanılır.")
+          h("div.alt-baslik", null, "Yerel FlareSolverr"),
+          this.fsEl,
+          this.anahtar("flaresolverr_yerel", "Yerel FlareSolverr'ı kullan",
+            "Cloudflare engelinde istekler bu bilgisayardaki FlareSolverr'dan geçer (yalnızca 127.0.0.1). İlk engelde kendiliğinden başlar, uygulama kapanınca durur."),
+          this.satir("FlareSolverr adresi", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
+            "Kendi sunucunun adresini yazarsan yerel yerine o kullanılır. Varsayılan adres (projenin uzak sunucusu) yalnızca yerel FlareSolverr kullanılamazken denenir. Boş: uzak sunucu hiç kullanılmaz; yerel FlareSolverr ve yerleşik QtWebEngine çözücü yine çalışır.")
         ]),
         this.kart("anilist", "AniList Hesabı", "İzleme Listesi ve ilerleme senkronu için.", [
           this.anilistEl,
@@ -254,8 +278,11 @@
       this.secretIpucu.classList.toggle("uyari", !!v.anilist.sizan_uyari);
       this.discordEl.textContent = v.discord_metni;
       this.cerezGoster(v.cerez);
+      TA.erisimOturumlari(this.erisimEl);
       this.bagisGoster(v.bagis);
+      this.veriGoster(v.veri_bagisi || {});
       this.anilistGoster(v.anilist);
+      if (v.flaresolverr) { this.fsSon = v.flaresolverr; this.fsGoster(v.flaresolverr); }
     },
 
     formDegerleri: function () {
@@ -263,7 +290,8 @@
       var out = {};
       ["indirilenler", "paralel", "aday", "max_res", "dakika_hatirla", "izlerken_kaydet",
         "ilerlemeyi_sor", "aria2c", "izlendi_ikonu", "manuel_fansub", "flaresolverr",
-        "openani_token", "openani_refresh", "kimlik_paylas", "sunucu_adresi", "sunucu_anahtari"
+        "flaresolverr_yerel", "openani_token", "openani_refresh", "kimlik_paylas",
+        "sunucu_adresi", "sunucu_anahtari"
       ].forEach(function (alan) {
         var el = self.alanlar[alan];
         if (!el) return;
@@ -314,6 +342,76 @@
       }, function (e) { self.durumYaz(e.message, "hata"); });
     },
 
+    // ── Veri bağışı ─────────────────────────────────────────────────────────
+    // Açıklama metni Python'dan (veri_bagisi.ACIKLAMA): onay penceresiyle aynı
+    // şeyi söylemeli, iki yerde ayrı yazılınca ayrışır.
+    veriKur: function (d) {
+      var self = this;
+      var satir = this.anahtar("", "Oynattığım bölümlerin verisini bağışla",
+        "Sunucu adresi ve API anahtarı Oturum Kimliği Bağışı bölümündeki alanlardan okunur.",
+        function (acik) { self.veriAyarla(acik); });
+      this.veriKutu = satir.querySelector("input");
+      this.veriDurumEl = h("p.ipucu.veri-durumu", { role: "status" });
+      this.veriSayacEl = h("dl.bilgi-tablosu.veri-sayac");
+      this.veriTemizleDugme = this.dugme("Kuyruğu temizle", "kapat", function () { self.veriKuyrugunuTemizle(); });
+      this.veriEl = h("div.veri-paneli", null,
+        satir,
+        h("dl.bilgi-tablosu.metinli.veri-aciklama", null, (d.aciklama || []).map(function (a) {
+          return [h("dt", null, a.baslik), h("dd", null, a.metin)];
+        })),
+        this.veriDurumEl,
+        this.veriSayacEl,
+        h("div.dugme-satiri", null, this.veriTemizleDugme));
+    },
+
+    veriGoster: function (d) {
+      if (!this.veriKutu || !d) return;
+      this.veriSon = d;
+      // Onay penceresi açıkken anahtar "açık" görünür ama kilitli: cevap
+      // gelene kadar hiçbir şey açılmadı, ikinci tık ikinci pencere açmasın.
+      this.veriKutu.checked = !!(d.acik || d.bekliyor);
+      this.veriKutu.disabled = !!d.bekliyor;
+      this.veriDurumEl.textContent = d.bekliyor
+        ? "Onay penceresi açık — onaylamadan hiçbir şey açılmaz ya da gönderilmez."
+        : (d.metin || "");
+      this.veriDurumEl.classList.toggle("uyari", !!(d.acik && d.sebep));
+      this.veriDurumEl.classList.toggle("tamam", !!(d.acik && !d.sebep));
+      TA.bosalt(this.veriSayacEl);
+      TA.ekle(this.veriSayacEl, [
+        h("dt", null, "Gönderilen"),
+        h("dd", { dataset: { sayac: "gonderilen" } },
+          TA.sayi(d.gonderilen || 0) + (d.son_gonderim ? " (son: " + d.son_gonderim + ")" : "")),
+        h("dt", null, "Bekleyen"),
+        h("dd", { dataset: { sayac: "bekleyen" } },
+          TA.sayi(d.bekleyen || 0) + (d.bekleme ? " — sonraki deneme " + d.bekleme : "")),
+        h("dt", null, "Düşürülen"),
+        h("dd", { dataset: { sayac: "dusurulen" } }, TA.sayi(d.dusurulen || 0)),
+        h("dt", null, "Son hata"),
+        h("dd", { dataset: { sayac: "son_hata" } },
+          d.son_hata ? (d.son_hata_zamani ? d.son_hata_zamani + " — " : "") + d.son_hata : "—")
+      ]);
+      this.veriTemizleDugme.disabled = !d.bekleyen;
+    },
+
+    veriAyarla: function (acik) {
+      var self = this;
+      TA.cagir("veri_bagisi_ayarla", { acik: acik }).then(function (d) {
+        self.veriGoster(d);
+        if (d.mesaj) self.durumYaz(d.mesaj, d.tur);
+      }, function (e) {
+        self.durumYaz(e.message, "hata");
+        if (self.veriSon) self.veriGoster(self.veriSon);       // anahtar eski hâline
+      });
+    },
+
+    veriKuyrugunuTemizle: function () {
+      var self = this;
+      TA.cagir("veri_bagisi_temizle").then(function (d) {
+        self.veriGoster(d);
+        self.durumYaz(d.mesaj, d.tur);
+      }, function (e) { self.durumYaz(e.message, "hata"); });
+    },
+
     anilistGoster: function (a) {
       if (!this.anilistEl) return;
       TA.bosalt(this.anilistEl);
@@ -324,6 +422,78 @@
     anilistGiris: function () {
       var self = this;
       TA.cagir("anilist_giris", this.anilistDegerleri()).catch(function (e) { self.durumYaz(e.message, "hata"); });
+    },
+
+    // ── Yerel FlareSolverr ──────────────────────────────────────────────────
+    // Durum: kurulu_degil / durdu / basliyor / calisiyor / hata / eksik /
+    // kuruluyor / desteklenmiyor. Kur/Başlat/Durdur anlık (Kaydet beklemez).
+    fsKur: function () {
+      var self = this;
+      this.fsRozet = h("span.rozet");
+      this.fsMetin = h("span.secilebilir");
+      this.fsSurum = h("dd", null, "—");
+      this.fsAdres = h("dd.secilebilir", null, "—");
+      this.fsYer = h("dd.secilebilir", null, "—");
+      this.fsGunluk = h("dd.secilebilir", null, "—");
+      this.fsCubuk = h("i");
+      this.fsIlerlemeMetni = h("span");
+      this.fsIptal = this.dugme("İptal", "kapat", function () { TA.cagir("flaresolverr_iptal"); });
+      this.fsIlerlemeEl = h("div.fs-ilerleme", { hidden: true },
+        h("div.fs-cubuk", null, this.fsCubuk),
+        h("div.fs-ilerleme-satir", null, this.fsIlerlemeMetni, this.fsIptal));
+      function eylem(ad, bekleyen) {
+        return function () {
+          TA.cagir(ad).then(function () { if (bekleyen) self.fsMetin.textContent = bekleyen; },
+            function (e) { self.durumYaz(e.message, "hata"); });
+        };
+      }
+      this.fsKurDugme = this.dugme("Kur", "indir", eylem("flaresolverr_kur", "İndirme başlıyor…"), "birincil");
+      this.fsBaslat = this.dugme("Başlat", "oynat", eylem("flaresolverr_baslat", "Başlatılıyor…"));
+      this.fsDurdur = this.dugme("Durdur", "kapat", eylem("flaresolverr_durdur"));
+      this.fsEl = h("div.fs-paneli", null,
+        h("div.oturum-durumu", null, this.fsRozet, this.fsMetin),
+        h("dl.bilgi-tablosu", null,
+          h("dt", null, "Sürüm"), this.fsSurum, h("dt", null, "Adres"), this.fsAdres,
+          h("dt", null, "Konum"), this.fsYer, h("dt", null, "Günlük"), this.fsGunluk),
+        this.fsIlerlemeEl,
+        h("div.dugme-satiri", null, this.fsKurDugme, this.fsBaslat, this.fsDurdur));
+      if (this.fsSon) this.fsGoster(this.fsSon);
+    },
+
+    fsGoster: function (s) {
+      if (!this.fsEl || !s) return;
+      var renk = { calisiyor: ".yesil", basliyor: ".mavi", kuruluyor: ".mavi", hata: ".turuncu", eksik: ".turuncu" }[s.durum] || "";
+      this.fsRozet.className = "rozet" + renk.replace(".", " ");
+      this.fsEl.dataset.durum = s.durum;
+      TA.bosalt(this.fsRozet);
+      TA.ekle(this.fsRozet, [TA.ikon(s.durum === "calisiyor" ? "tamam" : s.durum === "hata" || s.durum === "eksik" ? "uyari" : "bilgi"), s.etiket]);
+      this.fsMetin.textContent = s.metin || "";
+      this.fsSurum.textContent = s.surum ? s.surum + (s.guncel || !s.kurulu ? "" : " (güncel sürüm " + s.sabit_surum + ")") : "—";
+      this.fsAdres.textContent = s.adres || "—";
+      this.fsYer.textContent = s.kurulu ? s.yol + (s.gomulu ? " (uygulamayla geldi)" : "") : "—";
+      this.fsGunluk.textContent = s.gunluk || "—";
+      var mesgul = s.durum === "kuruluyor";
+      var guncelle = s.kurulu && !s.gomulu && !s.guncel;
+      this.fsKurDugme.hidden = !(s.kurulabilir && (!s.kurulu || guncelle));
+      TA.bosalt(this.fsKurDugme);
+      TA.ekle(this.fsKurDugme, [TA.ikon("indir"), guncelle ? "Güncelle (" + s.sabit_surum + ")" : "Kur (~" + s.boyut_mb + " MB)"]);
+      this.fsKurDugme.disabled = mesgul;
+      this.fsBaslat.hidden = !s.kurulu;
+      this.fsDurdur.hidden = !s.kurulu;
+      this.fsBaslat.disabled = mesgul || s.durum === "calisiyor" || s.durum === "basliyor" || s.durum === "eksik";
+      this.fsDurdur.disabled = !(s.durum === "calisiyor" || s.durum === "basliyor");
+      if (!mesgul) this.fsIlerlemeEl.hidden = true;
+    },
+
+    fsIlerleme: function (v) {
+      if (!this.fsIlerlemeEl || !v) return;
+      if (v.bitti) { this.fsIlerlemeEl.hidden = true; return; }
+      this.fsIlerlemeEl.hidden = false;
+      this.fsIlerlemeMetni.textContent = v.metin || "";
+      var cubuk = this.fsIlerlemeEl.querySelector(".fs-cubuk");
+      cubuk.classList.toggle("belirsiz", v.oran == null);
+      this.fsCubuk.style.width = v.oran == null ? "" : Math.round(v.oran * 100) + "%";
+      this.fsIptal.disabled = v.metin === "İptal ediliyor…";
     },
 
     // ── Arşiv ───────────────────────────────────────────────────────────────

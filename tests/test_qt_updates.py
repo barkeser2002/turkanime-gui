@@ -14,7 +14,8 @@ import pytest
 
 from turkanime_api.common import updater
 from turkanime_api.common.utils import get_os
-from turkanime_api.gui.qt.updates import UpdateDialog, UpdateService
+from turkanime_api.gui.qt.updates import UpdateService
+from turkanime_api.gui.web.pencereler import GuncellemePenceresi
 
 PAKET = b"sahte-guncelleme-paketi" * 64
 OZET = hashlib.sha256(PAKET).hexdigest()
@@ -294,43 +295,67 @@ def test_konumu_ac_indirilen_dosyanin_klasorunu_aciyor(tmp_path, monkeypatch, ay
     assert acilan == [str(tmp_path / "indirmelerim")]
 
 
-def test_bozuk_paket_kurulum_baslatmiyor(qtbot, tmp_path, local_server, ayarla):
-    """Özet uyuşmazsa diyalog kurulum talimatına GEÇMEMELİ."""
-    ayarla(indirilenler=str(tmp_path))
+def test_bozuk_paket_kurulum_baslatmiyor(qtbot, tmp_path, local_server, izole_ayarla,
+                                        soru_merkezi):
+    """Özet uyuşmazsa pencere kurulum talimatına GEÇMEMELİ."""
+    hedef = tmp_path / "indirilenler"
+    hedef.mkdir()
+    izole_ayarla(indirilenler=str(hedef))
     url = local_server(body=PAKET) + "turkanime-gui.exe"
 
     servis = UpdateService()
-    dialog = UpdateDialog(servis, _surum_kaydi(url, "f" * 64))
-    qtbot.addWidget(dialog)
+    pencere = GuncellemePenceresi(soru_merkezi, servis, _surum_kaydi(url, "f" * 64))
 
     with qtbot.waitSignal(servis.download_failed, timeout=10000):
-        dialog.btnDownload.click()
+        assert soru_merkezi.soru_eylem(pencere.soru.kimlik, "indir") is True
     qtbot.wait(100)
 
-    assert dialog.indirilen == "", "kurulum talimatı gösterilmemeli"
-    assert not dialog.btnOpen.isVisibleTo(dialog)
-    assert "SHA-256" in dialog.lblStatus.text()
-    assert os.listdir(tmp_path) == []
+    veri = pencere.soru.veri
+    assert pencere.indirilen == "", "kurulum talimatı gösterilmemeli"
+    assert veri["durum"] == "hata"          # sayfada: "Klasörü Aç" gizli, "Tekrar Dene"
+    assert veri["yol"] == ""
+    assert "SHA-256" in veri["metin"]
+    assert os.listdir(hedef) == []
 
 
-def test_diyalog_indirme_sonrasi_talimat_gosteriyor(qtbot, tmp_path, local_server,
-                                                    ayarla):
-    ayarla(indirilenler=str(tmp_path))
+def test_pencere_indirme_sonrasi_talimat_gosteriyor(qtbot, tmp_path, local_server,
+                                                   izole_ayarla, soru_merkezi):
+    izole_ayarla(indirilenler=str(tmp_path))
     url = local_server(body=PAKET) + "turkanime-gui.exe"
 
     servis = UpdateService()
-    dialog = UpdateDialog(servis, _surum_kaydi(url, OZET))
-    qtbot.addWidget(dialog)
-    assert "99.0.0" in dialog.lblInfo.text()
-    assert "Test sürümü" in dialog.txtChangelog.toPlainText()
+    pencere = GuncellemePenceresi(soru_merkezi, servis, _surum_kaydi(url, OZET))
+    veri = pencere.soru.veri
+    assert veri["yeni"] == "99.0.0" and veri["tarih"] == "2030-01-01"
+    assert veri["mevcut"] == servis.mevcut_surum
+    assert "Test sürümü" in veri["degisiklikler"]
 
     with qtbot.waitSignal(servis.download_ready, timeout=10000):
-        dialog.btnDownload.click()
+        soru_merkezi.soru_eylem(pencere.soru.kimlik, "indir")
     qtbot.wait(100)
 
-    assert dialog.indirilen.endswith("turkanime-gui.exe")
-    assert dialog.btnOpen.isVisibleTo(dialog)
-    assert dialog.indirilen in dialog.lblStatus.text()
+    assert pencere.indirilen.endswith("turkanime-gui.exe")
+    assert veri["durum"] == "tamam" and veri["yuzde"] == 100    # "Klasörü Aç" görünür
+    assert pencere.indirilen in veri["metin"]
+    assert veri["metin"].startswith("İndirildi ve doğrulandı.")
+
+
+def test_klasor_acilamazsa_yol_gosteriliyor(soru_merkezi, monkeypatch):
+    servis = UpdateService()
+    pencere = GuncellemePenceresi(soru_merkezi, servis, _surum_kaydi("https://ornek/p.exe"))
+    pencere.indirilen = "/indirilen/paket.exe"
+    monkeypatch.setattr(UpdateService, "konumu_ac", staticmethod(lambda yol: False))
+    assert soru_merkezi.soru_eylem(pencere.soru.kimlik, "klasor") is False
+    assert pencere.soru.veri["metin"] == "Klasör açılamadı. Dosya: /indirilen/paket.exe"
+
+
+def test_paket_yoksa_pencere_hatayi_gosteriyor(soru_merkezi):
+    """`indir` False dönüyor ama `download_failed` pencereye ulaşmış olmalı."""
+    servis = UpdateService()
+    pencere = GuncellemePenceresi(soru_merkezi, servis, {"version": "99.0.0", "platforms": {}})
+    assert soru_merkezi.soru_eylem(pencere.soru.kimlik, "indir") is False
+    assert pencere.soru.veri["durum"] == "hata"
+    assert "paketi yok" in pencere.soru.veri["metin"]
 
 
 def test_desteklenmeyen_platform_hata_yayiyor(qtbot):
@@ -351,20 +376,72 @@ def test_acilis_denetimleri_sessiz(main_window, qtbot, monkeypatch, ayarla):
     qtbot.wait(300)
 
     assert cagrilar == ["surum"]
-    assert main_window._update_dialog is None      # güncel: diyalog yok
-    assert main_window._req_dialog is None         # atlandı: sihirbaz yok
+    assert main_window._guncelleme_penceresi is None   # güncel: pencere yok
+    assert main_window._gereksinim_penceresi is None   # atlandı: sihirbaz yok
+    assert main_window.sorular.bekleyenler() == []
     assert main_window.discord.bagli is False      # pypresence yok sayıldı
 
 
-def test_ana_pencere_guncelleme_diyalogu_aciyor(main_window, qtbot):
+def test_ana_pencere_guncelleme_penceresi_aciyor(main_window, qtbot):
     main_window._on_update_available(_surum_kaydi("https://ornek/p.exe"))
-    assert isinstance(main_window._update_dialog, UpdateDialog)
+    assert isinstance(main_window._guncelleme_penceresi, GuncellemePenceresi)
 
     # İkinci sinyal ikinci pencere açmamalı (açılış + elle denetim çakışabilir).
-    ilk = main_window._update_dialog
+    ilk = main_window._guncelleme_penceresi
     main_window._on_update_available(_surum_kaydi("https://ornek/p.exe"))
-    assert main_window._update_dialog is ilk
+    assert main_window._guncelleme_penceresi is ilk
+    assert len(main_window.sorular.bekleyenler("guncelleme")) == 1
 
-    ilk.reject()
+    ilk.kapat()                                          # "Daha Sonra"
     qtbot.wait(50)
-    assert main_window._update_dialog is None
+    assert main_window._guncelleme_penceresi is None
+
+
+GUNCELLEME = "document.querySelector('[data-soru=guncelleme]')"
+
+
+def _dugme(etiket):
+    return f"[...{GUNCELLEME}.querySelectorAll('button')].find(b => b.textContent === '{etiket}')"
+
+
+def test_guncelleme_penceresi_sayfada_indiriyor(izole_ayarla, main_window, web, tmp_path,
+                                               local_server):
+    izole_ayarla(indirilenler=str(tmp_path))
+    url = local_server(body=PAKET) + "turkanime-gui.exe"
+    main_window._on_update_available(_surum_kaydi(url, OZET))
+    web.bekle("!!" + GUNCELLEME)
+    metin = web.js(GUNCELLEME + ".innerText")
+    assert "99.0.0" in metin and "Test sürümü" in metin and "2030-01-01" in metin
+    assert web.js(_dugme("Klasörü Aç") + ".hidden") is True
+    # Süren iş olabilir: dış tık kapatmıyor.
+    web.js(GUNCELLEME + ".parentElement.click()")
+    web.qtbot.wait(100)
+    assert web.js("!!" + GUNCELLEME)
+
+    web.js(_dugme("Güncellemeyi İndir") + ".click()")
+    web.bekle("!" + _dugme("Klasörü Aç") + ".hidden", timeout=10000)
+    pencere = main_window._guncelleme_penceresi
+    assert pencere.indirilen.endswith("turkanime-gui.exe")
+    assert pencere.indirilen in web.js(GUNCELLEME + ".querySelector('.soru-durum').innerText")
+    assert web.js(_dugme("Kapat") + " !== undefined")
+
+    web.js(_dugme("Kapat") + ".click()")
+    web.bekle("!" + GUNCELLEME)
+    web.qtbot.waitUntil(lambda: main_window._guncelleme_penceresi is None, timeout=5000)
+
+
+def test_guncelleme_penceresi_hata_ve_daha_sonra(izole_ayarla, main_window, web, tmp_path,
+                                                 local_server):
+    izole_ayarla(indirilenler=str(tmp_path))
+    url = local_server(body=PAKET) + "turkanime-gui.exe"
+    main_window._on_update_available(_surum_kaydi(url, "f" * 64))
+    web.bekle("!!" + GUNCELLEME)
+    web.js(_dugme("Güncellemeyi İndir") + ".click()")
+    web.bekle("!!" + _dugme("Tekrar Dene"), timeout=10000)
+    assert "SHA-256" in web.js(GUNCELLEME + ".querySelector('.soru-durum.hata').innerText")
+    assert web.js(_dugme("Tekrar Dene") + ".disabled") is False
+    assert web.js(_dugme("Klasörü Aç") + ".hidden") is True
+
+    web.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))")
+    web.bekle("!" + GUNCELLEME)
+    web.qtbot.waitUntil(lambda: main_window._guncelleme_penceresi is None, timeout=5000)

@@ -213,6 +213,64 @@ def _arsiv_yalitimi(request, monkeypatch, _arsiv_yalitim_koku, tmp_path_factory)
     animedepo.sifirla()
 
 
+_VERI_KOKU = {"yol": None, "oturum": None}
+_VERI_KOKU_KILIDI = threading.Lock()   # arka plan işleri de çağırıyor
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _veri_koku_mandali(tmp_path_factory):
+    """Veri kökü (ayarlar, geçmiş, kitaplık, önbellekler) yalnızca geçici kökte.
+
+    `veri_koku()` depodan çalışınca DEPO KÖKÜ, worktree'den ve paketten
+    çalışınca `~/Turkanime`. Yalıtılmasa ayar okuyan her test geliştiricinin
+    gerçek `ayarlar.json`'una bakar: sonuç o makinedeki ayara kalır, ayar yazan
+    test de gerçek dosyaya yazar (`preserved_*` yalnızca YAZIMI geri alıyor).
+    Ekran görüntüleri bu yüzden gerçek ayarlarla çekilmişti.
+
+    Mandal OTURUM boyu: test başına kurulan bir mandal testler arasındaki
+    boşlukta kalkıyor ve önceki testin açtığı web sayfasının arka plan çağrısı
+    (`istatistik` → `kutuphane.seri_sayisi` → `Dosyalar()`) tam o boşlukta
+    depoya `ayarlar.json` yazıyordu (ölçüldü). Test başına boş klasörü
+    `_veri_koku_yalitimi` veriyor; aradaki boşlukta oturum klasörü kullanılır.
+
+    Kural öbür yalıtımlarla aynı: kök pytest'in geçici klasörü altındaysa
+    (`izole_ev`, `.git`'li `tmp_path`'e `chdir`, `TURKANIME_VERI_DIZINI`)
+    dokunulmaz.
+    """
+    from turkanime_api.cli import dosyalar
+
+    asil = dosyalar.veri_koku
+    gecici_kok = tmp_path_factory.getbasetemp().resolve()
+    _VERI_KOKU["oturum"] = tmp_path_factory.mktemp("veri_koku_oturum")
+
+    def _yalniz_gecici():
+        yol = asil()
+        try:
+            Path(yol).resolve().relative_to(gecici_kok)
+            return yol
+        except ValueError:
+            with _VERI_KOKU_KILIDI:
+                if _VERI_KOKU["yol"] is None:
+                    return _VERI_KOKU["oturum"]
+                if _VERI_KOKU["yol"] == "tembel":
+                    _VERI_KOKU["yol"] = tmp_path_factory.mktemp("veri_koku")
+                return _VERI_KOKU["yol"]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(dosyalar, "veri_koku", _yalniz_gecici)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _veri_koku_yalitimi(_veri_koku_mandali):
+    """Her teste kendi boş veri kökü (ilk kullanımda yaratılır)."""
+    with _VERI_KOKU_KILIDI:
+        _VERI_KOKU["yol"] = "tembel"
+    yield
+    with _VERI_KOKU_KILIDI:
+        _VERI_KOKU["yol"] = None
+
+
 @pytest.fixture(autouse=True)
 def _gorsel_onbellek_yalitimi(monkeypatch, tmp_path_factory):
     """Kapak önbelleği test başına boş ve geçici klasörde.
@@ -307,12 +365,17 @@ def _cevresel_taban(pytestconfig):
     if pytestconfig.getoption("--network"):
         yield
         return
+    from turkanime_api.common import flaresolverr as fs_mod
     from turkanime_api.common import requirements as req_mod
     from turkanime_api.common import updater as upd_mod
 
     mp = pytest.MonkeyPatch()
     mp.setattr(upd_mod, "surum_bilgisi_getir", lambda *a, **k: {})
     mp.setattr(req_mod, "eksik_araclar", lambda *a, **k: [])
+    mp.setattr(req_mod, "onerilen_eksikler", lambda *a, **k: [])
+    # Geliştiricinin `bin/flaresolverr`'ı ya da veri kökündeki kurulumu
+    # "ayara bak" kipindeki her CFSession'a gerçek FlareSolverr açtırmasın.
+    mp.setattr(fs_mod, "kurulumu_bul", lambda *a, **k: None)
     try:
         yield
     finally:
@@ -330,11 +393,14 @@ def _stub_cevresel_servisler(request, monkeypatch):
     if "network" in request.keywords:
         return
     import turkanime_api.gui.qt.discord as discord_mod
+    from turkanime_api.common import flaresolverr as fs_mod
     from turkanime_api.common import requirements as req_mod
     from turkanime_api.common import updater as upd_mod
 
     monkeypatch.setattr(upd_mod, "surum_bilgisi_getir", lambda *a, **k: {})
     monkeypatch.setattr(req_mod, "eksik_araclar", lambda *a, **k: [])
+    monkeypatch.setattr(req_mod, "onerilen_eksikler", lambda *a, **k: [])
+    monkeypatch.setattr(fs_mod, "kurulumu_bul", lambda *a, **k: None)
     monkeypatch.setattr(discord_mod, "KULLANILABILIR", False)
 
 
@@ -351,11 +417,12 @@ def main_window(qtbot):
 
     apply_theme(QApplication.instance())
     win = MainWindow()
-    # Süren indirme varken kapanış modal soru açıyor; teardown asla beklememeli.
+    # Süren indirme varken kapanış sayfada soru açıyor ve pencere cevaba kadar
+    # kapanmıyor; teardown asla beklememeli (cevap eşzamanlı "Evet").
     # `yield`'den ÖNCE: pytest-qt `addWidget` ile kaydedilen pencereyi
     # fixture sonlandırıcılarından önce (kendi teardown kancasında) kapatıyor.
     # Soruyu sınayan testler bunu kendi `monkeypatch`'leriyle eziyor.
-    win._kapanis_onayi = lambda _adet: True
+    win._kapanis_onayi = lambda _adet, geri: geri(True)
     qtbot.addWidget(win)
     win.show()
     yield win
@@ -488,6 +555,37 @@ def web(qtbot, main_window):
     return WebSurucu(qtbot, main_window.web).hazir()
 
 
+# ── Soru pencereleri (gui.web.sorular) ───────────────────────────────────────
+class SoruKaydi(list):
+    """Sorulan her pencere (`Soru`), sorulma sırasıyla; ``kayit("ilerleme")``
+    yalnızca o türdekiler. ``soru.veri`` pencerenin gördüğü her şey."""
+
+    def __call__(self, tur: str) -> list:
+        return [s for s in self if s.tur == tur]
+
+
+@pytest.fixture
+def sorulanlar(monkeypatch):
+    """`SoruMerkezi.sor`'u kaydeden casus; sorular gerçekten sorulur.
+
+    Eski diyalog testleri `Dialog.exec`'i sahteleyip "açıldı mı?"ya
+    bakıyordu; web penceresi kimseyi bekletmiyor, yalnızca kaydediliyor.
+    Cevap sayfasız da verilebilir: ``merkez.cevapla(soru.kimlik, cevap)``.
+    """
+    from turkanime_api.gui.web.sorular import SoruMerkezi
+
+    kayit = SoruKaydi()
+    asil = SoruMerkezi.sor
+
+    def sor(self, *args, **kwargs):
+        soru = asil(self, *args, **kwargs)
+        kayit.append(soru)
+        return soru
+
+    monkeypatch.setattr(SoruMerkezi, "sor", sor)
+    return kayit
+
+
 # ── Köprü uçları (web sayfası olmadan) ───────────────────────────────────────
 class SahteKopru:
     """`Kopru.yay` olaylarını kaydeden ikame (her thread'den güvenli)."""
@@ -507,6 +605,20 @@ class SahteKopru:
     def son(self, ad: str):
         olaylar = self.hepsi(ad)
         return olaylar[-1] if olaylar else None
+
+
+@pytest.fixture
+def soru_merkezi(qtbot):
+    """Sayfasız `SoruMerkezi`: sayfa bağlı sayılır, olaylar ``merkez.olaylar``da
+    (`SahteKopru`). Cevaplar ``merkez.cevapla`` / ``merkez.soru_eylem`` ile."""
+    from turkanime_api.gui.web.sorular import SoruMerkezi
+
+    kopru = SahteKopru()
+    merkez = SoruMerkezi(kopru)
+    merkez.bagli = True
+    merkez.olaylar = kopru
+    yield merkez
+    merkez.hepsini_bitir()
 
 
 @pytest.fixture
@@ -651,6 +763,21 @@ def ayarla(preserved_settings):
     Amaç ayarın GERÇEKTEN okunduğunu doğrulamak: `prefs.oku`'yu sahtelemek
     "ayar okunuyor mu?" sorusunu yanıtlamaz, yalnızca sahteyi test ederdi.
     """
+    from turkanime_api.cli.dosyalar import Dosyalar
+
+    def _ayarla(**degerler):
+        Dosyalar().set_ayar(ayar_list=degerler)
+
+    return _ayarla
+
+
+@pytest.fixture
+def izole_ayarla(izole_ev):
+    """`ayarla`nın `izole_ev`deki karşılığı: ayar yine gerçekten diske yazılıp
+    okunuyor, ama geçici kökte. Veri kökü `.git` klasörü olmayan yerde (git
+    worktree'sinde `.git` bir dosya) kullanıcının evine düşüyor ve aynı
+    makinede koşan iki test paketi aynı `ayarlar.json`'u yedekleyip geri
+    yüklemeye çalışıyordu."""
     from turkanime_api.cli.dosyalar import Dosyalar
 
     def _ayarla(**degerler):

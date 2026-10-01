@@ -17,7 +17,7 @@ Bulunan üç somut kusur:
 """
 import pytest
 
-from turkanime_api.gui.qt import katki_dialog as kd
+from turkanime_api.gui.web import katki as kd
 
 
 # Sunucudaki beyaz liste (`api.KAYNAK_CEREZLERI` anahtarları, `_refresh` hariç).

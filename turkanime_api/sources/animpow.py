@@ -80,6 +80,10 @@ except ImportError:  # pragma: no cover - kütüphane yoksa düz requests'e dü�
     import requests as _http  # type: ignore[no-redef]
     _HAS_CURL = False
 
+# Kullanıcının "Erişimi aç"la geçtiği bot doğrulaması (çerez + tarayıcı
+# kimliği); kayıt yoksa sarmalayıcı istekleri olduğu gibi geçirir.
+from ..common import oturumlar
+
 
 log = logging.getLogger(__name__)
 
@@ -188,10 +192,10 @@ def _yeni_oturum():
     if _HAS_CURL:
         # Cloudflare arkasında ama JS sınavı yok; curl_cffi'nin Chrome parmak
         # izi yine de düz istemciden daha az dikkat çekiyor.
-        return _http.Session(impersonate="chrome131")
+        return oturumlar.oturumlu(_http.Session(impersonate="chrome131"))
     oturum = _http.Session()
     oturum.headers.update({"User-Agent": _YEDEK_UA})
-    return oturum
+    return oturumlar.oturumlu(oturum, curl=False)
 
 
 def _session():
