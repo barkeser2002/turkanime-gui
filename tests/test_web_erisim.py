@@ -61,7 +61,7 @@ def pencereyi_sahtele(uclar, cerezler=None):
     """`uclar._isci_kur`'u değiştir; kurulan işçiler listesi döner."""
     kurulan = []
 
-    def kur(hedef):
+    def kur(hedef, *, motor="gomulu"):
         isci = SahteIsci(lambda: uclar._kaydet(hedef, {
             "cerezler": [cf_cerezi()] if cerezler is None else cerezler,
             "user_agent": UA, "basliklar": {}}))
@@ -92,7 +92,7 @@ def test_penceresi_olmayan_kaynak_reddediliyor(uclar):
 def test_basari_kaydediyor_ve_bekleyen_her_istege_bildiriyor(uclar, qtbot):
     kurulan = []
 
-    def kur(hedef):
+    def kur(hedef, *, motor="gomulu"):
         isci = SahteIsci(None)
         isci.hedef = hedef
         kurulan.append(isci)
@@ -121,7 +121,8 @@ def test_iptal_ve_cerezsiz_basari(uclar):
     # Sonucu test veriyor: kendiliğinden bildiren sahte işçinin zamanlayıcısı
     # sonraki testin olay döngüsünde patlayıp onun veri köküne yazıyordu.
     kurulan = []
-    uclar._isci_kur = lambda hedef: kurulan.append(SahteIsci(None)) or kurulan[-1]
+    uclar._isci_kur = lambda hedef, *, motor="gomulu": (
+        kurulan.append(SahteIsci(None)) or kurulan[-1])
     uclar.erisim_ac("Deokwave", istek=1)
     uclar._iptal(oturumlar.erisim_hedefi("Deokwave"))
     son = uclar.kopru.son("erisim_sonuc")
@@ -279,7 +280,7 @@ def test_arama_sonuc_yokken_listede_dugme(main_window, web, monkeypatch):
 
     monkeypatch.setattr(adapters_mod, "SearchEngine", Motor)
     # Kullanıcı pencereyi doğrulamayı geçmeden kapatıyor.
-    main_window.erisim._isci_kur = lambda hedef: SahteIsci(
+    main_window.erisim._isci_kur = lambda hedef, *, motor="gomulu": SahteIsci(
         lambda: main_window.erisim._iptal(hedef))
     main_window.ara("frieren")
     dugme = ".arama-bos .hata-listesi li[data-kaynak='Deokwave'] .erisim-dugme"

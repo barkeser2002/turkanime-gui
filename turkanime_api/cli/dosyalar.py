@@ -215,6 +215,24 @@ class Dosyalar:
             "openani_token": "",
             "openani_refresh_token": "",
             "flaresolverr_url": "http://node-kyb.bariskeser.com:8191",
+            # "Erişimi aç" penceresinin motoru (bkz. common/tarayici_oturum):
+            #   "oto"    → undetected-chromedriver + makinedeki gerçek Chrome
+            #              ailesi tarayıcısı HAZIRSA onu, değilse gömülü
+            #              QtWebEngine'i kullan (varsayılan; selenium kurulu
+            #              olmayan normal pakette davranış bugünküyle aynı).
+            #   "gomulu" → her zaman gömülü QtWebEngine penceresi.
+            #   "chrome" → gerçek tarayıcı (hazır değilse yine gömülüye düşer).
+            # Bazı siteler QtWebEngine parmak izini tanıyıp doğrulamayı hiç
+            # çözdürmüyor; kullanıcının gerçek tarayıcısı çözdürüyor. İlke aynı:
+            # doğrulamayı KULLANICI çözer, biz yalnızca oturumu okuruz.
+            "erisim tarayici": "oto",
+            # Gerçek-tarayıcı motorunun kullanacağı Chrome ailesi tarayıcının
+            # yolu. Boş: PATH + bilinen kurulum yolları otomatik taranır
+            # (Chrome, Chromium, Brave, Edge, ungoogled-chromium, Chrome Beta).
+            # Belirli bir sürümü (ör. Chrome Beta ya da ungoogled-chromium)
+            # zorlamak isteyen buraya yolunu yazar; TURKANIME_TARAYICI ortam
+            # değişkeni de aynı işi görür ve önce ona bakılır.
+            "erisim tarayici yolu": "",
             "cookie_tutorial_dismissed": False,
             # Oturum kimliği bağışı — VARSAYILAN KAPALI ve öyle kalmalı.
             # Açıkken bile tek başına hiçbir şey göndermez: çerez alındığında
