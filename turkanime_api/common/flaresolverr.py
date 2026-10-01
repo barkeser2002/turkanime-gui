@@ -1356,6 +1356,26 @@ def _dizin_boyutu(dizin: Path) -> int:
     return toplam
 
 
+def _ciktiyi_utf8_yap() -> None:
+    """Çıktı UTF-8 değilse UTF-8'e çevir.
+
+    Windows'ta Python boruya ya da dosyaya yazarken sistemin kod sayfasını
+    (cp1252) kullanıyor; "←" ve ş/ı/ğ orada yok ve `print` süreci
+    `UnicodeEncodeError` ile düşürüyor. Ölçüldü: v10.3.1'in Windows derlemesi
+    FlareSolverr'ı paketleyemeden bu yüzden kırmızıya döndü. Gerçek konsol
+    zaten UTF-8 (PEP 528) ve dokunulmuyor; GitHub Actions günlükleri UTF-8
+    okuyor.
+    """
+    for akis in (sys.stdout, sys.stderr):
+        kodlama = str(getattr(akis, "encoding", "") or "").lower().replace("-", "").replace("_", "")
+        if kodlama == "utf8":
+            continue
+        try:
+            akis.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass            # yeniden yapılandırılamayan akış: olduğu gibi
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """``python -m turkanime_api.common.flaresolverr kur --platform P --hedef D``
 
@@ -1363,6 +1383,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     doğrulaması ve budama uygulamadakiyle AYNI kod. Başarısızlıkta 1 döner ve
     CI adımı kırmızıya döner — FlareSolverr'sız paket sessizce çıkmaz.
     """
+    _ciktiyi_utf8_yap()
     ayristirici = argparse.ArgumentParser(prog="python -m turkanime_api.common.flaresolverr")
     alt = ayristirici.add_subparsers(dest="komut", required=True)
     k = alt.add_parser("kur", help="sabit sürümü indir, doğrula, hedefe aç")
