@@ -27,12 +27,50 @@ except ImportError:
     import requests as _curl_requests  # type: ignore[no-redef]
     _HAS_CURL = False
 
+from ..common.hatalar import BotDogrulamasi, KaynakEngellendi, KaynakHatasi
+
 
 BASE_URL = "https://tranimaci.com"
 WAF_ENDPOINT = f"{BASE_URL}/__waf_challenge"
 HTTP_TIMEOUT = 20
 CHALLENGE_MARKER = "Security Verification"
 _MAX_NONCE = 5_000_000
+
+# Engel/doğrulama imzaları (küçük harf). İlk grup KULLANICININ geçebileceği
+# doğrulama: sitenin kendi SHA-256 PoW'u ("Security Verification"), Next.js ara
+# sayfası ("turn JavaScript on") ve standart Cloudflare JS challenge'ı ("Just a
+# moment") → `BotDogrulamasi` ("Erişimi aç"). İkinci grup düz IP/WAF engeli →
+# `KaynakEngellendi`.
+_DOGRULAMA_IMZALARI = (
+    "security verification", "turn javascript on", "just a moment",
+    "challenge-platform", "cf-chl", "enable javascript and cookies",
+)
+_ENGEL_IMZALARI = ("attention required", "sorry, you have been blocked", "cloudflare")
+
+
+def _blok_hatasi(r) -> Optional[KaynakHatasi]:
+    """Yanıt gerçek içerik değil de bir koruma kapısıysa uygun `KaynakHatasi`.
+
+    NEDEN: arama/bölüm/akış uçları eskiden koruma kapısını (202 ara sayfa,
+    PoW, Cloudflare) sessizce boş listeye çeviriyordu — kullanıcı "0 sonuç"
+    görüyordu, oysa site isteği geri çevirmişti. `None` = engel değil.
+    """
+    if r is None:
+        return None
+    status = getattr(r, "status_code", None)
+    try:
+        govde = (getattr(r, "text", "") or "")[:5000].lower()
+    except Exception:
+        govde = ""
+    if status == 202 or any(i in govde for i in _DOGRULAMA_IMZALARI):
+        return BotDogrulamasi(
+            "Tranimaci: site doğrulaması istiyor; “Erişimi aç” ile doğrulamayı "
+            "kendiniz geçebilir ya da başka kaynak seçebilirsiniz")
+    if status in (403, 429, 503) or any(i in govde for i in _ENGEL_IMZALARI):
+        return KaynakEngellendi(
+            "Tranimaci: Cloudflare engeli: site isteği geri çevirdi; biraz "
+            "sonra yeniden deneyin ya da başka kaynak seçin")
+    return None
 
 _session_lock = threading.Lock()
 _session = None
@@ -113,20 +151,27 @@ def _is_blocked(r) -> bool:
     Site iki katmanlı: önce HTTP 202 + "JavaScript'i açın" ara sayfası, sonra
     SHA-256 "Security Verification" PoW'u. İkisi de gerçek içerik değildir.
     """
-    if r.status_code == 202:
+    if r.status_code in (202, 403, 429, 503):
         return True
-    head = r.text[:5000]
-    return CHALLENGE_MARKER in head or "turn JavaScript on" in head
+    head = r.text[:5000].lower()
+    return any(i in head for i in _DOGRULAMA_IMZALARI + _ENGEL_IMZALARI)
 
 
-def _request(method: str, path: str, **kwargs):
+def _request(method: str, path: str, tarayici: bool = True, **kwargs):
     """Koruma kapılarını tolere eden GET/POST.
 
     Sıra: (1) ucuz curl_cffi, (2) Python tarafı SHA-256 PoW çözümü,
-    (3) hâlâ engelliyse QtWebEngine (gerçek tarayıcı) ile çöz.
+    (3) ``tarayici`` ise ve hâlâ engelliyse QtWebEngine (gerçek tarayıcı).
 
     (3) gerekli çünkü site JS tabanlı bir ön kapı ekledi; bu kapı Python'da
     çözülemiyor, ancak gerçek bir tarayıcıda kendiliğinden geçiliyor.
+
+    ``tarayici=False``: QtWebEngine basamağını atla. ARAMA bunu kullanır:
+    arama bütün kaynaklara AYNI ANDA dağılıyor; engelli tek bir kaynak için
+    gömülü tarayıcıyı ayağa kaldırmak (yerel FlareSolverr/Qt, in-sandbox 60+
+    sn) tüm aramayı bekletiyordu. Tarayıcı devri bölüm/akış çözümüne kalsın —
+    orada kullanıcı tek kaynak seçmiş olur. Engel yine `_blok_hatasi` ile
+    kullanıcıya bildiriliyor ("Erişimi aç").
     """
     global _session_solved_at
     sess = _get_session()
@@ -141,7 +186,7 @@ def _request(method: str, path: str, **kwargs):
             r = sess.request(method, url, **kwargs)
 
     # (3) Hâlâ kapıdaysak gerçek tarayıcıya devret (yalnızca GET destekleniyor)
-    if method.upper() == "GET" and _is_blocked(r):
+    if tarayici and method.upper() == "GET" and _is_blocked(r):
         browser_resp = _browser_get(url)
         if browser_resp is not None:
             return browser_resp
@@ -216,11 +261,19 @@ def search_tranimaci(query: str, limit: int = 20) -> List[Tuple[str, str]]:
     # (`&` yeni parametre, `#` parça başlatıyor); "Steins;Gate #0" da kesiliyordu.
     q = quote(query.strip(), safe="")
     try:
-        r = _request("GET", f"/arama?q={q}")
-        if r.status_code != 200 or CHALLENGE_MARKER in r.text[:5000]:
+        # Arama tarayıcı basamağını atlar (bkz. `_request`): engelli tek
+        # kaynak bütün aramayı bekletmesin, engel yine hata olarak bildirilir.
+        r = _request("GET", f"/arama?q={q}", tarayici=False)
+        hata = _blok_hatasi(r)
+        if hata is not None:
+            # Koruma kapısı: boş liste "bulamadım" diye yalan söylemesin.
+            raise hata
+        if r.status_code != 200:
             return []
         results = _parse_search_html(r.text)
         return results[:limit]
+    except KaynakHatasi:
+        raise
     except Exception:
         return []
 
@@ -235,7 +288,10 @@ def get_anime_episodes(slug: str) -> List[Tuple[str, str]]:
     """
     try:
         r = _request("GET", f"/anime/{slug}")
-        if r.status_code != 200 or CHALLENGE_MARKER in r.text[:5000]:
+        hata = _blok_hatasi(r)
+        if hata is not None:
+            raise hata
+        if r.status_code != 200:
             return []
         html = r.text
         episodes: List[Tuple[str, str]] = []
@@ -251,6 +307,8 @@ def get_anime_episodes(slug: str) -> List[Tuple[str, str]]:
         episodes.sort(key=lambda x: int(re.search(r'-(\d+)-bolum$', x[0]).group(1))
                                    if re.search(r'-(\d+)-bolum$', x[0]) else 0)
         return episodes
+    except KaynakHatasi:
+        raise
     except Exception:
         return []
 
@@ -265,7 +323,10 @@ def get_episode_streams(episode_slug: str) -> List[Dict[str, str]]:
     """
     try:
         r = _request("GET", f"/video/{episode_slug}")
-        if r.status_code != 200 or CHALLENGE_MARKER in r.text[:5000]:
+        hata = _blok_hatasi(r)
+        if hata is not None:
+            raise hata
+        if r.status_code != 200:
             return []
         html = r.text
         # .mp4 URL'lerini bul - quality URL içinde
@@ -287,6 +348,8 @@ def get_episode_streams(episode_slug: str) -> List[Dict[str, str]]:
                     "referer": BASE_URL + "/",
                 })
         return streams
+    except KaynakHatasi:
+        raise
     except Exception:
         return []
 
