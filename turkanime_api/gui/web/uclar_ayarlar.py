@@ -76,6 +76,7 @@ ALANLAR = {
     "manuel_fansub": "manuel fansub",
     "flaresolverr": "flaresolverr_url",
     "flaresolverr_yerel": "flaresolverr_yerel",
+    "flaresolverr_oto": "flaresolverr otomatik kur",
     "erisim_motoru": "erisim tarayici",
     "erisim_tarayici_yolu": "erisim tarayici yolu",
     "openani_token": "openani_token",
@@ -88,7 +89,7 @@ _METIN = ("indirilenler", "flaresolverr", "erisim_tarayici_yolu", "openani_token
           "openani_refresh", "sunucu_adresi", "sunucu_anahtari")
 _MANTIKSAL = ("max_res", "dakika_hatirla", "izlerken_kaydet", "ilerlemeyi_sor",
               "aria2c", "izlendi_ikonu", "manuel_fansub", "kimlik_paylas",
-              "flaresolverr_yerel")
+              "flaresolverr_yerel", "flaresolverr_oto")
 _SAYI = {"paralel": (1, 10), "aday": (1, 30)}
 # Birkaç sabit seçenekten biri (dropdown). Değer kümeye girmezse ilki (varsayılan).
 _SECIM = {"erisim_motoru": ("oto", "gomulu", "chrome")}
@@ -295,7 +296,7 @@ class AyarlarUclari(QObject):
         # "flaresolverr_yerel" varsayılanlara yazılmıyor; yoksa AÇIK sayılır
         # (bkz. `cf_bypass.yerel_flaresolverr_ayari`).
         varsayilan = {"max_res": True, "dakika_hatirla": True, "izlendi_ikonu": True,
-                      "flaresolverr_yerel": True}
+                      "flaresolverr_yerel": True, "flaresolverr_oto": True}
         for alan in _MANTIKSAL:
             ham = ayarlar.get(ALANLAR[alan], varsayilan.get(alan, False))
             deger[alan] = bool(ham)

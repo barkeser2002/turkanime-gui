@@ -124,6 +124,20 @@ def yerel_flaresolverr_ayari() -> bool:
         return True
 
 
+def otomatik_flaresolverr_ayari() -> bool:
+    """Ayarlar'daki "Gerekince kendiliğinden indir" (anahtar yoksa AÇIK).
+
+    Yerel FlareSolverr pakette gelmiyor; eksikse ilk ihtiyaçta arka planda
+    iniyor (bkz. `flaresolverr.Yonetici.otomatik_kur`). Kotası dar kullanıcı
+    ya da gereksinim sihirbazında işareti kaldıran bunu kapatır.
+    """
+    try:
+        from turkanime_api.cli.dosyalar import salt_okunur_ayarlar
+        return bool(salt_okunur_ayarlar().get("flaresolverr otomatik kur", True))
+    except Exception:
+        return True
+
+
 class CFSession:
     """
     Cloudflare korumalı sitelere erişim için akıllı session yöneticisi.
@@ -510,7 +524,25 @@ class CFSession:
                 # basamak atlanır, uzak sunucuya da GİDİLMEZ — yerel örnek
                 # birazdan hazır, isteği üçüncü makineye taşımanın anlamı yok.
                 return "", True
+        elif self._yerel_flaresolverr:
+            self._otomatik_kurulumu_tetikle()
         return url, False
+
+    @staticmethod
+    def _otomatik_kurulumu_tetikle() -> None:
+        """Yerel FlareSolverr eksikse arka planda indirmeyi başlat (beklemez).
+
+        Bu istek eski yoldan sürer (ayardaki adres, sonra QtWebEngine);
+        kurulum bitince sonraki ihtiyaçta tembel başlatma yerel örneği açar.
+        Yönetici, otomatik kurulumu açan süreç (GUI) dışında hiçbir şey yapmaz.
+        """
+        if not otomatik_flaresolverr_ayari():
+            return
+        try:
+            from .flaresolverr import yonetici
+            yonetici().otomatik_kur()
+        except Exception as e:  # kurulum tetiklenemedi: istek etkilenmesin
+            print(f"[CF Bypass] FlareSolverr otomatik kurulumu başlatılamadı: {e}")
 
     def _try_flaresolverr(self, url: str, method: str = "GET", post_data: Optional[str] = None) -> Optional[requests.Response]:
         """FlareSolverr ile CF bypass dene.
@@ -839,6 +871,7 @@ __all__ = [
     "CHALLENGE_MARKERS",
     "flaresolverr_ayari",
     "yerel_flaresolverr_ayari",
+    "otomatik_flaresolverr_ayari",
     "get_cf_session",
     "reset_cf_session",
     "cf_get",

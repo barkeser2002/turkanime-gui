@@ -13,9 +13,11 @@ makinesinde, yalnızca 127.0.0.1'e bağlı olarak yapıyoruz.
 1. **Kurulum sabit sürümden.** Resmî GitHub sürüm varlığı (`SURUM`), bilinen
    boyut + SHA-256 ile doğrulanıyor; tutmazsa hiçbir şey yerleşmiyor. "latest"
    indirmek, yayımcının hesabını ele geçiren birinin istemcilere ikili
-   dağıtması demek olurdu. Yayın hattı (`release.yml`) paketlere gömerken de
-   AYNI kodu (`python -m turkanime_api.common.flaresolverr kur`) kullanıyor:
-   sürüm, adres ve özet tek yerde.
+   dağıtması demek olurdu. Paketlere GÖMÜLMÜYOR (Windows'ta +229 MB, Linux'ta
+   +265 MB'tı): GUI eksikse ilk ihtiyaçta arka planda bu kodla indirip açıyor
+   (`Yonetici.otomatik_kur`); elle kurulum ve `python -m
+   turkanime_api.common.flaresolverr kur` da aynı yoldan. Sürüm, adres ve
+   özet tek yerde.
 2. **Süreç yetim kalmaz.** Uygulama kapanırken durdurulur; çökerse de ölür:
    Linux'ta süreç bir kabuk bekçisinin altında koşuyor (PR_SET_PDEATHSIG +
    PR_SET_CHILD_SUBREAPER, bkz. `BEKCI_BETIGI`), Windows'ta bir iş nesnesinde
@@ -125,6 +127,17 @@ TEMBEL_BEKLEME = 45.0
 # Açılamayan FlareSolverr her istekte yeniden denenmesin (her deneme Chrome
 # açıp kapatıyor). Elle "Başlat" bu süreyi beklemez.
 YENIDEN_DENEME_ARALIGI = 300.0
+# Başarısız otomatik indirme (ağ, disk, özet) her Cloudflare engelinde yeniden
+# başlamasın: 230-265 MB'ı tekrar tekrar indirmek kullanıcının kotasını yer.
+# Ayarlar'daki "Kur" bu süreyi beklemez.
+OTOMATIK_YENIDEN_DENEME = 1800.0
+# Otomatik indirmenin durum bildirimleri (Ayarlar kartı) en sık bu aralıkla.
+OTOMATIK_ILERLEME_ARALIGI = 1.0
+# Kapanışta kesilen otomatik indirmenin geçici klasörünü silmesi için mühlet.
+OTOMATIK_KAPANIS_MUHLETI = 3.0
+# Öldürülen bir sürecin yarım bıraktığı kurulum klasörleri bu yaştan sonra
+# silinir (bir başka örneğin SÜREN kurulumuna dokunmamak için cömert).
+ESKI_GECICI_YASI = 6 * 3600.0
 # FlareSolverr her isteğe ayrı bir Chrome açıyor (~300 MB). Arama motoru
 # kaynakları paralel sorguladığı için beş kaynağın aynı anda duvara çarpması
 # beş Chrome demekti.
@@ -259,12 +272,14 @@ def gunluk_yolu() -> Path:
 
 
 def gomulu_dizinler() -> List[Path]:
-    """Uygulamayla gelen kopyanın aranacağı yerler, öncelik sırasıyla.
+    """Uygulamanın yanında duran kopyanın aranacağı yerler, öncelik sırasıyla.
 
-    Paketlenmiş GUI'de FlareSolverr exe'nin YANINDA (`<zip>/flaresolverr/`),
-    onefile arşivinin içinde DEĞİL: içinde olsaydı her açılışta ~800 MB daha
-    geçici dizine açılırdı (bkz. `turkanime-gui.spec`). `_MEIPASS/bin` ve
-    deponun `bin/` klasörü `requirements.gomulu_arac_yolu` ile aynı kural.
+    Yayın paketleri artık FlareSolverr TAŞIMIYOR (eksikse veri köküne
+    otomatik iniyor, bkz. `Yonetici.otomatik_kur`). Exe'nin yanındaki
+    `flaresolverr/` yine aranıyor: 10.3.x zip'lerini açan kullanıcının elinde
+    o klasör var, yeniden 230 MB indirmesin; elle oraya koyan da olabilir.
+    `_MEIPASS/bin` ve deponun `bin/` klasörü `requirements.gomulu_arac_yolu`
+    ile aynı kural.
     """
     adaylar: List[Path] = []
     if getattr(sys, "frozen", False):
@@ -469,6 +484,30 @@ def _bos_alan_denetle(dizin: Path, varlik: Varlik, arsiv_var: bool) -> None:
             f"gerekiyor, {dizin} altında {bos // 1_000_000} MB boş.")
 
 
+def _eski_gecicileri_sil(ust: Path, simdi: Optional[float] = None) -> List[Path]:
+    """Öldürülen bir sürecin bıraktığı yarım kurulum klasörlerini sil.
+
+    `kur` geçici klasörünü `finally`de siliyor, ama süreç ortada öldürülürse
+    (görev yöneticisi, çökme) veri kökünde yüzlerce MB'lık
+    `.flaresolverr-kurulum-*` kalıyordu. Yalnızca `ESKI_GECICI_YASI`ndan
+    eskiler: aynı anda koşan başka bir örneğin kurulumu yeni klasördedir.
+    """
+    simdi = time.time() if simdi is None else simdi
+    silinen: List[Path] = []
+    try:
+        adaylar = list(ust.glob(f".{AD}-kurulum-*"))
+    except OSError:
+        return silinen
+    for yol in adaylar:
+        try:
+            if yol.is_dir() and simdi - yol.stat().st_mtime > ESKI_GECICI_YASI:
+                shutil.rmtree(yol, ignore_errors=True)
+                silinen.append(yol)
+        except OSError:
+            continue
+    return silinen
+
+
 def kur(anahtar: Optional[str] = None, hedef: Optional[Path] = None,
         ilerleme: Optional[Callable[[int, int], None]] = None,
         iptal: Optional[threading.Event] = None, arsiv: Optional[Path] = None,
@@ -487,6 +526,7 @@ def kur(anahtar: Optional[str] = None, hedef: Optional[Path] = None,
     hedef = Path(hedef) if hedef is not None else kurulum_dizini()
     ust = hedef.parent
     ust.mkdir(parents=True, exist_ok=True)
+    _eski_gecicileri_sil(ust)
     _bos_alan_denetle(ust, varlik, arsiv is not None)
     gecici = Path(tempfile.mkdtemp(prefix=f".{AD}-kurulum-", dir=str(ust)))
     try:
@@ -855,6 +895,14 @@ class Yonetici:
         self._dinleyiciler: List[Any] = []
         self._istek_siniri = threading.BoundedSemaphore(AYNI_ANDA_ISTEK)
         self._atexit_kayitli = False
+        # Otomatik kurulum (bkz. `otomatik_kur`): süreç başına AÇIKÇA açılır —
+        # GUI açıyor, CLI ve testler açmıyor.
+        self._otomatik = False
+        self._oto_is: Optional[threading.Thread] = None
+        self._oto_iptal = threading.Event()
+        self._oto_hata = ""
+        self._oto_hata_zamani = 0.0
+        self._ilerleme: Optional[tuple] = None      # (inen, toplam) bayt
 
     # ── Dinleyiciler ────────────────────────────────────────────────────────
     def dinle(self, fn: Callable[[Dict[str, Any]], Any]) -> None:
@@ -955,6 +1003,10 @@ class Yonetici:
                 "hata": self._hata if kip == "hata" else "",
                 "elle_durduruldu": self._elle_durduruldu,
                 "boyut_mb": round(varlik.boyut / 1_000_000) if varlik else 0,
+                "otomatik": self._otomatik,
+                "oto_hata": self._oto_hata,
+                "ilerleme": ({"inen": self._ilerleme[0], "toplam": self._ilerleme[1]}
+                             if self._kuruluyor and self._ilerleme else None),
             }
         ozet["guncel"] = bool(ozet["surum"]) and ozet["surum"] == SURUM
         ozet["kurulabilir"] = bool(anahtar) and not ozet["gomulu"]
@@ -967,12 +1019,24 @@ class Yonetici:
         if kip == "desteklenmiyor":
             return desteklenmeme_sebebi()
         if kip == "kurulu_degil":
-            return (f"Yerel FlareSolverr kurulu değil (~{ozet['boyut_mb']} MB indirme). "
-                    "Kurulana kadar Ayarlar'daki adres (doluysa) kullanılır.")
+            metin = (f"Yerel FlareSolverr kurulu değil (~{ozet['boyut_mb']} MB indirme). "
+                     + ("İlk Cloudflare engelinde arka planda kendiliğinden indirilir; "
+                        if ozet.get("otomatik") else "")
+                     + "kurulana kadar Ayarlar'daki adres (doluysa) kullanılır.")
+            if ozet.get("oto_hata"):
+                metin += f" Son otomatik indirme başarısız: {ozet['oto_hata']}"
+            return metin
         if kip == "eksik":
             return XVFB_KURULUMU if "Xvfb" in ozet["eksik"] else (
                 "Eksik: " + ", ".join(ozet["eksik"]))
         if kip == "kuruluyor":
+            ilerleme = ozet.get("ilerleme")
+            if ilerleme and ilerleme.get("toplam"):
+                inen, toplam = ilerleme["inen"], ilerleme["toplam"]
+                if inen >= toplam:
+                    return "FlareSolverr indirildi; doğrulanıp açılıyor…"
+                return (f"FlareSolverr indiriliyor: {_mb(inen)} / {_mb(toplam)} "
+                        f"(%{int(100 * inen / toplam)})…")
             return "FlareSolverr indiriliyor ve doğrulanıyor…"
         if kip == "basliyor":
             return "FlareSolverr açılıyor (Chrome deneniyor; ilk açılış biraz sürebilir)…"
@@ -1177,7 +1241,16 @@ class Yonetici:
         return ayrilan[0] is not None
 
     def kapat(self) -> None:
-        """Uygulama kapanırken (atexit, `closeEvent`): tercihlere dokunmadan durdur."""
+        """Uygulama kapanırken (atexit, `closeEvent`): tercihlere dokunmadan durdur.
+
+        Süren bir otomatik indirme de kesilir ve kısa bir mühlet beklenir: iş
+        parçacığı `daemon`, yorumlayıcı onu ortada öldürürse veri kökünde
+        yüzlerce MB'lık geçici klasör kalırdı (`kur`un `finally`si koşmaz).
+        """
+        self._oto_iptal.set()
+        is_ = self._oto_is
+        if is_ is not None and is_.is_alive() and is_ is not threading.current_thread():
+            is_.join(OTOMATIK_KAPANIS_MUHLETI)
         try:
             with self._kilit:
                 if self._surec is None:
@@ -1257,6 +1330,82 @@ class Yonetici:
         except subprocess.TimeoutExpired:
             surec.kill()
 
+    # ── Otomatik kurulum ────────────────────────────────────────────────────
+    # NEDEN: FlareSolverr artık GUI paketine gömülmüyor (Windows'ta +229 MB,
+    # Linux'ta +265 MB'tı; Cloudflare'e hiç takılmayan kullanıcı da onu
+    # indiriyordu). Eksikse, zincir onu İLK KEZ gerektirdiğinde arka planda
+    # aynı doğrulayan kurulumla (`kur`) iniyor ve açılıyor; o arada istekler
+    # zincirin diğer basamaklarından geçiyor. Bir sonraki ihtiyaçta tembel
+    # başlatma onu açıyor.
+    def otomatik_kurulumu_ac(self, acik: bool = True) -> None:
+        """Bu süreçte otomatik kurulumu aç/kapat (GUI açılışta açıyor)."""
+        with self._kilit:
+            self._otomatik = bool(acik)
+
+    def otomatik_kurulabilir(self) -> bool:
+        """Şimdi kendiliğinden kurulabilir mi? Açık, destekli, kurulu değil,
+        bağımlılıklar tam (Xvfb'siz Linux'ta 265 MB indirip çalıştıramamak
+        boşuna), elle durdurulmamış, kurulum sürmüyor ve son başarısız
+        denemenin üstünden `OTOMATIK_YENIDEN_DENEME` geçmiş."""
+        anahtar = platform_anahtari()
+        with self._kilit:
+            if not self._otomatik or self._kuruluyor or self._elle_durduruldu:
+                return False
+            if (self._oto_hata_zamani and time.monotonic() - self._oto_hata_zamani
+                    < OTOMATIK_YENIDEN_DENEME):
+                return False
+        if anahtar is None or anahtar not in VARLIKLAR:
+            return False
+        return self.kurulum() is None and not eksik_bagimliliklar(anahtar)
+
+    def otomatik_kur(self) -> bool:
+        """Gerekiyorsa arka planda indir + doğrula + aç; HİÇ beklemez.
+
+        Başlattıysa True. Arayüz thread'inden de çağrılabilir: ağa yalnızca
+        ayrı iş parçacığı çıkıyor.
+        """
+        if not self.otomatik_kurulabilir():
+            return False
+        with self._kilit:
+            if self._kuruluyor or (self._oto_is is not None and self._oto_is.is_alive()):
+                return False
+            self._oto_iptal = threading.Event()
+            is_ = threading.Thread(target=self._otomatik_kur_is, args=(self._oto_iptal,),
+                                   daemon=True, name="flaresolverr-oto-kurulum")
+            self._oto_is = is_
+        is_.start()
+        return True
+
+    def _otomatik_kur_is(self, iptal: threading.Event) -> None:
+        son = [0.0]
+
+        def ilerleme(inen: int, toplam: int) -> None:
+            with self._kilit:
+                self._ilerleme = (inen, toplam)
+            simdi = time.monotonic()
+            if inen < toplam and simdi - son[0] < OTOMATIK_ILERLEME_ARALIGI:
+                return
+            son[0] = simdi
+            self._bildir()
+
+        try:
+            kurulum = self.kur(ilerleme=ilerleme, iptal=iptal)
+        except IptalEdildi:
+            print("[FlareSolverr] otomatik indirme kesildi (uygulama kapanıyor).")
+        except Exception as exc:
+            with self._kilit:
+                self._oto_hata = str(exc)
+                self._oto_hata_zamani = time.monotonic()
+            print(f"[FlareSolverr] otomatik kurulum başarısız: {exc}")
+        else:
+            with self._kilit:
+                self._oto_hata, self._oto_hata_zamani = "", 0.0
+            print(f"[FlareSolverr] {kurulum.surum or SURUM} otomatik kuruldu: {kurulum.dizin}")
+        finally:
+            with self._kilit:
+                self._ilerleme = None
+            self._bildir()
+
     # ── Kurulum (yönetici üzerinden) ────────────────────────────────────────
     def kur(self, ilerleme: Optional[Callable[[int, int], None]] = None,
             iptal: Optional[threading.Event] = None) -> Kurulum:
@@ -1267,6 +1416,7 @@ class Yonetici:
             if self._kuruluyor:
                 raise KurulumHatasi("Kurulum zaten sürüyor.")
             self._kuruluyor = True
+            self._ilerleme = None
             mevcut = self.kurulum()
             if mevcut is not None and not mevcut.gomulu and self._surec is not None:
                 ayrilan = self._ayir()
@@ -1276,6 +1426,8 @@ class Yonetici:
         self._bildir()
         try:
             sonuc = kur(ilerleme=ilerleme, iptal=iptal)
+            with self._kilit:
+                self._oto_hata, self._oto_hata_zamani = "", 0.0
         finally:
             with self._kilit:
                 self._kuruluyor = False
@@ -1331,7 +1483,9 @@ def sihirbaz_bilgisi(onerildi: bool = True) -> Dict[str, Any]:
     elif kurulabilir:
         metin = (f"İsteğe bağlı, önerilir. Cloudflare korumalı kaynakları bu "
                  f"bilgisayarda çözer (uzak sunucuya gitmeden). ~{ozet['boyut_mb']} MB "
-                 f"indirme, sürüm {SURUM}, SHA-256 ile doğrulanır.")
+                 f"indirme, sürüm {SURUM}, SHA-256 ile doğrulanır. Şimdi kurmazsan "
+                 "ilk Cloudflare engelinde arka planda kendiliğinden iner; bunu "
+                 "istemiyorsan işareti kaldır.")
     else:
         metin = ozet["metin"]
     return {"goster": bool(onerildi or ozet["durum"] in ("desteklenmiyor", "eksik")),
@@ -1340,7 +1494,7 @@ def sihirbaz_bilgisi(onerildi: bool = True) -> Dict[str, Any]:
             "surum": SURUM, "metin": metin}
 
 
-# ── Komut satırı (yayın hattı) ──────────────────────────────────────────────
+# ── Komut satırı ────────────────────────────────────────────────────────────
 def _mb(bayt: int) -> str:
     return f"{bayt / 1_000_000:.1f} MB"
 
@@ -1379,9 +1533,10 @@ def _ciktiyi_utf8_yap() -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     """``python -m turkanime_api.common.flaresolverr kur --platform P --hedef D``
 
-    Yayın hattı paketlere gömerken bunu çağırıyor: indirme, boyut + SHA-256
-    doğrulaması ve budama uygulamadakiyle AYNI kod. Başarısızlıkta 1 döner ve
-    CI adımı kırmızıya döner — FlareSolverr'sız paket sessizce çıkmaz.
+    Elle/betikle kurulum (CLI kullanıcısı, kendi paketini hazırlayan,
+    `--arsiv` ile çevrimdışı makine): indirme, boyut + SHA-256 doğrulaması ve
+    budama uygulamadakiyle AYNI kod. Başarısızlıkta 1 döner. Yayın hattı
+    artık bunu çağırmıyor — paketler FlareSolverr taşımıyor.
     """
     _ciktiyi_utf8_yap()
     ayristirici = argparse.ArgumentParser(prog="python -m turkanime_api.common.flaresolverr")

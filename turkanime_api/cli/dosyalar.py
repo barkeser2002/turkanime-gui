@@ -215,6 +215,11 @@ class Dosyalar:
             "openani_token": "",
             "openani_refresh_token": "",
             "flaresolverr_url": "http://node-kyb.bariskeser.com:8191",
+            # Yerel FlareSolverr pakette GELMİYOR (~230-265 MB); eksikse ilk
+            # Cloudflare engelinde arka planda indirilip açılır (yalnızca GUI;
+            # bkz. common/flaresolverr.Yonetici.otomatik_kur). Kapalı: yalnızca
+            # Ayarlar'daki "Kur" ile.
+            "flaresolverr otomatik kur": True,
             # "Erişimi aç" penceresinin motoru (bkz. common/tarayici_oturum):
             #   "oto"    → undetected-chromedriver + makinedeki gerçek Chrome
             #              ailesi tarayıcısı HAZIRSA onu, değilse gömülü

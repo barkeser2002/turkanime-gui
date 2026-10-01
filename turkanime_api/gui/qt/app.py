@@ -899,6 +899,14 @@ def run() -> int:
         path_hazirla()
     except Exception:
         pass
+    # FlareSolverr pakette gelmiyor: eksikse CF zinciri onu ilk ihtiyaçta arka
+    # planda indirsin (Ayarlar'daki "Gerekince kendiliğinden indir" kapatır).
+    # Yalnızca GUI açıyor; CLI'de 230 MB'lık sessiz indirme olmasın.
+    try:
+        from ...common import flaresolverr
+        flaresolverr.yonetici().otomatik_kurulumu_ac()
+    except Exception:
+        pass
 
     app = QApplication.instance() or QApplication(sys.argv)
     apply_theme(app)

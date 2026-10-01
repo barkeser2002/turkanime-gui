@@ -256,6 +256,8 @@
           this.fsEl,
           this.anahtar("flaresolverr_yerel", "Yerel FlareSolverr'ı kullan",
             "Cloudflare engelinde istekler bu bilgisayardaki FlareSolverr'dan geçer (yalnızca 127.0.0.1). İlk engelde kendiliğinden başlar, uygulama kapanınca durur."),
+          this.anahtar("flaresolverr_oto", "Gerekince kendiliğinden indir",
+            "FlareSolverr uygulamayla gelmiyor. Kurulu değilse ilk Cloudflare engelinde arka planda indirilir (sabit sürüm, SHA-256 doğrulanır) ve açılır. Kapalıyken yalnızca yukarıdaki “Kur” ile."),
           this.satir("FlareSolverr adresi", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
             "Kendi sunucunun adresini yazarsan yerel yerine o kullanılır. Varsayılan adres (projenin uzak sunucusu) yalnızca yerel FlareSolverr kullanılamazken denenir. Boş: uzak sunucu hiç kullanılmaz; yerel FlareSolverr ve yerleşik QtWebEngine çözücü yine çalışır.")
         ]),
@@ -327,7 +329,7 @@
       var out = {};
       ["indirilenler", "paralel", "aday", "max_res", "dakika_hatirla", "izlerken_kaydet",
         "ilerlemeyi_sor", "aria2c", "izlendi_ikonu", "manuel_fansub", "flaresolverr",
-        "flaresolverr_yerel", "erisim_motoru", "erisim_tarayici_yolu",
+        "flaresolverr_yerel", "flaresolverr_oto", "erisim_motoru", "erisim_tarayici_yolu",
         "openani_token", "openani_refresh", "kimlik_paylas",
         "sunucu_adresi", "sunucu_anahtari"
       ].forEach(function (alan) {

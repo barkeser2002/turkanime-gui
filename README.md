@@ -50,8 +50,9 @@ devam ediyor ama geliştirme masaüstü uygulamasına odaklı.
   ilerlemesi kendiliğinden yazılır. İndirilmiş bölüm ağsız oynar.
 - **Cloudflare ve bot doğrulamaları:** Zincir önce otomatik yolları dener:
   curl_cffi, cloudscraper, FlareSolverr, gömülü Chromium (QtWebEngine).
-  Windows ve Linux paketinde FlareSolverr uygulamayla birlikte gelir; ilk
-  engelde bu bilgisayarda (yalnızca 127.0.0.1) kendiliğinden başlar,
+  FlareSolverr pakette gelmez (zip ~230-265 MB küçük); Windows/Linux'ta ilk
+  Cloudflare engelinde arka planda kendiliğinden iner (sabit sürüm, SHA-256
+  denetimli), sonra bu bilgisayarda (yalnızca 127.0.0.1) kendiliğinden başlar,
   uygulama kapanınca durur. Otomatik yollar yetmezse hatanın yanında
   **"Erişimi aç"** düğmesi çıkar: sitenin doğrulamasını uygulamanın içindeki
   tarayıcıda sen çözersin, oturum o kaynağa kaydedilir ve istek kaldığı
@@ -184,10 +185,13 @@ klasörü artık gereksizdir, silebilirsin.
 Zip kullanılmasının sebebi dosyanın bölünmesi değil, indirme sayfasının ve
 otomatik güncelleyicinin `.zip` adlarına bağlı olması.
 
-Windows ve Linux zip'lerinde exe'nin yanında bir de `flaresolverr/` klasörü
-var: FlareSolverr v3.5.2 ve kendi Chromium'u. Zip'i Windows'ta ~230 MB,
-Linux'ta ~265 MB büyütüyor. Tek dosyanın içine bilerek konmadı; yoksa her
-açılışta 500–800 MB daha açılırdı. macOS paketinde ve terminal sürümünde yok.
+Zip'lerde FlareSolverr **yok**: 10.3.x'te exe'nin yanında `flaresolverr/`
+klasörü olarak geliyor ve zip'i Windows'ta ~230 MB, Linux'ta ~265 MB
+büyütüyordu — Cloudflare'e hiç takılmayan kullanıcı da indiriyordu. Artık
+uygulama onu ilk Cloudflare engelinde veri klasörüne kendisi indirip açıyor
+(FlareSolverr v3.5.2, boyut + SHA-256 denetimli); istemiyorsan Ayarlar →
+Bağlantı → "Gerekince kendiliğinden indir"i kapat. Eski zip'ten kalan
+`flaresolverr/` klasörü exe'nin yanında duruyorsa o kullanılır, yeniden inmez.
 
 > Burada eskiden "QtWebEngine tek dosyaya sıkıştırıldığında alt-sürecini
 > bulamıyor" yazıyordu. Ölçüldü ve doğru çıkmadı: tek dosya paketinde
@@ -216,7 +220,8 @@ turkanime-cli
 > koddan kurulum (`requirements-gui.txt`) ve `pip install "turkanime-gui[gui]"`
 > beş kademeyle çalışır. Sade `pip install turkanime-gui` PySide6 kurmaz, yani
 > QtWebEngine kademesi de yoktur: zincir 4 kademe. FlareSolverr kademesi,
-> yerel FlareSolverr kuruluysa (Ayarlar → Bağlantı → Kur) ya da
+> yerel FlareSolverr kuruluysa (ilk ihtiyaçta kendiliğinden iner; Ayarlar →
+> Bağlantı → Kur) ya da
 > `flaresolverr_url` doluysa vardır
 > (bkz. [Cloudflare Bypass Zinciri](#cloudflare-bypass-zinciri)).
 >
@@ -265,9 +270,10 @@ python -m turkanime_api.gui.qt
    **OpenAnime** akışları 404 dönüyorsa Ayarlar → OpenAnime oturumu →
    Token / Refresh Token alanlarına tarayıcındaki `openani.me` çerezlerini gir
    (isteğe bağlı). Diğer kaynaklar giriş istemez.
-4. **FlareSolverr** Windows/Linux paketinde gömülü gelir. Kaynaktan
-   çalıştırıyorsan kurulum sihirbazı önerir, sonradan Ayarlar → Bağlantı →
-   **Kur** ile de kurulur. Kendi sunucun varsa adresini aynı karttaki alana
+4. **FlareSolverr** pakette gelmez: Windows/Linux'ta ilk Cloudflare
+   engelinde arka planda kendiliğinden iner. Kurulum sihirbazı da önerir
+   (işareti kaldırırsan kendiliğinden inmez), Ayarlar → Bağlantı → **Kur**
+   ile elle de kurulur. Kendi sunucun varsa adresini aynı karttaki alana
    yaz; o zaman yerel yerine o kullanılır.
    Bir kaynak **bot doğrulamasına** takılırsa hatanın yanındaki
    **"Erişimi aç"** düğmesine bas (bkz. [Erişimi Aç](#-erişimi-aç)).
@@ -465,14 +471,20 @@ deposundaki kopyayla birebir aynı tutulur.
 ```
 > Yerel FlareSolverr uygulama açılırken değil, zincir onu ilk kez gerektirince
 > başlar (her açılışta Chrome öz-testi yapıyor ve ~100 MB bellek tutuyor).
+> Kurulu değilse o ilk ihtiyaçta arka planda iner (o istek diğer kademelerden
+> geçer); başarısız indirme 30 dakika kendiliğinden yeniden denenmez.
 > Arayüz iş parçacığı onu hiç beklemez; o istek kademeyi atlar. Başlatma
 > başarısız olursa 5 dakika kendiliğinden yeniden denenmez; aynı anda en çok
 > 2 istek (her biri kendi Chrome'unu açıyor). Ayarlar → Bağlantı'da durum,
-> Kur/Güncelle, Başlat, Durdur ve "Yerel FlareSolverr'ı kullan" anahtarı var.
+> Kur/Güncelle, Başlat, Durdur, "Yerel FlareSolverr'ı kullan" ve "Gerekince
+> kendiliğinden indir" anahtarları var.
 >
 > Zincir, HTTP 200 dönen *challenge sayfalarını* da tanır ve başarı saymaz;
 > aksi hâlde ilk adımda kısa devre olup gerçek tarayıcıya hiç ulaşılmıyordu.
-> Selenium/undetected-chromedriver bağımlılıkları V10.0.0 ile tamamen kaldırıldı.
+> Selenium/undetected-chromedriver V10.0.0 ile zorunlu bağımlılıklardan
+> çıkarıldı; bugün yalnızca "Erişimi aç"ın isteğe bağlı gerçek tarayıcı motoru
+> için `[tarayici]` extra'sında (bkz. [Erişimi Aç](#-erişimi-aç)) ve zincirde
+> kullanılmıyor.
 
 ### Video Sunucuları
 
@@ -504,7 +516,7 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
 | **Animeler.pw yavaş** | Sitenin bölüm sayfası sunucuda 12–30 sn düşünüyor. Mugen HLS imzası isteği yapan IP'ye bağlı; çıkış IP'si değişen ağlarda 403 alınabilir. |
 | **Deokwave Cloudflare doğrulaması** | 30 Eylül 2026'dan beri site her isteğe Cloudflare'in etkileşimli doğrulamasını ("Verify you are human") gösteriyor; otomatik yollar geçemiyor. Hatanın yanındaki "Erişimi aç" ile doğrulamayı sen çözersin, oturum kaydedilir. Kaydedilen oturumla uygulamanın kendi isteklerinin kabul edildiği gerçek bir ev bağlantısında henüz doğrulanmadı; kabul edilmezse kaynak bunu söyler ve "Erişimi aç"ı yeniden önerir. |
 | **ok.ru videoları (yt-dlp 2026.08.19)** | yt-dlp'nin bu sürümü ok.ru videolarında `TypeError` ile düşüyor. Oynatmada sıradaki aday denenir; yalnızca ok.ru bağlantısı olan bölüm açılmaz. |
-| **Yerel FlareSolverr** | Yalnızca Windows ve Linux x64. macOS'ta ayardaki adres ve gömülü çözücü kullanılır. Linux'ta Xvfb gerekir; yoksa Ayarlar'daki durum "Eksik bağımlılık" der ve kurulum komutunu yazar. İlk açılışta chromedriver'ı Google'dan indirir, bunun için internet gerekir. Windows'ta süreç temizliği (iş nesnesi) henüz gerçek bir Windows makinesinde denenmedi. |
+| **Yerel FlareSolverr** | Yalnızca Windows ve Linux x64. macOS'ta ayardaki adres ve gömülü çözücü kullanılır. Linux'ta Xvfb gerekir; yoksa Ayarlar'daki durum "Eksik bağımlılık" der, kurulum komutunu yazar ve FlareSolverr kendiliğinden indirilmez. Pakette gelmediği için ilk Cloudflare engelinde ~230-265 MB iner; o indirme bitene kadar istekler diğer kademelerden geçer. İlk açılışta chromedriver'ı Google'dan indirir, bunun için internet gerekir. Windows'ta süreç temizliği (iş nesnesi) henüz gerçek bir Windows makinesinde denenmedi. |
 | **İmzalı HLS IP'ye bağlı (Animezer, AniMOM, Animeler.pw)** | Oynatma listesini isteyen IP'ye imzalanıyor; çıkış IP'si bağlantı başına değişen ağlarda (bazı VPN'ler, mobil ağlar) 403 alınabilir. Animezer bu durumda sitenin vekiline düşer. |
 | **SeiCode ve tau-video** | Bölümlerin çoğunun tek kopyası tau-video'da; bazı ağları Cloudflare ile engelliyor. O zaman akış dönmez ve sebebi yazılır. Arama yalnızca İngilizce adları bulur. |
 | **AnimeTR eski bölümler** | Site eski bölümlerin çoğunu telif gerekçesiyle silmiş; çalışan ayna yoksa uygulama bunu söyler. |
@@ -520,9 +532,10 @@ Bunlar uygulamanın hataları değil, kaynak sitelerin getirdiği sınırlar:
   rapidfuzz'unki 3.11+ istiyor; 3.9'da pip bunların eski sürümlerinde kalır.
 - **FFmpeg, mpv, aria2c, yt-dlp:** Hazır Windows paketinde gömülü gelir;
   kaynaktan çalıştırıyorsan uygulama içindeki sihirbaz indirip kurar.
-- **FlareSolverr:** Windows/Linux paketinde gömülü gelir; kaynaktan
-  çalıştırıyorsan sihirbaz ya da Ayarlar → Bağlantı → Kur indirir (sabit
-  sürüm, SHA-256 denetimli, ~263/378 MB). Linux'ta Xvfb gerekir. Yerel örnek
+- **FlareSolverr:** Pakette gelmez; GUI ilk Cloudflare engelinde kendisi
+  indirir, sihirbaz ya da Ayarlar → Bağlantı → Kur ile elle de kurulur (sabit
+  sürüm, SHA-256 denetimli, ~263/378 MB). Terminal sürümü kendiliğinden
+  indirmez: `python -m turkanime_api.common.flaresolverr kur`. Linux'ta Xvfb gerekir. Yerel örnek
   yoksa ve alan boş değilse 3. kademe projenin uzak sunucusuna gider; alanı
   boşaltırsanız uzak sunucu hiç kullanılmaz.
 - **İnternet bağlantısı:** Kaynaklara erişim ve AniList senkronu için.
@@ -587,7 +600,7 @@ python -m pytest --network -m network
 | **Kaynak kaydı** | Her kaynak aranabilir, bölümleri açılabilir ve CLI menüsünde; eski "AnimeDepo" adı; ad çakışması import anında hata; uzun bölüm slug'ları kesilmeden ayrık (geçmiş anahtarı, dosya adı); CLI yeniden denemede oynatılamayan videoyu atlıyor; üretim kodunda kapanan turkanime.tv'ye giden yol kalmadı |
 | **Kaynaklar** | Anizle CF bypass zinciri, OpenAnime arama ve stream doğrulama, çerez yönetimi; Animexe, AnimPow, Deokwave (Cloudflare doğrulaması dahil), Asya Animeleri, Animeler.pw, One Pace TR, AnimeTR, Animezer, AniMOM, BuguiTR ve SeiCode için sitelerin gerçek yanıtlarından kırpılmış fikstürlerle ağsız testler |
 | **Oynatma ve indirme** | Sıradaki adaya geçme ve mpv çıkış kodları, kaldığın yer ve otomatik ilerleme, "İzlerken kaydet", yerel dosyadan oynatma, indirme bütünlüğü (gerçek yt-dlp ile yerel HTTP sunucusuna karşı 403/200), çift kuyruk engeli, kalıcı kuyruk ve duraklat/sürdür, hata sebepleri, yerel kitaplık |
-| **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası; yerel FlareSolverr (sabit sürüm kurulumu, bozuk özet/boyut, atomik takas, arşiv yol kaçışı, sahte çalıştırılabilirle yaşam döngüsü, ebeveyn öldürülünce kalan süreç yok, adres önceliği) |
+| **Cloudflare** | Kademe sırası, challenge tanıma, timeout davranışı, çözücü giriş noktası; yerel FlareSolverr (sabit sürüm kurulumu, ilk ihtiyaçta arka planda otomatik kurulum ve başarısızlıkta bekleme, kapanışta kesilen indirmenin temizliği, bozuk özet/boyut, atomik takas, arşiv yol kaçışı, sahte çalıştırılabilirle yaşam döngüsü, ebeveyn öldürülünce kalan süreç yok, adres önceliği; yayın paketine gömülmediği) |
 | **Erişimi aç** | Oturum deposu (süre, alan adı ve yol eşleşmesi, istemci ipucu başlıkları), gerçek QtWebEngine'de kendini temizleyen sahte doğrulama sitesine karşı pencere, iptal ve zaman aşımı; arama, detay, oynatma, indirme ve Ayarlar'daki düğme akışları |
 | **Bağış** | Onay (varsayılan kapalı, yalnızca açık "evet"), gövde beyaz listesi, imzalı bağlantıların atılması, kuyruk kuralları, yerel sahte sunucuya karşı gerçek HTTP (429, yönlendirme izlenmemesi), gövdenin sunucu sözleşmesine uyması |
 | **Çekirdek** | Bölüm birleştirme ve ayrıştırma (sezonlu ara bölüm dahil), indirme yolu güvenliği, atomik JSON yazımı, ağ izolasyonu, veri kökü kuralı ve testlerin gerçek ayarlardan yalıtımı |

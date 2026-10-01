@@ -672,9 +672,14 @@ class SahteYonetici:
     def __init__(self, kullanilabilir=True, adres="http://127.0.0.1:9", basliyor=False):
         self._k, self._adres, self._b = kullanilabilir, adres, basliyor
         self.cagri = 0
+        self.oto = 0
 
     def kullanilabilir(self):
         return self._k
+
+    def otomatik_kur(self):
+        self.oto += 1
+        return True
 
     def hazir_adres(self, bekle=fs.TEMBEL_BEKLEME):
         self.cagri += 1
@@ -832,6 +837,186 @@ def test_yerel_ayari_yazilmamissa_acik(izole_ev):
     assert cf.yerel_flaresolverr_ayari() is True
 
 
+# ── Otomatik kurulum: paket FlareSolverr taşımıyor, gerekince iniyor ─────────
+@pytest.fixture
+def oto_ortam(izole_ev, monkeypatch, local_server, sahte_varlik):
+    """Kurulu değil; "resmî adres" yerel sunucu, varlık onun gerçek özeti.
+
+    Doğrulama, çıkarma ve atomik yerleştirme GERÇEK kod (`kur`): sahte olan
+    yalnızca adres ve beklenen özet.
+    """
+    veri = _gercek_gibi()
+    sahte_varlik(veri)
+    monkeypatch.setattr(fs, "YAYIN_ADRESI", local_server(body=veri).rstrip("/"))
+    monkeypatch.setattr(fs, "platform_anahtari", lambda *a, **k: "linux_x64")
+    monkeypatch.setattr(fs, "eksik_bagimliliklar", lambda *a, **k: [])
+    monkeypatch.setattr(fs, "gomulu_dizinler", lambda: [])
+    monkeypatch.setattr(fs, "kurulumu_bul", _GERCEK_KURULUMU_BUL)
+    return veri
+
+
+def _oto_bitti(y) -> bool:
+    return y._oto_is is not None and not y._oto_is.is_alive()
+
+
+def _gecici_klasorler() -> list:
+    return list(fs.kurulum_dizini().parent.glob(f".{fs.AD}-kurulum-*"))
+
+
+def test_otomatik_kurulum_acilmadikca_hicbir_sey_inmiyor(oto_ortam, yonetici_kur):
+    """CLI ve testler otomatik kurulumu açmıyor: 230 MB'lık sessiz indirme
+    yalnızca GUI'de (açılışta `otomatik_kurulumu_ac`)."""
+    y = yonetici_kur()
+    assert y.otomatik_kurulabilir() is False
+    assert y.otomatik_kur() is False
+    assert y.kurulum() is None and y._oto_is is None
+
+
+def test_otomatik_kurulum_arka_planda_indirip_dogrulayip_kuruyor(oto_ortam, yonetici_kur):
+    y = yonetici_kur()
+    y.otomatik_kurulumu_ac()
+    durumlar: list = []
+    y.dinle(lambda ozet: durumlar.append(ozet))
+    assert y.durum_ozeti()["durum"] == "kurulu_degil"
+    assert "kendiliğinden indirilir" in y.durum_ozeti()["metin"]
+
+    assert y.otomatik_kur() is True
+    assert _bekle(lambda: _oto_bitti(y)), "otomatik kurulum bitmedi"
+
+    kurulum = y.kurulum()
+    assert kurulum is not None and not kurulum.gomulu
+    assert kurulum.dizin == fs.kurulum_dizini() and kurulum.surum == fs.SURUM
+    assert not (kurulum.dizin / "_internal/chrome/interactive_ui_tests.exe").exists(), \
+        "budama otomatik yolda da uygulanmalı"
+    assert "kuruluyor" in [d["durum"] for d in durumlar], "Ayarlar kartı inişi görmedi"
+    assert y.durum_ozeti()["durum"] == "durdu" and y.durum_ozeti()["oto_hata"] == ""
+    assert _gecici_klasorler() == []
+    # Kurulu: bir daha inmez; başlatma yine tembel (süreç açılmadı).
+    assert y.otomatik_kur() is False and y._surec is None
+
+
+def test_basarisiz_otomatik_kurulum_her_engelde_yeniden_inmiyor(oto_ortam, yonetici_kur,
+                                                               sahte_varlik, monkeypatch):
+    """Özet tutmayan (ya da yarıda kopan) indirme her Cloudflare engelinde
+    yeniden başlasaydı kullanıcının kotası erirdi."""
+    sahte_varlik(oto_ortam, ozet="0" * 64)
+    y = yonetici_kur()
+    y.otomatik_kurulumu_ac()
+    assert y.otomatik_kur() is True
+    assert _bekle(lambda: _oto_bitti(y))
+    ozet = y.durum_ozeti()
+    assert y.kurulum() is None and "SHA-256" in ozet["oto_hata"]
+    assert "Son otomatik indirme başarısız" in ozet["metin"]
+    assert _gecici_klasorler() == [], "başarısız kurulum geçici klasör bıraktı"
+    assert y.otomatik_kurulabilir() is False and y.otomatik_kur() is False
+
+    monkeypatch.setattr(fs, "OTOMATIK_YENIDEN_DENEME", 0.0)
+    assert y.otomatik_kurulabilir() is True, "bekleme dolunca yeniden denenmeli"
+
+
+def test_elle_kurulum_otomatik_hatayi_temizliyor(oto_ortam, yonetici_kur, sahte_varlik):
+    sahte_varlik(oto_ortam, ozet="0" * 64)
+    y = yonetici_kur()
+    y.otomatik_kurulumu_ac()
+    y.otomatik_kur()
+    assert _bekle(lambda: _oto_bitti(y)) and y._oto_hata
+    sahte_varlik(oto_ortam)                        # doğru özet: "Kur" düğmesi
+    y.kur()
+    assert y.kurulum() is not None and y.durum_ozeti()["oto_hata"] == ""
+
+
+def test_otomatik_kurulum_kosullari(oto_ortam, yonetici_kur, monkeypatch):
+    y = yonetici_kur()
+    y.otomatik_kurulumu_ac()
+    assert y.otomatik_kurulabilir() is True
+    # Xvfb'siz Linux: 265 MB indirip çalıştıramamak boşuna.
+    monkeypatch.setattr(fs, "eksik_bagimliliklar", lambda *a, **k: ["Xvfb"])
+    assert y.otomatik_kurulabilir() is False
+    monkeypatch.setattr(fs, "eksik_bagimliliklar", lambda *a, **k: [])
+    # Hazır paketi olmayan platform (macOS, ARM).
+    monkeypatch.setattr(fs, "platform_anahtari", lambda *a, **k: None)
+    assert y.otomatik_kurulabilir() is False
+    monkeypatch.setattr(fs, "platform_anahtari", lambda *a, **k: "linux_x64")
+    # Kullanıcı "Durdur"a bastı: bu oturumda kendiliğinden bir şey yapılmaz.
+    y.durdur(elle=True)
+    assert y.otomatik_kurulabilir() is False
+    y.otomatik_kurulumu_ac(False)
+    y._elle_durduruldu = False
+    assert y.otomatik_kurulabilir() is False
+
+
+def test_kapanis_suren_otomatik_indirmeyi_kesip_temizliyor(oto_ortam, yonetici_kur,
+                                                           monkeypatch):
+    """İş parçacığı `daemon`: kapanışta kesilmeseydi yorumlayıcı onu ortada
+    öldürür, veri kökünde yüzlerce MB'lık geçici klasör kalırdı."""
+    basladi = threading.Event()
+
+    def yavas_indir(varlik, hedef, ilerleme=None, iptal=None, url=None):
+        Path(hedef).write_bytes(b"yarim")
+        basladi.set()
+        while not iptal.is_set():
+            time.sleep(0.01)
+        raise fs.IptalEdildi("iptal")
+
+    monkeypatch.setattr(fs, "indir", yavas_indir)
+    y = yonetici_kur()
+    y.otomatik_kurulumu_ac()
+    assert y.otomatik_kur() is True
+    assert basladi.wait(5)
+    assert _gecici_klasorler(), "indirme geçici klasörde olmalı"
+    y.kapat()
+    assert _oto_bitti(y), "kapanış iş parçacığını beklemedi"
+    assert _gecici_klasorler() == []
+    assert y._oto_hata == "", "kapanışta kesmek hata sayılıp beklemeye girmemeli"
+
+
+def test_oldurulen_surecin_yarim_kurulumu_temizleniyor(tmp_path):
+    eski = tmp_path / f".{fs.AD}-kurulum-eski"
+    eski.mkdir()
+    (eski / "flaresolverr_linux_x64.tar.gz").write_bytes(b"yarim")
+    yeni = tmp_path / f".{fs.AD}-kurulum-yeni"      # başka bir örneğin süren kurulumu
+    yeni.mkdir()
+    simdi = time.time()
+    os.utime(eski, (simdi - fs.ESKI_GECICI_YASI - 60,) * 2)
+    assert fs._eski_gecicileri_sil(tmp_path, simdi=simdi) == [eski]
+    assert not eski.exists() and yeni.exists()
+
+
+def test_yerel_eksikse_zincir_otomatik_kurulumu_tetikliyor(sahte_yonetici, izole_ayarla):
+    """Bu istek eski yoldan sürer (ayardaki adres); kurulum arka planda başlar."""
+    y = sahte_yonetici(kullanilabilir=False)
+    izole_ayarla(flaresolverr_url=UZAK)
+    assert cf.CFSession()._flaresolverr_adresi() == (UZAK, False)
+    assert y.oto == 1 and y.cagri == 0
+    # "Gerekince kendiliğinden indir" kapalı → tetiklenmez.
+    izole_ayarla(**{"flaresolverr otomatik kur": False})
+    cf.CFSession()._flaresolverr_adresi()
+    assert y.oto == 1
+    # Yerel FlareSolverr tümden kapalı → tetiklenmez.
+    izole_ayarla(**{"flaresolverr otomatik kur": True, "flaresolverr_yerel": False})
+    cf.CFSession()._flaresolverr_adresi()
+    assert y.oto == 1
+
+
+def test_yerel_hazirsa_otomatik_kurulum_sorulmuyor(sahte_yonetici, izole_ayarla):
+    y = sahte_yonetici(adres="http://127.0.0.1:8191")
+    izole_ayarla(flaresolverr_url=UZAK)
+    cf.CFSession()._flaresolverr_adresi()
+    assert y.oto == 0
+
+
+def test_otomatik_indirme_ayari_varsayilan_acik_ve_ayarlardan_kapaniyor(ayar_uclari, izole_ev,
+                                                                       qtbot):
+    from turkanime_api.cli.dosyalar import Dosyalar
+    assert cf.otomatik_flaresolverr_ayari() is True
+    uclar = ayar_uclari()
+    assert uclar.ayarlar()["degerler"]["flaresolverr_oto"] is True
+    uclar.ayarlari_kaydet({"flaresolverr_oto": False})
+    assert Dosyalar().ayarlar["flaresolverr otomatik kur"] is False
+    assert cf.otomatik_flaresolverr_ayari() is False
+    assert uclar.ayarlar()["degerler"]["flaresolverr_oto"] is False
+
+
 # ── Spec: FlareSolverr onefile arşivine girmiyor ────────────────────────────
 def test_spec_bin_flaresolverr_klasorunu_pakete_almiyor(tmp_path, monkeypatch):
     """Geliştiricinin `bin/flaresolverr/`i (800 MB) onefile'a girerse her açılış
@@ -886,8 +1071,8 @@ def kur_casusu(main_window):
     (True, ["mpv", "flaresolverr"]),
     (False, ["mpv"]),
 ])
-def test_sihirbaz_flaresolverri_secilebilir_gosteriyor(linux_platformu, main_window, web,
-                                                       kur_casusu, isaretli, beklenen):
+def test_sihirbaz_flaresolverri_secilebilir_gosteriyor(izole_ev, linux_platformu, main_window,
+                                                       web, kur_casusu, isaretli, beklenen):
     main_window._on_requirements_missing(["mpv", "flaresolverr"])
     web.bekle("!!" + GEREKSINIM)
     kutu = f"{GEREKSINIM}.querySelector('.fs-satiri input[type=checkbox]')"
@@ -899,6 +1084,9 @@ def test_sihirbaz_flaresolverri_secilebilir_gosteriyor(linux_platformu, main_win
         web.js(kutu + ".click()")
     web.js(_sihirbaz_dugmesi("İndir ve Kur") + ".click()")
     web.qtbot.waitUntil(lambda: kur_casusu == [beklenen], timeout=5000)
+    # İşareti AÇIKÇA kaldıran, ilk Cloudflare engelinde arkasından 263 MB
+    # indirilmesini istemiyor demektir; işaretli bırakan için ayar değişmez.
+    assert cf.otomatik_flaresolverr_ayari() is isaretli
 
 
 def test_yalnizca_flaresolverr_eksikse_onerilen_bilesen(linux_platformu, main_window, web,
