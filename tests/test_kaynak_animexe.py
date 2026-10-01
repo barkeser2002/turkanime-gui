@@ -348,6 +348,26 @@ def test_anizium_girdileri_donmuyor(oturum):
     assert animexe.get_episode_streams("one-piece-13928/1/1165") == []
 
 
+def test_anizium_tek_kaynaksa_oynatmada_sebep_soyleniyor(oturum):
+    """One Piece 1165'in tek kaydı ücretli Anizium: adaptör boş liste döner
+    (yukarıdaki test), ama OYNATMA yolunda bu "çalışan video bulunamadı" değil,
+    `bos_akis_mesaji` ile sebebiyle (Anizium, aşılmaz) `VideoYok` olmalı —
+    sessiz boş sonuç sebebi gizlerdi."""
+    from turkanime_api.common.hatalar import VideoYok
+    from turkanime_api.sources import kayit
+
+    oturum.yollar[f"{SITE}/watch/one-piece-13928/1/1165"] = \
+        html("watch-one-piece-13928_1_1165.html")
+
+    k = kayit.bul("Animexe")
+    assert k.bos_akis_mesaji, "Animexe kaydı bos_akis_mesaji taşımalı"
+    saglayici = kayit.akis_saglayici(
+        k.uclar().akislar, "one-piece-13928/1/1165",
+        etiket=k.etiket, bos_mesaji=k.bos_akis_mesaji)
+    with pytest.raises(VideoYok, match="Anizium"):
+        saglayici("yok sayılır")
+
+
 def test_embed_atiliyor_sayisal_fansub_gosterilmiyor(oturum):
     """Naruto 100: "7 (480p)" adsız grup; tau-video.xyz embed'i CF 403 veriyor."""
     oturum.yollar[f"{SITE}/watch/naruto/1/100"] = html("watch-naruto_1_100.html")
