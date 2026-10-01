@@ -12,7 +12,7 @@
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V10.3.0](V10.3.0.md) · [V10.2.0](V10.2.0.md) · [V10.1.0](V10.1.0.md) · [V10.0.0](V10.0.0.md)
+**Sürüm notları:** [V10.3.1](V10.3.1.md) · [V10.3.0](V10.3.0.md) · [V10.2.0](V10.2.0.md) · [V10.1.0](V10.1.0.md) · [V10.0.0](V10.0.0.md)
 
 TürkAnime GUI **tamamen arayüz odaklı** bir anime keşif, izleme ve indirme
 uygulaması. Arayüz **PySide6 + QtWebEngine** üzerine kurulu; V10.0.0 ile
@@ -392,6 +392,12 @@ Enter/Esc/× her zaman "hayır" demek.
     silinir; gönderilmiş kayıtlar geri çekilemez.
   - Ayarlar → Veri Bağışı kartında gönderilen, bekleyen ve düşen kayıtların
     sayısı ile son hata görünür.
+
+**Sunucu:** varsayılan olarak projenin sunucusu (`turkanimeapi.bariskeser.com`).
+Ayarlar → Oturum Kimliği Bağışı'ndaki alanlardan başka bir sunucu yazılabilir.
+İstemcinin içindeki API anahtarı gizli değildir; sunucu onu yetki olarak değil
+kapı olarak kullanır (hız sınırı). Bu anahtar yalnızca projenin sunucusuna,
+şifreli bağlantıyla gider: kendi sunucunu yazdıysan anahtarını da yazman gerekir.
 
 İstemcinin gönderdiği gövdenin şeması `sozlesme/katki_veri.json`; sunucu
 deposundaki kopyayla birebir aynı tutulur.

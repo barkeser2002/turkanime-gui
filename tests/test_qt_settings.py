@@ -262,6 +262,6 @@ def test_gizli_alanlar_sayfada_parola_kutusu(izole_ev, main_window, web):
     main_window.show_page("settings")
     web.bekle("!!document.querySelector('[data-bolum=oynatma] input')")
     for yer in ("token çerezi (opsiyonel)", "refreshToken çerezi (opsiyonel)",
-                "Sunucu API anahtarı", "Client Secret (opsiyonel)"):
+                "boş = yerleşik anahtar (yalnızca projenin sunucusuna gider)", "Client Secret (opsiyonel)"):
         assert web.js(f"document.querySelector('input[placeholder=\"{yer}\"]').type") \
             == "password", yer

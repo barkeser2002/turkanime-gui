@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import itertools
 import traceback
+import weakref
 from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import QObject, QThread, QTimer
@@ -73,7 +74,13 @@ class Soru:
                  dogrula: Optional[Geri],
                  eylem: Optional[Callable[[str, Dict[str, Any]], Any]],
                  varsayilan: Any):
-        self._merkez = merkez
+        # Merkeze ZAYIF bağ. Merkez soruyu `_sorular`da tutuyor; soru da onu
+        # güçlü tutsaydı bir döngü olurdu ve ebeveynsiz bir merkezi
+        # (testlerdeki gibi) içindeki QTimer'larla birlikte Python'un döngü
+        # toplayıcısı silerdi: rastgele bir anda, çoğu kez sonraki testin olay
+        # döngüsünün ortasında. Ölçüldü: test_web_sorular tek başına 10
+        # koşunun 5'inde segfault ile düşüyordu.
+        self._merkez_ref = weakref.ref(merkez)
         self.kimlik = kimlik
         self.tur = tur
         self.veri = dict(veri)
@@ -84,6 +91,10 @@ class Soru:
         self._bitti = False
         self.teslim = False             # sayfaya ulaştı mı (olay ya da çekiş)
         self._zamanlayici: Optional[QTimer] = None
+
+    @property
+    def _merkez(self) -> Optional["SoruMerkezi"]:
+        return self._merkez_ref()
 
     @property
     def acik(self) -> bool:
@@ -98,7 +109,9 @@ class Soru:
         if self._bitti:
             return
         self.veri.update(veri)
-        self._merkez._yay("soru_guncelle", {"id": self.kimlik, "veri": veri})
+        merkez = self._merkez
+        if merkez is not None:
+            merkez._yay("soru_guncelle", {"id": self.kimlik, "veri": veri})
 
     def bitir(self, cevap: Any = None, *, varsayilanla: bool = False) -> None:
         """Soruyu Python tarafından kapat (pencere de kapanır).
@@ -117,9 +130,11 @@ class Soru:
             self._zamanlayici.stop()
             self._zamanlayici.deleteLater()
             self._zamanlayici = None
-        self._merkez._birak(self)
-        if bildir:
-            self._merkez._yay("soru_kapat", {"id": self.kimlik})
+        merkez = self._merkez
+        if merkez is not None:
+            merkez._birak(self)
+            if bildir:
+                merkez._yay("soru_kapat", {"id": self.kimlik})
         geri = self._geri
         # İşleyiciler bırakılıyor: çoğu, soruyu tutan denetleyiciye (QObject)
         # geri dönen bir kapanış. Döngü kalırsa nesneyi Python'un döngü
@@ -132,6 +147,14 @@ class Soru:
                 geri(cevap)
             except Exception:           # çağıranın hatası pencereyi kilitlemesin
                 traceback.print_exc()
+
+
+def _teslim_dolunca(merkez_ref: "weakref.ref[SoruMerkezi]",
+                    soru_ref: "weakref.ref[Soru]") -> None:
+    """Teslim mühleti doldu; merkez ya da soru çoktan gittiyse hiçbir şey."""
+    merkez, soru = merkez_ref(), soru_ref()
+    if merkez is not None and soru is not None:
+        merkez._teslim_edilemedi(soru)
 
 
 class SoruMerkezi(QObject):
@@ -175,7 +198,10 @@ class SoruMerkezi(QObject):
             else:
                 zamanlayici = QTimer(self)
                 zamanlayici.setSingleShot(True)
-                zamanlayici.timeout.connect(lambda s=soru: self._teslim_edilemedi(s))
+                # İşleyici de zayıf tutuyor: merkezi ya da soruyu güçlü
+                # tutsaydı yine bir döngü kurulurdu (bkz. `Soru.__init__`).
+                zamanlayici.timeout.connect(
+                    lambda m=weakref.ref(self), s=weakref.ref(soru): _teslim_dolunca(m, s))
                 zamanlayici.start(int(teslim_muhleti))
                 soru._zamanlayici = zamanlayici
         return soru
@@ -205,8 +231,10 @@ class SoruMerkezi(QObject):
         paketler = []
         for soru in list(self._sorular.values()):
             soru.teslim = True
-            if soru._zamanlayici is not None:
+            if soru._zamanlayici is not None:   # teslim edildi: mühlete gerek yok
                 soru._zamanlayici.stop()
+                soru._zamanlayici.deleteLater()
+                soru._zamanlayici = None
             paketler.append(soru.paket())
         return paketler
 

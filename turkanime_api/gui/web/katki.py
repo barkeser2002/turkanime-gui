@@ -150,14 +150,35 @@ def onay_al(sorular: Any, kaynak: str, geri: Callable[[bool], Any]) -> Any:
 
 
 # ── Sunucu çağrıları ────────────────────────────────────────────────────────
+# Ayarlardaki adres/anahtar boşsa bunlar kullanılır. Anahtar GİZLİ DEĞİL:
+# dağıtılan her istemcinin içinde ve bu depoda açıkta duruyor; sunucu onu
+# yetki olarak değil kapı olarak kullanıyor (hız sınırı, bekleyen sınırı).
+# ayarlar.json'a yazılmıyor: anahtar döndürülünce eski kurulumlar yenisini
+# güncellemeyle alır.
+VARSAYILAN_SUNUCU_ADRESI = "https://turkanimeapi.bariskeser.com"
+# Depo sahibi ekler. Boşken yerleşik anahtar yok: kullanıcı kendi anahtarını
+# girmedikçe projenin sunucusuna hiçbir şey gönderilmez.
+VARSAYILAN_API_ANAHTARI = "DFYPTntSGIkJnVstIUppU8yLvRMk7O26UmXOKMG_a0k"
+
+
 def sunucu_yapilandirmasi(ayarlar: Optional[Dict[str, Any]] = None
                           ) -> Tuple[str, str]:
-    """``(adres, api anahtarı)`` — ayarlardan, koddan değil."""
+    """``(adres, api anahtarı)``; ayar boşsa projenin sunucusu.
+
+    Yerleşik anahtar YALNIZCA projenin sunucusuna, https ile gider. Kullanıcı
+    başka bir adres yazdıysa anahtarını da yazmalı; yazmadıysa anahtar boş
+    kalır ve çağrı hiç başlamaz (`_uc`). Projenin anahtarı, adresi ayarlara
+    yazılmış üçüncü bir sunucuya sızmamalı.
+    """
     if ayarlar is None:
         from ...cli.dosyalar import Dosyalar
         ayarlar = Dosyalar().ayarlar or {}
     adres = str(ayarlar.get("sunucu adresi") or "").strip().rstrip("/")
     anahtar = str(ayarlar.get("sunucu api anahtari") or "").strip()
+    if not adres:
+        adres = VARSAYILAN_SUNUCU_ADRESI
+    if not anahtar and adres.lower() == VARSAYILAN_SUNUCU_ADRESI:
+        anahtar = VARSAYILAN_API_ANAHTARI
     return adres, anahtar
 
 
@@ -325,4 +346,5 @@ __all__ = ["KAYNAK_TRANIME", "KAYNAK_OPENANI", "KAYNAK_ADLARI",
            "ONAY_BASLIK", "ONAY_METNI",
            "ONAY_KUTUSU", "ONAY_DUGMESI", "VAZGEC_DUGMESI", "KatkiHatasi",
            "onay_metni", "onay_cevabi_mi", "onay_al", "sunucu_yapilandirmasi",
+           "VARSAYILAN_SUNUCU_ADRESI", "VARSAYILAN_API_ANAHTARI",
            "tasima_guvenli_mi", "bagis_gonder", "bagis_geri_cek"]

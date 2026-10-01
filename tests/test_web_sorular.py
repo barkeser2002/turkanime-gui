@@ -142,6 +142,32 @@ def test_render_sureci_olunce_ve_kapanista_hepsi_varsayilanla(qtbot):
     assert ("c", 3) in cevaplar and merkez.bekleyenler() == []
 
 
+@pytest.mark.parametrize("bagla", [False, True])
+def test_merkez_donguye_girmiyor(qtbot, bagla):
+    """Açık soru ve teslim zamanlayıcısı merkezi bir döngüye sokmamalı.
+
+    Döngü olunca ebeveynsiz merkezi Python'un döngü toplayıcısı rastgele bir
+    anda, içindeki QTimer'larla birlikte siliyordu; bu dosya tek başına 10
+    koşunun 5'inde segfault ile düşüyordu. Döngü yoksa merkez `del` anında,
+    referans sayımıyla gidiyor: toplayıcı kapalıyken de.
+    """
+    import gc
+    import weakref
+
+    merkez, _ = _merkez(qtbot, bagli=False)
+    merkez.sor("deneme", {}, lambda _c: None, teslim_muhleti=10_000)  # zamanlayıcılı
+    if bagla:
+        merkez.bekleyen_sorular()                   # teslim: zamanlayıcı bırakılır
+        merkez.sor("deneme", {}, lambda _c: None)   # bağlıyken sorulan
+    zayif = weakref.ref(merkez)
+    gc.disable()
+    try:
+        del merkez
+        assert zayif() is None, "merkez bir döngüde kaldı"
+    finally:
+        gc.enable()
+
+
 def test_cizilemeyen_soru_varsayilanla_bitiyor(qtbot):
     """Sayfa pencereyi çizemedi (bilinmeyen tür): `dogrula` atlanır."""
     merkez, _ = _merkez(qtbot)

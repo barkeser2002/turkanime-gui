@@ -5,4 +5,4 @@
 release'te tag'den senkronlanır (`tests/test_qt_updates.py` ikisinin
 uyuştuğunu denetliyor).
 """
-__version__ = "10.3.0"
+__version__ = "10.3.1"

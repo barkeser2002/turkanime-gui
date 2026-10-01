@@ -288,7 +288,7 @@ def test_vazgecmek_acmiyor(sayfa, cevap):
     assert "açılmadı" in olay["mesaj"]
 
 
-def test_acik_onay_aciyor_ve_surumu_yaziyor(sayfa):
+def test_acik_onay_aciyor_ve_surumu_yaziyor(sayfa, yerlesik_anahtar):
     sayfa.veri_bagisi_ayarla(True)
     sayfa.merkez.cevapla(_soru(sayfa).kimlik, ONAY)
 
@@ -297,9 +297,20 @@ def test_acik_onay_aciyor_ve_surumu_yaziyor(sayfa):
     assert ayarlar["veri bagisi onayi"] == vb.ONAY_SURUMU
     olay = sayfa.kopru.son("ayar_veri_bagisi")
     assert olay["acik"] is True
-    # Sunucu adresi boş: dürüstçe "gönderim yok" deniyor.
-    assert "Sunucu adresi" in olay["mesaj"] and "gönderim yok" in olay["mesaj"]
+    # Ayar boş: projenin sunucusu kullanılıyor, gönderime hazır.
+    assert olay["mesaj"] == "Veri bağışı açıldı."
     assert sayfa.veri_bagisi_ayarla(True)["mesaj"] == "Veri bağışı zaten açık."
+
+
+def test_kendi_sunucusu_anahtarsizsa_gonderim_yok_der(sayfa):
+    """Kendi adresini yazıp anahtarı boş bırakan: yerleşik anahtar oraya
+    gitmez, kullanıcıya dürüstçe "gönderim yok" ve sebebi söylenir."""
+    Dosyalar().set_ayar(ayar_list={"sunucu adresi": "https://baska.test"})
+    sayfa.veri_bagisi_ayarla(True)
+    sayfa.merkez.cevapla(_soru(sayfa).kimlik, ONAY)
+    olay = sayfa.kopru.son("ayar_veri_bagisi")
+    assert olay["acik"] is True
+    assert "gönderim yok" in olay["mesaj"] and "anahtar" in olay["mesaj"]
 
 
 def test_kaydet_formu_veri_bagisini_acamaz(sayfa):
@@ -541,16 +552,29 @@ def test_kanca_kapaliyken_hicbir_sey_toplamiyor(ortam):
 
 
 @pytest.mark.parametrize("degisiklik", [
-    {"sunucu adresi": ""}, {"sunucu api anahtari": ""},
+    {"sunucu api anahtari": ""},                         # kendi sunucusu, anahtarsız
     {"sunucu adresi": "http://sunucu.test"},             # şifresiz, yerel değil
     {"sunucu adresi": "http://localhost.saldirgan.test"},
+    # Yerleşik anahtar şifresiz bağlantıyla projenin sunucusuna da gitmez.
+    {"sunucu adresi": "http://turkanimeapi.bariskeser.com", "sunucu api anahtari": ""},
 ])
-def test_sunucu_yapilandirilmamissa_tamamen_kapali(ortam, degisiklik):
+def test_sunucu_yapilandirilmamissa_tamamen_kapali(ortam, degisiklik, yerlesik_anahtar):
     ortam.ayar.update(degisiklik)
     assert ortam.oynat() is False
     assert ortam.servis.adim() is None
     assert ortam.gonderilen == [] and not os.path.exists(ortam.yol)
     assert ortam.servis.durum()["sebep"]
+
+
+def test_bos_ayar_projenin_sunucusuna_yerlesik_anahtarla_gider(ortam, yerlesik_anahtar):
+    """Adres/anahtar boşsa projenin sunucusu; onay kapısı yine aynı."""
+    from turkanime_api.gui.web import katki
+    ortam.ayar.update({"sunucu adresi": "", "sunucu api anahtari": ""})
+    assert ortam.oynat() is True
+    ortam.calistir()
+    url, basliklar, _g = ortam.gonderilen[0]
+    assert url == katki.VARSAYILAN_SUNUCU_ADRESI + "/katki/veri"
+    assert basliklar == {"X-API-Key": yerlesik_anahtar}
 
 
 def test_yerel_sunucu_sifresiz_olabilir(ortam):
@@ -1245,7 +1269,7 @@ def test_anahtar_onay_ister_esc_geri_alir(izole_ev, main_window, web):
         "anahtar formu kirletmemeli ('Kaydet' onu yazamaz)"
 
 
-def test_anahtar_onayla_acilir_kapatinca_kapanir(izole_ev, main_window, web):
+def test_anahtar_onayla_acilir_kapatinca_kapanir(izole_ev, main_window, web, yerlesik_anahtar):
     _ayarlar_sayfasi(main_window, web)
     web.js(ANAHTAR + ".click()")
     web.bekle("!!" + PENCERE)
@@ -1255,8 +1279,8 @@ def test_anahtar_onayla_acilir_kapatinca_kapanir(izole_ev, main_window, web):
     web.bekle(ANAHTAR + ".checked === true && " + ANAHTAR + ".disabled === false")
     ayarlar = Dosyalar().ayarlar
     assert ayarlar["veri bagisi"] is True and ayarlar["veri bagisi onayi"] == vb.ONAY_SURUMU
-    # Sunucu adresi boş: kart dürüstçe "gönderim yok" diyor.
-    web.bekle(KART + ".querySelector('.veri-durumu').textContent.includes('gönderim yok')")
+    # Ayar boş: projenin sunucusu; kart gönderimin açık olduğunu söylüyor.
+    web.bekle(KART + ".querySelector('.veri-durumu').textContent.includes('arka planda gönderiliyor')")
 
     web.js(ANAHTAR + ".click()")
     web.bekle(KART + ".querySelector('.veri-durumu').textContent.includes('Kapalı')")

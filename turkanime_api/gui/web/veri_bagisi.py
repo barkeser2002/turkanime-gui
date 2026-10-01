@@ -155,7 +155,8 @@ ONAY_BASLIK = "Veri bağışını aç"
 # çıktısı birleşik noktalı "i̇" olduğu için aynı ifadeyi arayan denetimler kaçar.
 ONAY_METNI = (
     "Bu özellik açıkken, bir kaynaktan başarıyla oynattığın ya da indirdiğin her "
-    "bölümün kaydı projenin sunucusuna (Ayarlar'daki sunucu adresi) gönderilir. "
+    "bölümün kaydı projenin sunucusuna (turkanimeapi.bariskeser.com; Ayarlar'da "
+    "başka bir sunucu adresi yazdıysan oraya) gönderilir. "
     "Amaç, sunucunun arşivini kullanıcıların ulaşabildiği kayıtlarla büyütmek. "
     "Açmadan önce ne gönderildiğini okuyun.\n\n"
     "1. Gönderilenler: kaynağın adı; animenin o kaynaktaki kimliği, adı ve kapak "
@@ -243,8 +244,8 @@ def yapilandirma(ayarlar: Optional[Dict[str, Any]]
                  ) -> Tuple[Optional[str], Dict[str, str], str]:
     """``(uç adresi, başlıklar, kapalıysa sebep)``; adres ``None`` = gönderim yok.
 
-    Kural kimlik bağışıyla ortak: adres/anahtar ayarlardan, https zorunlu (yerel
-    adres hariç). Farkı, burada istisna yerine sebep dönmesi: kanca her oynatmada
+    Kural kimlik bağışıyla ortak: adres/anahtar ayarlardan (boşsa projenin
+    sunucusu ve yerleşik anahtar), https zorunlu (yerel adres hariç). Farkı, burada istisna yerine sebep dönmesi: kanca her oynatmada
     çağrılıyor ve "kapalı" bir hata değil, olağan durum.
     """
     adres, anahtar = katki.sunucu_yapilandirmasi(ayarlar or {})
@@ -252,7 +253,8 @@ def yapilandirma(ayarlar: Optional[Dict[str, Any]]
         return None, {}, ("Sunucu adresi ayarlanmamış (Oturum Kimliği Bağışı "
                           "bölümündeki alan); hiçbir şey toplanmıyor.")
     if not anahtar:
-        return None, {}, "Sunucu API anahtarı ayarlanmamış; hiçbir şey toplanmıyor."
+        return None, {}, ("Sunucu API anahtarı ayarlanmamış: kendi sunucu adresini "
+                          "yazdıysan anahtarını da yaz. Hiçbir şey toplanmıyor.")
     if not katki.tasima_guvenli_mi(adres):
         return None, {}, ("Sunucu adresi https:// değil; veri bağışı yalnızca "
                           "şifreli bağlantıyla (ya da bu bilgisayardaki sunucuya) "
