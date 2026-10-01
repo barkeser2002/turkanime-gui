@@ -292,6 +292,25 @@ def test_komut_satiri_kur_ve_hata_kodu(tmp_path, sahte_varlik, capsys):
     assert "::error::" in capsys.readouterr().out
 
 
+def test_komut_satiri_windows_borusunda_dusmuyor(tmp_path, sahte_varlik, monkeypatch):
+    """ESKİ HATA (v10.3.1 Windows derlemesi): GitHub Actions'ta Python çıktıyı
+    boruya cp1252 ile yazıyor; "←" ve ş/ı/ğ `UnicodeEncodeError` ile süreci
+    düşürüyor, FlareSolverr paketlenmiyordu. Çıktı UTF-8'e çevrilmeli."""
+    import sys
+    veri = _gercek_gibi("zip")
+    sahte_varlik(veri, "windows_x64")
+    arsiv = tmp_path / "flaresolverr_windows_x64.zip"
+    arsiv.write_bytes(veri)
+    ham = io.BytesIO()
+    boru = io.TextIOWrapper(ham, encoding="cp1252")     # Windows runner'ındaki gibi
+    monkeypatch.setattr(sys, "stdout", boru)
+    assert fs.main(["kur", "--platform", "windows_x64", "--hedef",
+                    str(tmp_path / "flaresolverr"), "--arsiv", str(arsiv)]) == 0
+    sys.stdout.flush()
+    metin = ham.getvalue().decode("utf-8")
+    assert "←" in metin and "doğrulandı" in metin
+
+
 # ── Kopyanın bulunması ──────────────────────────────────────────────────────
 def test_paketle_gelen_kopya_exe_yaninda_bulunuyor(tmp_path, monkeypatch):
     """CI onu `<zip>/flaresolverr/`e koyuyor; veri kökündekinden önce gelir."""
