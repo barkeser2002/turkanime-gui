@@ -76,18 +76,22 @@ ALANLAR = {
     "manuel_fansub": "manuel fansub",
     "flaresolverr": "flaresolverr_url",
     "flaresolverr_yerel": "flaresolverr_yerel",
+    "erisim_motoru": "erisim tarayici",
+    "erisim_tarayici_yolu": "erisim tarayici yolu",
     "openani_token": "openani_token",
     "openani_refresh": "openani_refresh_token",
     "kimlik_paylas": "kimlik paylas",
     "sunucu_adresi": "sunucu adresi",
     "sunucu_anahtari": "sunucu api anahtari",
 }
-_METIN = ("indirilenler", "flaresolverr", "openani_token", "openani_refresh",
-          "sunucu_adresi", "sunucu_anahtari")
+_METIN = ("indirilenler", "flaresolverr", "erisim_tarayici_yolu", "openani_token",
+          "openani_refresh", "sunucu_adresi", "sunucu_anahtari")
 _MANTIKSAL = ("max_res", "dakika_hatirla", "izlerken_kaydet", "ilerlemeyi_sor",
               "aria2c", "izlendi_ikonu", "manuel_fansub", "kimlik_paylas",
               "flaresolverr_yerel")
 _SAYI = {"paralel": (1, 10), "aday": (1, 30)}
+# Birkaç sabit seçenekten biri (dropdown). Değer kümeye girmezse ilki (varsayılan).
+_SECIM = {"erisim_motoru": ("oto", "gomulu", "chrome")}
 
 
 # ── Qt'siz yardımcılar ───────────────────────────────────────────────────────
@@ -295,6 +299,9 @@ class AyarlarUclari(QObject):
         for alan in _MANTIKSAL:
             ham = ayarlar.get(ALANLAR[alan], varsayilan.get(alan, False))
             deger[alan] = bool(ham)
+        for alan, secenekler in _SECIM.items():
+            ham = str(ayarlar.get(ALANLAR[alan]) or "").strip().lower()
+            deger[alan] = ham if ham in secenekler else secenekler[0]
         deger["paralel"] = int(ayarlar.get(ALANLAR["paralel"]) or 3)
         # Eski Türkçe ada düşme kuralı `prefs`te (iki yerde ayrışmasın).
         deger["aday"] = prefs.oku().aday_sayisi
@@ -314,7 +321,24 @@ class AyarlarUclari(QObject):
             "servisler": {"guncelleme": self.updates is not None,
                           "gereksinim": self.requirements is not None},
             "flaresolverr": self._fs().yonetici().durum_ozeti(),
+            "erisim_tarayici": self._erisim_tarayici_durumu(),
         }
+
+    @staticmethod
+    def _erisim_tarayici_durumu() -> Dict[str, Any]:
+        """Gerçek-tarayıcı motorunun hazır olup olmadığı + bulunan tarayıcı.
+
+        Ayar sayfasındaki ipucunu besler: kullanıcı "oto"nun gerçekten gerçek
+        tarayıcıya mı yoksa gömülüye mi düşeceğini görsün. Hiçbir tarayıcı açmaz,
+        yalnızca varlık yoklar.
+        """
+        try:
+            from ...common import tarayici_oturum
+            hazir, sebep = tarayici_oturum.motor_hazir()
+            return {"hazir": bool(hazir), "sebep": sebep,
+                    "bulunan": tarayici_oturum.tarayici_bul() or ""}
+        except Exception as exc:
+            return {"hazir": False, "sebep": str(exc), "bulunan": ""}
 
     @staticmethod
     def _bagis_durumu(kimlikler: List[str]) -> Dict[str, Any]:
@@ -333,6 +357,9 @@ class AyarlarUclari(QObject):
                 yazilacak[anahtar] = str(ham or "").strip()
             elif alan in _MANTIKSAL:
                 yazilacak[anahtar] = bool(ham)
+            elif alan in _SECIM:
+                sec = str(ham or "").strip().lower()
+                yazilacak[anahtar] = sec if sec in _SECIM[alan] else _SECIM[alan][0]
             else:
                 alt, ust = _SAYI[alan]
                 try:

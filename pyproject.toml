@@ -63,9 +63,18 @@ pyside6 = { version = ">=6.7", optional = true }
 # Discord Rich Presence yalnızca GUI'de kullanılıyor (`gui/qt/discord.py`) ve
 # orada da opsiyonel; CLI kullanıcısına yüklenmesin diye extras'ta.
 pypresence = { version = "*", optional = true }
+# "Erişimi aç"ın gerçek-tarayıcı motoru (`common/tarayici_oturum.py`): bazı
+# siteler gömülü QtWebEngine parmak izini tanıyıp doğrulamayı çözdürmüyor;
+# makinedeki gerçek Chrome ailesi tarayıcısı çözdürüyor. İSTEĞE BAĞLI ve
+# TEMBEL import — kurulmazsa motor kapalı, uygulama gömülü pencereye düşer.
+# Bir tarayıcıyı paketlemiyoruz (yer kazanmak için kullanıcının kendi
+# tarayıcısı kullanılıyor); bunlar yalnızca sürücü/otomasyon katmanı.
+selenium = { version = ">=4.15", optional = true }
+undetected-chromedriver = { version = ">=3.5", optional = true }
 
 [tool.poetry.extras]
 gui = ["pyside6", "pypresence"]
+tarayici = ["selenium", "undetected-chromedriver"]
 
 [tool.poetry.group.dev.dependencies]
 toml = "*"
@@ -104,7 +113,9 @@ extension-pkg-allow-list = ["PySide6"]
 # `flask_cors` yalnızca `turkanime_server/requirements.txt` içinde; istemci
 # geliştirme ortamına kurulmuyor. Kurulu olmayan modül pylint'te E0401 üretir
 # ve `pylint -E` çıktısını gerçek hataların yanında gürültüye boğar.
-ignored-modules = ["py7zr", "flask_cors"]
+# `selenium`/`undetected_chromedriver` "tarayici" extra'sında, isteğe bağlı ve
+# tembel import ediliyor; dev/CI ortamına kurulmadığı için E0401 üretmesinler.
+ignored-modules = ["py7zr", "flask_cors", "selenium", "undetected_chromedriver"]
 
 [tool.pylint.typecheck]
 # Qt sinyalleri (clicked, textChanged, özel Signal'ler) metaclass tarafından
