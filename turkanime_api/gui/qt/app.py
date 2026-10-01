@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import sys
 import traceback
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QIcon
@@ -256,7 +256,7 @@ class MainWindow(QMainWindow):
         self.arama = self.kopru.bagla(AramaUclari(self.kopru))
         self.detay = self.kopru.bagla(DetayUclari(
             self.kopru, oynat=self._on_play, indir=self._on_download,
-            kuyrukta=self._web_kuyrukta))
+            kuyrukta=self._web_kuyrukta, kuyrukta_toplu=self._web_kuyrukta_toplu))
         self.web = WebGorunum(self.kopru, kabuk="web")
         # Render süreci öldüyse sayfadaki pencereler de gitti: açık sorular
         # varsayılanla bitsin (ör. fansub sorusu `_playing`'i açık bırakmasın).
@@ -648,6 +648,27 @@ class MainWindow(QMainWindow):
         if not self.downloads.active_ids():
             return False
         return self._kuyrukta_mi(entry)
+
+    def _web_kuyrukta_toplu(self, entries) -> List[bool]:
+        """Bir bölüm listesinin "Kuyrukta" bayrakları — indirme klasörü BİR KEZ.
+
+        `bolum_durumlari` satır başına `_web_kuyrukta` çağırıyordu; o da her
+        çağrıda `prefs.indirme_dizini()` ile klasörü diskten çözüyordu (ölçüldü:
+        1000 satırda ~110 ms GUI thread'i, her indirme durum değişiminde
+        yeniden). Burada bitmemiş işlerin hedef kümesi bir kez alınır, klasör
+        bir kez çözülür; satır başına yalnızca saf yol hesabı ve küme üyeliği
+        kalır — disk yok."""
+        entries = list(entries or [])
+        hedefler = self.downloads.kuyruktaki_hedefler()
+        if not hedefler:
+            return [False] * len(entries)
+        dizin = self._download_dir()
+        out: List[bool] = []
+        for entry in entries:
+            bolum = (entry or {}).get("obj")
+            hedef = self.downloads._hedef(bolum, dizin) if bolum is not None else None  # pylint: disable=protected-access
+            out.append(bool(hedef is not None and hedef in hedefler))
+        return out
 
     def _indirme_sayacini_guncelle(self, *_args) -> None:
         """Menüdeki "İndirilenler" rozetine süren iş sayısını yaz."""

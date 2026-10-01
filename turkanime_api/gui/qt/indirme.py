@@ -288,6 +288,23 @@ class DownloadManager(QObject):
                 return task_id
         return None
 
+    def kuyruktaki_hedefler(self) -> set:
+        """Bitmemiş işlerin çözülmüş disk hedefleri (küme).
+
+        `kuyruktaki_is` tek bölümü denetliyor ve her çağrıda indirme klasörünü
+        `prefs.indirme_dizini()` ile diskten çözüyor. Detay sayfası 1000 bölümlük
+        seride satır başına bir kez çağırınca bu, GUI thread'inde satır başına bir
+        disk okuması + `isdir` demekti (ölçüldü: ~0,11 ms/satır → 1000 satırda
+        ~110 ms, üstelik HER indirme durum değişiminde yeniden). Bu yöntem
+        klasörü hiç çözmeden hazır `job.hedef`'lerden küme kuruyor; çağıran
+        klasörü BİR KEZ çözüp üyeliği denetliyor (bkz. `app._web_kuyrukta_toplu`).
+
+        `job.hedef` kuyruğa alınırken `_hedef` ile üretildiği için burada da
+        `os.path.normcase` uygulanmış hâldedir; karşılaştırma tutarlı.
+        """
+        return {job.hedef for job in list(self._jobs.values())
+                if job.hedef and job.durum not in BITMIS_DURUMLAR}
+
     def enqueue(self, entry: Dict[str, Any], output: str = "",
                 fansub: Optional[str] = None) -> Optional[str]:
         """Bölümü kuyruğa al; aynı hedefe bitmemiş iş varsa ONUN kimliği döner.

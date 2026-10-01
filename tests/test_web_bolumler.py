@@ -331,7 +331,10 @@ def test_izlenmemisler_ve_indirilmemisler(main_window, web, sahte_bolumler, monk
             return (no <= 2, 3 <= no <= 5)
 
     monkeypatch.setattr(prefs.Gecmis, "yukle", classmethod(lambda cls: Gecmis()))
-    # Kuyruktaki bölüm "indirilmemiş" seçimine girmez.
+    # Kuyruktaki bölüm "indirilmemiş" seçimine girmez. Toplu kuyruk denetimini
+    # kapatıp satır başına tahmine düşüyoruz (bu testin kapsamı seçim mantığı,
+    # indirme klasörü çözümü değil).
+    main_window.detay._kuyrukta_toplu = None
     main_window.detay._kuyrukta = lambda e: e["obj"].slug == "naruto-40"
     sahte_bolumler({"TürkAnime": bolumler("naruto", 40)})
     ac(main_window)
