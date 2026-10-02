@@ -700,7 +700,15 @@ def local_server():
 
 
 def _yedekli_dosya(path: str):
-    """`path`'i yedekle, test bitince geri yükle."""
+    """`path`'i yedekle, test bitince geri yükle.
+
+    Geri yükleme ATOMİK (geçici dosya + `os.replace`), uygulamanın kendi
+    yazımı (`atomik_json_yaz`) gibi. Eskiden yerinde `copy2` yapılıyordu:
+    testin uyandırdığı bir arka plan iş parçacığı (ör. veri bağışı
+    göndericisi ayarı yeniden okur) dosyayı yarı yazılmış — boş — görüp
+    uygulamanın bozuk dosya kuralıyla kenara alıyordu; `copy2` da ardından
+    `FileNotFoundError` ile düşüyordu (tam pakette ara sıra teardown hatası).
+    """
     import shutil
 
     backup = path + ".pytest-backup"
@@ -708,7 +716,9 @@ def _yedekli_dosya(path: str):
     try:
         yield path
     finally:
-        shutil.copy2(backup, path)
+        gecici = path + ".pytest-restore"
+        shutil.copy2(backup, gecici)
+        os.replace(gecici, path)
         os.remove(backup)
 
 
