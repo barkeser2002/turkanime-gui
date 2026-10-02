@@ -17,6 +17,7 @@ Yayından önce iki yoldan kaybolabiliyordu:
    kullanıcıya "gönderilemedi" deniyordu. Yalan — bağış sunucudaydı, numarası
    hiçbir yerde.
 """
+import threading
 from typing import Any, Dict, List
 
 import pytest
@@ -94,6 +95,9 @@ def _sayfa(ayarlar, gonderilen=None, geri_cekilen=None, yazma_hatasi=False,
             return True
 
     s._katki = lambda: SahteKatki                             # noqa: SLF001
+    # Gönderim üretimde arka planda (GUI thread'i ağı beklemesin); bu dosya
+    # numaraların ömrünü sınıyor, iş parçacığını değil: eşzamanlı koştur.
+    s._arkada = lambda fn, *a: fn(*a)                         # noqa: SLF001
     s.kopru = kopru
     return s, dosya
 
@@ -250,3 +254,66 @@ def test_kayit_yokken_dugme_pasif(main_window, web):
     web.bekle(dugme + ".disabled === true")
     main_window.kopru.yay("ayar_bagis", {"kimlikler": ["a" * 32], "metin": "var"})
     web.bekle(dugme + ".disabled === false")
+
+
+# ── Arka plan gönderimleri yarışmasın ───────────────────────────────────────
+def _yarisan_dosya(dosya):
+    """İki yazıcı birbirini görmeden yazmaya hazır olana dek bekleyen
+    `set_ayar`. Kilitsiz kodda ikisi de ESKİ listeden hesaplayıp ardı ardına
+    yazar (ikincisi birincinin numarasını siler); kilitli kodda ikinci yazıcı
+    kilitte beklediği için bariyer süresi dolar ve sıra korunur."""
+    bariyer = threading.Barrier(2)
+    gercek = dosya.set_ayar
+
+    def set_ayar(ad, deger):
+        try:
+            bariyer.wait(0.5)
+        except threading.BrokenBarrierError:
+            pass
+        gercek(ad, deger)
+    dosya.set_ayar = set_ayar
+
+
+def _is_parcacikli(sayfa):
+    isler: List[threading.Thread] = []
+
+    def arkada(fn, *a):
+        t = threading.Thread(target=fn, args=a)
+        isler.append(t)
+        t.start()
+    sayfa._arkada = arkada                                     # noqa: SLF001
+    return isler
+
+
+def test_es_zamanli_iki_bagis_numara_kaybetmiyor():
+    """Gönderim artık arka planda (GUI thread'i ağı beklemesin). Art arda iki
+    bağış aynı anda biterse ikinci yazım birincinin numarasını silmemeli —
+    numara giderse bağış geri çekilemez."""
+    ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": []})
+    sayfa, dosya = _sayfa(ayarlar, gonderilen=["a" * 32, "b" * 32])
+    _yarisan_dosya(dosya)
+    isler = _is_parcacikli(sayfa)
+    sayfa.kimlik_bagisi_teklif("cerez-1")
+    sayfa.kimlik_bagisi_teklif("cerez-2")
+    for t in isler:
+        t.join(5)
+    assert sorted(dosya.ayarlar["kimlik bagis id"]) == ["a" * 32, "b" * 32]
+
+
+def test_geri_cekme_arada_biten_yeni_bagisi_silmiyor():
+    """Geri çekme listeyi başta okuyor; o arada biten yeni bağışın numarası
+    (listede yoktu) yazımda ezilmemeli: yalnızca silinenler düşülür."""
+    ayarlar = dict(AYAR_TABAN, **{"kimlik bagis id": ["a" * 32]})
+    sayfa, dosya = _sayfa(ayarlar, geri_cekilen=[])
+    katki = sayfa._katki()                                     # noqa: SLF001
+
+    class ArayaGirenKatki(katki):
+        @staticmethod
+        def bagis_geri_cek(bid, *a, **k):
+            # Sunucu "a"yı silerken arka planda yeni bağış kaydedildi.
+            dosya.ayarlar["kimlik bagis id"] = ["a" * 32, "b" * 32]
+            return katki.bagis_geri_cek(bid, *a, **k)
+    sayfa._katki = lambda: ArayaGirenKatki                     # noqa: SLF001
+    sonuc = sayfa.bagis_geri_cek()
+    assert dosya.ayarlar["kimlik bagis id"] == ["b" * 32]
+    assert sonuc["kimlikler"] == ["b" * 32]

@@ -18,6 +18,8 @@ hiç başlamadığı doğrulanıyor.
 """
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from turkanime_api.cli.dosyalar import Dosyalar
@@ -67,6 +69,7 @@ def casus(monkeypatch):
     def _gonder(deger, kaynak=katki.KAYNAK_TRANIME, ayarlar=None,
                 zaman_asimi=15):
         kayit["gonderim"].append((deger, kaynak))
+        kayit.setdefault("gonderim_threadi", []).append(threading.current_thread())
         if ayar["gonderim_hatasi"]:
             raise katki.KatkiHatasi(ayar["gonderim_hatasi"])
         return "BAGIS-1234"
@@ -125,20 +128,23 @@ def test_onay_verilmezse_hicbir_sey_gonderilmiyor(sayfa, casus):
     assert ".AitrWeb.Session" in Dosyalar().ayarlar.get("tranime_cookie", "")
 
 
-def test_onay_verilirse_gonderiliyor_ve_numara_saklaniyor(sayfa, casus):
+def test_onay_verilirse_gonderiliyor_ve_numara_saklaniyor(sayfa, casus, qtbot):
     kayit, ayar = casus
     ayar["onay"] = True
     Dosyalar().set_ayar("kimlik paylas", True)
 
     sayfa._cerez_geldi(CEREZ)
 
+    # Gönderim arka planda (ağ isteği GUI thread'inde beklenmez).
+    qtbot.waitUntil(lambda: bagis_kimlikleri(Dosyalar().ayarlar) == ["BAGIS-1234"],
+                    timeout=3000)
     assert [d for d, _ in kayit["gonderim"]] == [CEREZ]
     assert kayit["gonderim"][0][1] == katki.KAYNAK_TRANIME
     assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
     assert geri_cek_acik(sayfa) is True
 
 
-def test_gonderim_basarisizsa_numara_yazilmiyor(sayfa, casus):
+def test_gonderim_basarisizsa_numara_yazilmiyor(sayfa, casus, qtbot):
     """Sunucu reddettiyse "bağış var" yalanı ayarlara yazılmamalı."""
     kayit, ayar = casus
     ayar["onay"] = True
@@ -147,6 +153,7 @@ def test_gonderim_basarisizsa_numara_yazilmiyor(sayfa, casus):
 
     sayfa._cerez_geldi(CEREZ)
 
+    qtbot.waitUntil(lambda: "gönderilemedi" in durum(sayfa), timeout=3000)
     assert len(kayit["gonderim"]) == 1
     assert bagis_kimlikleri(Dosyalar().ayarlar) == []
     assert "gönderilemedi" in durum(sayfa)
@@ -312,7 +319,7 @@ def pencereli_sayfa(ayar_uclari, izole_ev, soru_merkezi, casus, monkeypatch):
     return uclar, soru_merkezi
 
 
-def test_pencere_acikken_hicbir_sey_gonderilmiyor(pencereli_sayfa, casus):
+def test_pencere_acikken_hicbir_sey_gonderilmiyor(pencereli_sayfa, casus, qtbot):
     kayit, _ = casus
     sayfa, merkez = pencereli_sayfa
     Dosyalar().set_ayar("kimlik paylas", True)
@@ -326,8 +333,41 @@ def test_pencere_acikken_hicbir_sey_gonderilmiyor(pencereli_sayfa, casus):
     assert ".AitrWeb.Session" in Dosyalar().ayarlar.get("tranime_cookie", "")
 
     merkez.cevapla(soru.kimlik, {"onay": True, "okudum": True})
+    qtbot.waitUntil(lambda: Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"],
+                    timeout=3000)
     assert [d for d, _ in kayit["gonderim"]] == [CEREZ]
-    assert Dosyalar().ayarlar["kimlik bagis id"] == ["BAGIS-1234"]
+
+
+# ── Ağ isteği GUI thread'inde beklenmiyor (pencere donmasın) ────────────────
+def test_bagis_gonderimi_gui_threadinde_beklenmiyor(sayfa, casus, qtbot):
+    """Onayın cevabı GUI thread'inde geliyor; gönderim (HTTP POST, sunucu
+    yavaşsa zaman aşımına kadar) orada beklenseydi pencere donardı."""
+    kayit, ayar = casus
+    ayar["onay"] = True
+    Dosyalar().set_ayar("kimlik paylas", True)
+    sayfa._cerez_geldi(CEREZ)
+    assert "bağışlanıyor" in durum(sayfa)
+    qtbot.waitUntil(lambda: bool(kayit.get("gonderim_threadi")), timeout=3000)
+    assert kayit["gonderim_threadi"] == [kayit["gonderim_threadi"][0]]
+    assert kayit["gonderim_threadi"][0] is not threading.main_thread()
+
+
+def test_geri_cekme_arka_planda_ve_cift_tik_reddediliyor(sayfa, casus):
+    """Numara başına bir HTTP DELETE: köprü onu arka plan havuzunda koşmalı;
+    aynı anda ikinci çağrı aynı numaraları silip kaydı ezerdi."""
+    from turkanime_api.gui.web.kopru import UcHatasi
+    assert type(sayfa).bagis_geri_cek._web_uc == ("bagis_geri_cek", True)
+    kayit, _ = casus
+    Dosyalar().set_ayar("kimlik bagis id", ["BAGIS-1"])
+    assert sayfa._geri_cekme_kilidi.acquire(blocking=False)
+    try:
+        with pytest.raises(UcHatasi, match="sürüyor"):
+            sayfa.bagis_geri_cek()
+        assert kayit["geri_cekme"] == []
+    finally:
+        sayfa._geri_cekme_kilidi.release()
+    assert sayfa.bagis_geri_cek()["tur"] == "tamam"
+    assert kayit["geri_cekme"] == ["BAGIS-1"]
 
 
 def test_vazgecilen_pencere_gondermiyor(pencereli_sayfa, casus):

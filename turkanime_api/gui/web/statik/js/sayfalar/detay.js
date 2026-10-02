@@ -88,7 +88,9 @@
           this.not)
       ]);
       TA.dinle("gecmis_degisti", function () { self.durumlariTazele(); });
-      TA.dinle("kuyruk_degisti", function () { self.durumlariTazele(); });
+      // Kuyruk değişince yalnızca "Kuyrukta" rozetleri değişir; geçmiş/kitaplık
+      // aynı kalır. Hafif uç (diske çıkmaz) çağrılır, tüm bolum_durumlari değil.
+      TA.dinle("kuyruk_degisti", function () { self.kuyrukTazele(); });
     },
 
     goster: function (p) {
@@ -638,6 +640,34 @@
       var self = this;
       clearTimeout(this._tazeleZamanlayici);
       this._tazeleZamanlayici = setTimeout(function () { self._durumlariTazele(); }, 120);
+    },
+
+    // Yalnızca kuyruk değişti: hafif uç (diske çıkmaz). Ayrı zamanlayıcı ki
+    // geçmiş tazelemesiyle birbirlerini iptal etmesinler.
+    kuyrukTazele: function () {
+      var self = this;
+      clearTimeout(this._kuyrukZamanlayici);
+      this._kuyrukZamanlayici = setTimeout(function () { self._kuyrukTazele(); }, 120);
+    },
+
+    _kuyrukTazele: function () {
+      var self = this;
+      var rid = this.rid;
+      if (!rid || !Object.keys(this.bolumler).length) return;
+      TA.cagir("kuyruk_durumlari", { rid: rid }).then(function (s) {
+        if (rid !== self.rid) return;
+        Object.keys(s.durumlar).forEach(function (ad) {
+          var liste = self.bolumler[ad];
+          if (!liste) return;
+          s.durumlar[ad].forEach(function (k, i) { if (liste[i]) liste[i].kuyrukta = !!k; });
+          var el = self.akEl[ad];
+          if (!el) return;
+          el.liste.querySelectorAll(".bolum-satiri[data-sira]").forEach(function (li) {
+            var b = liste[Number(li.dataset.sira)];
+            if (b) self.rozetleriYaz(li, b);
+          });
+        });
+      }, function () {});
     },
 
     _durumlariTazele: function () {

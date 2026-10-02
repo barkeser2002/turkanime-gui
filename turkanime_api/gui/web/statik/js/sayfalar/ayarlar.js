@@ -73,6 +73,10 @@
       // olaydan geliyor, düğmeler ona göre.
       TA.dinle("flaresolverr_durum", function (v) { self.fsSon = v; self.fsGoster(v); });
       TA.dinle("flaresolverr_ilerleme", function (v) { self.fsIlerleme(v); });
+      // Discord'a bağlanma arka planda; el sıkışması bitince metin gelir.
+      TA.dinle("discord_durum", function (v) {
+        if (self.discordEl) self.discordEl.textContent = v.metin;
+      });
     },
 
     goster: function () {
@@ -128,6 +132,18 @@
       return el;
     },
 
+    secim: function (alan, secenekler) {
+      // secenekler: [[deger, etiket], ...]. Değer yüklemesi/kaydı girdi gibi
+      // (`.value`); genel yükleme döngüsü select'i de ele alır.
+      var self = this;
+      var el = h("select.girdi", { onchange: function () { self.kirli(true); } },
+        secenekler.map(function (s) {
+          return h("option", { value: s[0] }, s[1]);
+        }));
+      this.alanlar[alan] = el;
+      return el;
+    },
+
     anahtar: function (alan, baslik, aciklama, aninda) {
       var self = this;
       var kutu = h("input", { type: "checkbox", role: "switch" });
@@ -171,6 +187,7 @@
       // "Erişimi aç" oturumları; liste js/erisim.js'te çiziliyor.
       this.erisimEl = h("div.erisim-oturumlari");
       this.bagisEl = h("p.ipucu");
+      this.erisimMotorEl = h("p.ipucu");
       this.bagisDugme = this.dugme("Bağışımı geri çek", "kapat", function () { self.bagisGeriCek(); });
       this.anilistEl = h("div.oturum-durumu");
       this.secretIpucu = h("p.ipucu");
@@ -215,6 +232,16 @@
           h("div.alt-baslik", null, "Erişim oturumları (bot doğrulaması)"),
           h("p.ipucu", null, "“Erişimi aç” ile bot doğrulamasını uygulamanın içindeki tarayıcıda geçtiğin kaynaklar. Oturum (çerezler + o tarayıcının kimliği) kaynağın istekleri doğrulamaya takılmasın diye saklanır; süresi dolunca site yeniden doğrulama isteyebilir."),
           this.erisimEl,
+          h("div.alt-baslik", null, "Erişim tarayıcısı"),
+          h("p.ipucu", null, "“Erişimi aç” penceresi hangi tarayıcıda açılsın. Bazı siteler uygulamanın gömülü tarayıcısını tanıyıp doğrulamayı hiç çözdürmüyor; makinendeki gerçek tarayıcı (undetected-chromedriver) çözdürüyor. Doğrulamayı yine sen çözersin, uygulama yalnızca sonucu okur."),
+          this.satir("Motor", this.secim("erisim_motoru", [
+            ["oto", "Otomatik (varsa gerçek tarayıcı)"],
+            ["gomulu", "Her zaman gömülü pencere"],
+            ["chrome", "Gerçek tarayıcı"]]),
+            "Otomatik: gerçek tarayıcı ve undetected-chromedriver kuruluysa onu, değilse gömülü pencereyi kullanır."),
+          this.satir("Tarayıcı yolu", this.girdi("erisim_tarayici_yolu", { yer: "boş = otomatik bul (Chrome/Chromium/Brave/Edge/ungoogled)" }),
+            "Belirli bir tarayıcıyı (ör. Chrome Beta ya da ungoogled-chromium) zorlamak için yolunu yaz. Boş bırakırsan kurulu tarayıcı otomatik bulunur."),
+          this.erisimMotorEl,
           h("div.alt-baslik", null, "OpenAnime oturumu"),
           this.satir("Token", this.girdi("openani_token", { tip: "password", yer: "token çerezi (opsiyonel)" })),
           this.satir("Refresh Token", this.girdi("openani_refresh", { tip: "password", yer: "refreshToken çerezi (opsiyonel)" }),
@@ -233,6 +260,8 @@
           this.fsEl,
           this.anahtar("flaresolverr_yerel", "Yerel FlareSolverr'ı kullan",
             "Cloudflare engelinde istekler bu bilgisayardaki FlareSolverr'dan geçer (yalnızca 127.0.0.1). İlk engelde kendiliğinden başlar, uygulama kapanınca durur."),
+          this.anahtar("flaresolverr_oto", "Gerekince kendiliğinden indir",
+            "FlareSolverr uygulamayla gelmiyor. Kurulu değilse ilk Cloudflare engelinde arka planda indirilir (sabit sürüm, SHA-256 doğrulanır) ve açılır. Kapalıyken yalnızca yukarıdaki “Kur” ile."),
           this.satir("FlareSolverr adresi", this.girdi("flaresolverr", { yer: "http://host:8191 (boş bırakılabilir)" }),
             "Kendi sunucunun adresini yazarsan yerel yerine o kullanılır. Varsayılan adres (projenin uzak sunucusu) yalnızca yerel FlareSolverr kullanılamazken denenir. Boş: uzak sunucu hiç kullanılmaz; yerel FlareSolverr ve yerleşik QtWebEngine çözücü yine çalışır.")
         ]),
@@ -283,6 +312,20 @@
       this.veriGoster(v.veri_bagisi || {});
       this.anilistGoster(v.anilist);
       if (v.flaresolverr) { this.fsSon = v.flaresolverr; this.fsGoster(v.flaresolverr); }
+      this.erisimMotorGoster(v.erisim_tarayici || {});
+    },
+
+    erisimMotorGoster: function (durum) {
+      var el = this.erisimMotorEl;
+      if (!el) return;
+      if (durum.hazir) {
+        el.textContent = "Gerçek tarayıcı hazır" + (durum.bulunan ? ": " + durum.bulunan : "") + ".";
+        el.classList.remove("uyari");
+      } else {
+        el.textContent = (durum.sebep || "Gerçek tarayıcı motoru kullanılamıyor") +
+          " “Otomatik” ve “Gerçek tarayıcı” seçenekleri şimdilik gömülü pencereye düşer.";
+        el.classList.add("uyari");
+      }
     },
 
     formDegerleri: function () {
@@ -290,7 +333,8 @@
       var out = {};
       ["indirilenler", "paralel", "aday", "max_res", "dakika_hatirla", "izlerken_kaydet",
         "ilerlemeyi_sor", "aria2c", "izlendi_ikonu", "manuel_fansub", "flaresolverr",
-        "flaresolverr_yerel", "openani_token", "openani_refresh", "kimlik_paylas",
+        "flaresolverr_yerel", "flaresolverr_oto", "erisim_motoru", "erisim_tarayici_yolu",
+        "openani_token", "openani_refresh", "kimlik_paylas",
         "sunucu_adresi", "sunucu_anahtari"
       ].forEach(function (alan) {
         var el = self.alanlar[alan];
@@ -336,10 +380,15 @@
 
     bagisGeriCek: function () {
       var self = this;
+      // Arka planda sunucuya gidiyor; bitene kadar düğme ikinci kez basılmasın.
+      var dugme = this.bagisDugme;
+      if (dugme) dugme.disabled = true;
+      self.durumYaz("Bağış geri çekiliyor…");
       TA.cagir("bagis_geri_cek").then(function (s) {
         self.bagisGoster(s);
         self.durumYaz(s.mesaj, s.tur);
-      }, function (e) { self.durumYaz(e.message, "hata"); });
+      }, function (e) { self.durumYaz(e.message, "hata"); })
+        .then(function () { if (dugme) dugme.disabled = false; });
     },
 
     // ── Veri bağışı ─────────────────────────────────────────────────────────

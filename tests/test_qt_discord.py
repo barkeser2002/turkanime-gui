@@ -9,6 +9,8 @@ from __future__ import annotations
 import builtins
 import importlib
 import sys
+import threading
+import time
 
 import pytest
 
@@ -21,6 +23,10 @@ class SahtePresence:
     """`pypresence.Presence` yerine geçen kayıt tutucu."""
 
     ornekler: list = []
+    # Sınıf düzeyi: bir sonraki örneğin el sıkışması (Discord açılırken
+    # saniyeler sürebiliyor) ve başarısızlığı.
+    gecikme = 0.0
+    baglanma_hatasi = None
 
     def __init__(self, app_id):
         self.app_id = app_id
@@ -28,12 +34,19 @@ class SahtePresence:
         self.kapandi = False
         self.guncellemeler: list = []
         self.patlat = False
+        self.threadler: set = {threading.current_thread()}
         SahtePresence.ornekler.append(self)
 
     def connect(self):
+        self.threadler.add(threading.current_thread())
+        if SahtePresence.gecikme:
+            time.sleep(SahtePresence.gecikme)
+        if SahtePresence.baglanma_hatasi:
+            raise SahtePresence.baglanma_hatasi
         self.baglandi = True
 
     def update(self, **kwargs):
+        self.threadler.add(threading.current_thread())
         if self.patlat:
             raise RuntimeError("boru kapandı")
         self.guncellemeler.append(kwargs)
@@ -49,6 +62,8 @@ class SahtePresence:
 def sahte_rpc(monkeypatch):
     """`pypresence` kuruluymuş gibi davran; örnekleri döndür."""
     SahtePresence.ornekler = []
+    SahtePresence.gecikme = 0.0
+    SahtePresence.baglanma_hatasi = None
     monkeypatch.setattr(discord_mod, "KULLANILABILIR", True)
     monkeypatch.setattr(discord_mod, "Presence", SahtePresence)
     return SahtePresence.ornekler
@@ -101,11 +116,18 @@ def test_ayar_okunuyor(ayarla):
 
 
 # ── Bağlantı ve durum ────────────────────────────────────────────────────────
-def test_baglanti_ilk_durumu_gonderiyor(sahte_rpc, ayarla):
+def bagli_bekle(qtbot, servis, rpc_listesi=None):
+    qtbot.waitUntil(lambda: servis.bagli, timeout=3000)
+    if rpc_listesi is not None:
+        qtbot.waitUntil(lambda: bool(rpc_listesi and rpc_listesi[-1].guncellemeler),
+                        timeout=3000)
+
+
+def test_baglanti_ilk_durumu_gonderiyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     assert servis.baslat() is True
-    assert servis.bagli is True
+    bagli_bekle(qtbot, servis, sahte_rpc)
 
     rpc = sahte_rpc[0]
     assert rpc.app_id == discord_mod.UYGULAMA_ID
@@ -114,30 +136,34 @@ def test_baglanti_ilk_durumu_gonderiyor(sahte_rpc, ayarla):
     servis.durdur()
 
 
-def test_sayfa_gecisi_durumu_degistiriyor(sahte_rpc, ayarla):
+def test_sayfa_gecisi_durumu_degistiriyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
+    bagli_bekle(qtbot, servis, sahte_rpc)
     servis.sayfa("downloads")
 
     assert servis._istek["details"] == SAYFA_DURUMU["downloads"]
     servis._dongu()      # periyodik tazeleme hız sınırını aşar
-    assert sahte_rpc[0].guncellemeler[-1]["details"] == SAYFA_DURUMU["downloads"]
+    qtbot.waitUntil(lambda: sahte_rpc[0].guncellemeler[-1]["details"]
+                    == SAYFA_DURUMU["downloads"], timeout=3000)
     servis.durdur()
 
 
-def test_hiz_siniri_ard_arda_gondermiyor(sahte_rpc, ayarla):
+def test_hiz_siniri_ard_arda_gondermiyor(sahte_rpc, ayarla, qtbot):
     """Discord ~15 sn'de bir kabul ediyor; fazlası boşuna trafik."""
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
+    bagli_bekle(qtbot, servis, sahte_rpc)
     for _ in range(5):
         servis.sayfa("search")
+    qtbot.wait(200)                 # iş parçacığına fırsat: yine de gönderilmemeli
     assert len(sahte_rpc[0].guncellemeler) == 1
     servis.durdur()
 
 
-def test_izlerken_baslangic_zamani_ekleniyor(sahte_rpc, ayarla):
+def test_izlerken_baslangic_zamani_ekleniyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
@@ -159,20 +185,21 @@ def test_indirme_durumu(sahte_rpc, ayarla):
 
 
 # ── Ayarın anlık etkisi ──────────────────────────────────────────────────────
-def test_ayar_kapatilinca_aninda_kopuyor(sahte_rpc, ayarla):
+def test_ayar_kapatilinca_aninda_kopuyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
+    bagli_bekle(qtbot, servis)
     rpc = sahte_rpc[0]
 
     ayarla(discord_rich_presence=False)
     servis.ayar_uygula()
 
-    assert servis.bagli is False
-    assert rpc.kapandi is True
+    assert servis.bagli is False            # GUI tarafı anında
+    qtbot.waitUntil(lambda: rpc.kapandi, timeout=3000)
 
 
-def test_ayar_acilinca_aninda_baglaniyor(sahte_rpc, ayarla):
+def test_ayar_acilinca_aninda_baglaniyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=False)
     servis = DiscordService()
     servis.baslat()
@@ -180,50 +207,57 @@ def test_ayar_acilinca_aninda_baglaniyor(sahte_rpc, ayarla):
 
     ayarla(discord_rich_presence=True)
     servis.ayar_uygula()
-    assert servis.bagli is True and len(sahte_rpc) == 1
+    bagli_bekle(qtbot, servis)
+    assert len(sahte_rpc) == 1
     servis.durdur()
 
 
-def test_ayar_sayfasi_anahtari_servisi_tetikliyor(sahte_rpc, ayarla, ayar_uclari):
+def test_ayar_sayfasi_anahtari_servisi_tetikliyor(sahte_rpc, ayarla, ayar_uclari, qtbot):
     """Ayarlar sayfasındaki anahtar: hem diske yazmalı hem servisi uygulamalı."""
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
+    bagli_bekle(qtbot, servis)
     sayfa = ayar_uclari(discord=servis)
     assert sayfa.ayarlar()["degerler"]["discord"] is True
 
     assert "kapatıldı" in sayfa.discord_ayarla(False)["mesaj"]
     assert prefs.oku().discord is False
     assert servis.bagli is False
-    assert sahte_rpc[0].kapandi is True
+    qtbot.waitUntil(lambda: sahte_rpc[0].kapandi, timeout=3000)
 
     sonuc = sayfa.discord_ayarla(True)
     assert prefs.oku().discord is True
-    assert servis.bagli is True
-    assert sonuc["metin"] == "Discord'a bağlı"
+    # El sıkışması arka planda: önce "bağlanılıyor", bitince sayfaya olay.
+    assert sonuc["metin"] in ("Discord'a bağlanılıyor…", "Discord'a bağlı")
+    bagli_bekle(qtbot, servis)
+    qtbot.waitUntil(lambda: (sayfa.kopru.son("discord_durum") or {}).get("metin")
+                    == "Discord'a bağlı", timeout=3000)
 
 
 # ── Kopma / yeniden bağlanma ─────────────────────────────────────────────────
-def test_guncelleme_hatasi_baglantiyi_dusuruyor(sahte_rpc, ayarla):
+def test_guncelleme_hatasi_baglantiyi_dusuruyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
+    bagli_bekle(qtbot, servis, sahte_rpc)
     durumlar = []
     servis.state_changed.connect(durumlar.append)
 
     sahte_rpc[0].patlat = True
     servis._dongu()
 
-    assert servis.bagli is False
+    qtbot.waitUntil(lambda: not servis.bagli, timeout=3000)
     assert durumlar == [False]
     assert servis._yeniden.isActive(), "yeniden bağlanma planlanmalı"
     servis.durdur()
 
 
-def test_durdur_ikinci_kez_cagrilabiliyor(sahte_rpc, ayarla):
+def test_durdur_ikinci_kez_cagrilabiliyor(sahte_rpc, ayarla, qtbot):
     ayarla(discord_rich_presence=True)
     servis = DiscordService()
     servis.baslat()
+    bagli_bekle(qtbot, servis)
     servis.durdur()
     servis.durdur()          # kapanışta iki kez çağrılabiliyor
     assert servis.bagli is False
@@ -235,3 +269,65 @@ def test_ana_pencere_sayfa_gecisini_bildiriyor(main_window):
     main_window.show_page("watchlist")
     assert main_window.discord.bagli is False
     assert main_window.discord._istek["details"] == SAYFA_DURUMU["watchlist"]
+
+
+# ── GUI thread'i Discord'u beklemiyor (pencere donmasın) ────────────────────
+def test_rpc_cagrilari_tek_is_parcaciginda_ve_gui_threadinde_degil(sahte_rpc, ayarla,
+                                                                     qtbot):
+    """pypresence her çağrıda Discord'un IPC cevabını bekliyor. GUI
+    thread'inde olunca Discord meşgulken pencere donuyordu. Nesne yine de
+    TEK iş parçacığına ait (asyncio döngüsü iki thread'e bölünmesin)."""
+    ayarla(discord_rich_presence=True)
+    servis = DiscordService()
+    servis.baslat()
+    bagli_bekle(qtbot, servis, sahte_rpc)
+    servis._dongu()
+    qtbot.waitUntil(lambda: len(sahte_rpc[0].guncellemeler) >= 2, timeout=3000)
+    threadler = sahte_rpc[0].threadler
+    assert threading.main_thread() not in threadler
+    assert len(threadler) == 1, f"RPC birden çok thread'den çağrıldı: {threadler}"
+    servis.durdur()
+
+
+def test_yavas_el_sikismasi_baslati_bekletmiyor(sahte_rpc, ayarla, qtbot):
+    SahtePresence.gecikme = 0.6
+    ayarla(discord_rich_presence=True)
+    servis = DiscordService()
+    bas = time.monotonic()
+    assert servis.baslat() is True
+    assert time.monotonic() - bas < 0.2, "baslat el sıkışmasını bekledi"
+    assert servis.bagli is False and servis.baglaniyor is True
+    bagli_bekle(qtbot, servis)
+    assert servis.baglaniyor is False
+    servis.durdur()
+
+
+def test_baglanirken_kapatilirsa_gec_gelen_baglanti_kapaniyor(sahte_rpc, ayarla, qtbot):
+    """Kullanıcı el sıkışması sürerken kapattı: geç gelen "bağlandı" yok
+    sayılmalı ve o bağlantı kapatılmalı (Discord'da hayalet durum kalmasın)."""
+    SahtePresence.gecikme = 0.4
+    ayarla(discord_rich_presence=True)
+    servis = DiscordService()
+    durumlar = []
+    servis.state_changed.connect(durumlar.append)
+    servis.baslat()
+    qtbot.waitUntil(lambda: bool(sahte_rpc), timeout=3000)
+    ayarla(discord_rich_presence=False)
+    servis.ayar_uygula()
+    qtbot.waitUntil(lambda: sahte_rpc[0].kapandi, timeout=3000)
+    qtbot.wait(100)
+    assert servis.bagli is False and True not in durumlar
+    assert sahte_rpc[0].guncellemeler == [], "kapatılan bağlantıya durum gönderildi"
+
+
+def test_discord_kapaliyken_bagliyor_metninde_kalmiyor(sahte_rpc, ayarla, ayar_uclari,
+                                                         qtbot):
+    SahtePresence.baglanma_hatasi = ConnectionRefusedError("Discord çalışmıyor")
+    ayarla(discord_rich_presence=True)
+    servis = DiscordService()
+    sayfa = ayar_uclari(discord=servis)
+    servis.baslat()
+    qtbot.waitUntil(lambda: not servis.baglaniyor, timeout=3000)
+    assert servis.bagli is False
+    qtbot.waitUntil(lambda: bool(sayfa.kopru.son("discord_durum")), timeout=3000)
+    assert "bağlanılıyor" not in sayfa.kopru.son("discord_durum")["metin"]

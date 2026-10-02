@@ -576,7 +576,16 @@ KAYNAKLAR: Tuple[Kaynak, ...] = (
            taranabilir=True),
     Kaynak("Animexe", "Animexe", "AX", "#00b894", "ANIMEXE", _animexe,
            modul="animexe", cli_kodu="animexe", bolum_adresi=_animexe_adresi,
-           taranabilir=True),
+           taranabilir=True,
+           # Boş liste kesin: site/ağ hatası ConnectionError, ölü CDN'lerin
+           # hepsi de ConnectionError olarak yükseliyor (bkz. canli_akislar).
+           # Geriye tek sebep kalıyor — sayfada fansub akışı yok; bölümün tek
+           # kaydı ücretli Anizium aktarımı (One Piece böyle: proje ücretli
+           # servisi aşmaz). Sessiz boş sonuç "çalışan video bulunamadı"
+           # dedirtirdi; sebebini söylüyoruz.
+           bos_akis_mesaji="bu bölümün ücretsiz bir fansub kopyası yok; tek "
+                           "kaydı ücretli Anizium aktarımında (aşılmaz), "
+                           "başka bir kaynak seçin"),
     Kaynak("AnimPow", "AnimPow", "AP", "#fd79a8", "ANIMPOW", _animpow,
            modul="animpow", cli_kodu="animpow", bolum_adresi=_animpow_adresi,
            taranabilir=True),

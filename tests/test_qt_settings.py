@@ -167,6 +167,48 @@ def test_formda_olmayan_alan_yazilmiyor(sayfa):
     assert Dosyalar().ayarlar["manuel fansub"] is True
 
 
+# ── Erişim tarayıcısı (gerçek-tarayıcı motoru) ───────────────────────────────
+def test_erisim_motoru_varsayilan_oto(sayfa):
+    """Varsayılan motor "oto": selenium kurulu olmayan pakette gömülüye
+    düşse de ayarın kendisi "oto" olmalı (kullanıcı değiştirmediyse)."""
+    assert sayfa.ayarlar()["degerler"]["erisim_motoru"] == "oto"
+
+
+def test_erisim_motoru_secim_round_trip(sayfa):
+    """Dropdown değeri diske yazılıp forma geri dönmeli."""
+    sayfa.ayarlari_kaydet({"erisim_motoru": "gomulu"})
+    assert Dosyalar().ayarlar["erisim tarayici"] == "gomulu"
+    assert sayfa.ayarlar()["degerler"]["erisim_motoru"] == "gomulu"
+
+
+def test_erisim_motoru_gecersiz_deger_varsayilana_duser(sayfa):
+    """Kümeye girmeyen bir değer sessizce ilk seçeneğe ("oto") çekilmeli;
+    elle bozulmuş ayar dosyası geçersiz bir motor adını yaymamalı."""
+    sayfa.ayarlari_kaydet({"erisim_motoru": "firefox"})
+    assert Dosyalar().ayarlar["erisim tarayici"] == "oto"
+    Dosyalar().set_ayar("erisim tarayici", "zırva")
+    assert sayfa.ayarlar()["degerler"]["erisim_motoru"] == "oto"
+
+
+def test_erisim_tarayici_yolu_round_trip(sayfa):
+    """Elle tarayıcı yolu (Chrome Beta/ungoogled-chromium) metin alanı gibi
+    kaydedilip okunmalı."""
+    sayfa.ayarlari_kaydet({"erisim_tarayici_yolu": "/opt/ungoogled/chrome"})
+    assert Dosyalar().ayarlar["erisim tarayici yolu"] == "/opt/ungoogled/chrome"
+    assert sayfa.ayarlar()["degerler"]["erisim_tarayici_yolu"] == "/opt/ungoogled/chrome"
+
+
+def test_erisim_tarayici_durumu_sekli(sayfa):
+    """Durum yükü iyi biçimli (ipucu bundan besleniyor): hazır bool, sebep str.
+    undetected-chromedriver kurulu DEĞİLSE (CI/sandbox) hazır=False + sebep."""
+    from turkanime_api.common import tarayici_oturum
+    durum = sayfa.ayarlar()["erisim_tarayici"]
+    assert isinstance(durum["hazir"], bool) and isinstance(durum["sebep"], str)
+    assert "bulunan" in durum
+    if not tarayici_oturum._uc_var():
+        assert durum["hazir"] is False and durum["sebep"]
+
+
 # ── TRAnimeİzle çerezi süreç içine giriyor mu? ───────────────────────────────
 def test_acilista_diskteki_cerez_kaynaga_ulasiyor(ayar_uclari, izole_ev,
                                                   temiz_kaynak_global):

@@ -248,6 +248,12 @@ class GereksinimPenceresi(_ServisPenceresi):
         istendi = (veri or {}).get("flaresolverr", self.flaresolverr["sec"])
         if self.flaresolverr["kurulabilir"] and istendi is True:
             hedefler.append(flaresolverr.AD)
+        elif self.flaresolverr["kurulabilir"] and istendi is False:
+            # İşareti AÇIKÇA kaldırdı: ilk Cloudflare engelinde arkasından 230
+            # MB indirmek bu cevabı yok saymak olurdu. Ayarlar'daki "Gerekince
+            # kendiliğinden indir" geri açar.
+            from ..qt import prefs
+            prefs.ayar_yaz(**{"flaresolverr otomatik kur": False})
         if not hedefler:
             raise UcHatasi("Kurulacak bir şey seçilmedi.")
         if not self.servis.kur(hedefler):

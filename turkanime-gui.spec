@@ -19,10 +19,11 @@ duruyor ve arayüz açılıyor. Tek dosyanın gerçek bedeli başka:
 onedir'de üç maliyet de sıfır. Tek dosya bilinçli bir tercih, teknik bir
 zorunluluk değil.
 
-FlareSolverr bu spec'te YOK, bilerek: yayın hattı onu derlemeden sonra
-exe'nin yanına koyuyor (`<zip>/flaresolverr/`, bkz. `_bin_verileri`). Tek
-dosyanın içinde olsaydı yukarıdaki açılım bedeline her açılışta 500-800 MB
-daha eklenirdi.
+FlareSolverr bu spec'te YOK, bilerek, ve yayın paketinde de yok: uygulama
+eksikse ilk Cloudflare ihtiyacında veri köküne indiriyor
+(`common/flaresolverr.Yonetici.otomatik_kur`). Tek dosyanın içinde olsaydı
+yukarıdaki açılım bedeline her açılışta 500-800 MB daha eklenirdi; zip'te
+yanında olması da herkese +230-265 MB indirtiyordu.
 
 Ad neden `turkanime-qt` değil: Faz 9'dan sonra tek arayüz kaldı, "qt" artık
 ayırt edici bir bilgi taşımıyor. Depo, PyPI paketi, giriş noktası ve release
@@ -145,12 +146,11 @@ def _bin_verileri(hedef=None):
     "kurulu" saymıyor) ama pakete hiç girmemeleri gerekiyor.
 
     Yalnızca DOSYALAR: `bin/flaresolverr/` (geliştiricinin yerel kopyası)
-    klasör olduğu için hiç girmez — girmemeli de. FlareSolverr paketin içine
-    değil exe'nin YANINA konuyor (release.yml "Bundle FlareSolverr" adımı,
-    `<zip>/flaresolverr/`): onefile arşivine girseydi her açılışta 500-800 MB
-    daha geçici dizine açılırdı. Çalışma anı onu
-    `common/flaresolverr.gomulu_dizinler` ile `dirname(sys.executable)` altında
-    buluyor.
+    klasör olduğu için hiç girmez — girmemeli de. FlareSolverr pakete hiç
+    girmiyor: onefile arşivine girseydi her açılışta 500-800 MB daha geçici
+    dizine açılırdı. Uygulama onu gerekince veri köküne indiriyor; elle
+    `dirname(sys.executable)/flaresolverr` altına konan kopyayı da
+    `common/flaresolverr.gomulu_dizinler` buluyor.
     """
     if not os.path.isdir('bin'):
         return []

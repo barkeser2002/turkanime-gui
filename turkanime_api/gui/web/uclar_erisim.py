@@ -136,15 +136,44 @@ class ErisimUclari:
             acik["isci"].one_getir()
             return {"istek": istek, "kaynak": hedef.kaynak, "zaten_acik": True}
         self._acik[hedef.kaynak] = kayit = {"isci": None, "istekler": [istek]}
-        kayit["isci"] = isci = self._isci_kur(hedef)
-        isci.start()
+        # Netscape çerez akışı (TRAnimeİzle) her zaman gömülü; diğerlerinde
+        # ayardan motoru seç. Gerçek tarayıcı motoru `start()` False dönerse
+        # (ör. selenium/tarayıcı o an hazır değil) sessizce gömülüye düşüyoruz.
+        motor = "gomulu" if hedef.cerez_akisi else self._erisim_motoru()
+        kayit["isci"] = isci = self._isci_kur(hedef, motor=motor)
+        if isci.start() is False and motor == "chrome":
+            kayit["isci"] = isci = self._isci_kur(hedef, motor="gomulu")
+            isci.start()
         return {"istek": istek, "kaynak": hedef.kaynak}
 
-    def _isci_kur(self, hedef: oturumlar.ErisimHedefi):
+    @staticmethod
+    def _erisim_motoru() -> str:
+        """Ayardan seçilen erişim motoru ("chrome" / "gomulu").
+
+        İçe aktarma tembel ve her şey geri sarılı: selenium kurulu olmayan
+        normal pakette (ve test paketinde) hep "gomulu" dönüp davranışı
+        bugünküyle aynı tutuyor.
+        """
+        try:
+            from ...common import tarayici_oturum
+            from ...cli.dosyalar import Dosyalar
+            return tarayici_oturum.erisim_motoru(Dosyalar().ayarlar)
+        except Exception:
+            return "gomulu"
+
+    def _isci_kur(self, hedef: oturumlar.ErisimHedefi, *, motor: str = "gomulu"):
         if hedef.cerez_akisi:
             from ..qt.cookie_browser import CookieBrowserWorker
             return CookieBrowserWorker(
                 on_cookies=lambda netscape: self._tranime_geldi(hedef, netscape),
+                on_error=lambda m: self._bitti(hedef, False, m),
+                on_cancel=lambda: self._iptal(hedef),
+                parent=self._pencere)
+        if motor == "chrome":
+            from ..qt.tarayici_penceresi import TarayiciIsci
+            return TarayiciIsci(
+                hedef,
+                on_success=lambda sonuc: self._kaydet(hedef, sonuc),
                 on_error=lambda m: self._bitti(hedef, False, m),
                 on_cancel=lambda: self._iptal(hedef),
                 parent=self._pencere)
@@ -228,6 +257,12 @@ class ErisimUclari:
                 profili_sifirla(hedef)
             except Exception as exc:
                 print(f"[Erişim] {hedef.etiket} profili temizlenemedi: {exc}")
+            # Gerçek-tarayıcı motorunun ayrı profilini de sil (aynı gerekçe).
+            try:
+                from ...common import tarayici_oturum
+                tarayici_oturum.profili_sil(hedef)
+            except Exception as exc:
+                print(f"[Erişim] {hedef.etiket} tarayıcı profili temizlenemedi: {exc}")
         self._kopru.yay("erisim_degisti", {"kaynak": kaynak_kaydi.kanonik_ad(str(kaynak))})
         return oturum_satirlari()
 
