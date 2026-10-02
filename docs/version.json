@@ -1,42 +1,42 @@
 {
-  "version": "10.3.1",
-  "release_date": "2026-10-01T19:56:10.785317Z",
-  "changelog": "v10.3.1\n\nAyrıntılar: https://github.com/barkeser2002/turkanime-gui/releases/tag/v10.3.1",
+  "version": "10.4.0",
+  "release_date": "2026-10-02T18:37:16.729505Z",
+  "changelog": "v10.4.0\n\nAyrıntılar: https://github.com/barkeser2002/turkanime-gui/releases/tag/v10.4.0",
   "platforms": {
     "windows": {
-      "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-gui-windows.zip",
-      "checksum": "ff80ee1c867add9dd43094b9ea96ea57476aff2b2ca18bd9fc3ca1243998e39c",
+      "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-gui-windows.zip",
+      "checksum": "4c6d407873be057d3ddb586bbda51a7ca024f38ec47341707600ef1d8f325be5",
       "gui": {
-        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-gui-windows.zip",
-        "checksum": "ff80ee1c867add9dd43094b9ea96ea57476aff2b2ca18bd9fc3ca1243998e39c"
+        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-gui-windows.zip",
+        "checksum": "4c6d407873be057d3ddb586bbda51a7ca024f38ec47341707600ef1d8f325be5"
       },
       "cli": {
-        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-cli-windows.exe",
-        "checksum": "9cc3e39742a83c19c6b98e3f276470172a47a39a55db8b77ed1a21b94a923a69"
+        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-cli-windows.exe",
+        "checksum": "53a9c30444c48f5d560a660cd8b38363f42997580bb46555ba211c54cf8d56c2"
       }
     },
     "linux": {
-      "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-gui-linux.zip",
-      "checksum": "d95857b28a8af3c67208a2d674dfc326d17afe7fde9065a314850991c476e278",
+      "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-gui-linux.zip",
+      "checksum": "2d1fcc5c0e18c849ec1fd873bc7bf1eade0f4aab8cf51ce854481593352be2b1",
       "gui": {
-        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-gui-linux.zip",
-        "checksum": "d95857b28a8af3c67208a2d674dfc326d17afe7fde9065a314850991c476e278"
+        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-gui-linux.zip",
+        "checksum": "2d1fcc5c0e18c849ec1fd873bc7bf1eade0f4aab8cf51ce854481593352be2b1"
       },
       "cli": {
-        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-cli-linux",
-        "checksum": "b85b18c05049099a123d986e16cd19ae92efd224cfa1bfde93a774e7140e8df5"
+        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-cli-linux",
+        "checksum": "1f8176db2f888f251d281e8249235d213a2a563ba3a38e01833b1aca577c6d5d"
       }
     },
     "macos": {
-      "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-gui-macos.zip",
-      "checksum": "cc711113d8196e0481c3902071bf3f96aa2b7f3ef76739a527e59be9dced3f1a",
+      "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-gui-macos.zip",
+      "checksum": "4f4aae93adec5a76808bbc931ad70a8c53c57229b60a119a4fe70520d0fc1de2",
       "gui": {
-        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-gui-macos.zip",
-        "checksum": "cc711113d8196e0481c3902071bf3f96aa2b7f3ef76739a527e59be9dced3f1a"
+        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-gui-macos.zip",
+        "checksum": "4f4aae93adec5a76808bbc931ad70a8c53c57229b60a119a4fe70520d0fc1de2"
       },
       "cli": {
-        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.3.1/turkanime-cli-macos",
-        "checksum": "7adda283edecf60c29e97aee0ce7f86fe09331639ee745b238d744bd3375fe6f"
+        "url": "https://github.com/barkeser2002/turkanime-gui/releases/download/v10.4.0/turkanime-cli-macos",
+        "checksum": "d0b12c9d84bf26f88dd51d054ab0d72586cf69c3746ce56f896c2f4f1ba29ee0"
       }
     }
   }
