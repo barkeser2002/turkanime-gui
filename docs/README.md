@@ -12,7 +12,7 @@
 
 # TürkAnime GUI
 
-**Sürüm notları:** [V10.3.1](V10.3.1.md) · [V10.3.0](V10.3.0.md) · [V10.2.0](V10.2.0.md) · [V10.1.0](V10.1.0.md) · [V10.0.0](V10.0.0.md)
+**Sürüm notları:** [V10.4.0](V10.4.0.md) · [V10.3.1](V10.3.1.md) · [V10.3.0](V10.3.0.md) · [V10.2.0](V10.2.0.md) · [V10.1.0](V10.1.0.md) · [V10.0.0](V10.0.0.md)
 
 TürkAnime GUI **tamamen arayüz odaklı** bir anime keşif, izleme ve indirme
 uygulaması. Arayüz **PySide6 + QtWebEngine** üzerine kurulu; V10.0.0 ile
